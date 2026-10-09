@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# uxp —— UXP Developer Tools CLI 的薄包装（bash 版，供脚本/自动化调用）
+# 用法： tools/uxp service start | tools/uxp apps list | tools/uxp plugin load ...
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+CLI="$ROOT/node_modules/@adobe-fixed-uxp/uxp-devtools-cli/dist/uxp.js"
+
+NODE="$(command -v node || true)"
+if [ -z "$NODE" ]; then
+  NODE="$HOME/.workbuddy/binaries/node/versions/22.22.2-6/node.exe"
+fi
+
+exec "$NODE" "$CLI" "$@"

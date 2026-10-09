@@ -1,0 +1,32 @@
+{
+  "manifestVersion": 5,
+  "id": "com.wooozxh.hellouxp",
+  "name": "Hello UXP",
+  "version": "1.0.0",
+  "main": "index.html",
+  "host": [
+    {
+      "app": "PS",
+      "minVersion": "23.3.0"
+    }
+  ],
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "helloPanel",
+      "label": { "default": "Hello UXP" },
+      "minimumSize": { "width": 230, "height": 260 },
+      "maximumSize": { "width": 1200, "height": 1200 },
+      "preferredDockedSize": { "width": 260, "height": 420 },
+      "preferredFloatingSize": { "width": 320, "height": 460 }
+    },
+    {
+      "type": "command",
+      "id": "helloCommand",
+      "label": { "default": "Hello UXP：运行自检" }
+    }
+  ],
+  "requiredPermissions": {
+    "localFileSystem": "plugin"
+  }
+}

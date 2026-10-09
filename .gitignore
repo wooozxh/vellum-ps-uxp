@@ -1,0 +1,29 @@
+# ---------- 依赖 ----------
+node_modules/
+
+# ---------- 官方示例仓库 ----------
+# 它是独立的 git 仓库（自带 .git）+ 第三方代码，不入库。
+# 换机器重新拉：
+#   git clone --depth 1 https://github.com/AdobeDocs/uxp-photoshop-plugin-samples.git official-samples
+official-samples/
+
+# ---------- WorkBuddy 会话数据 ----------
+# AI 会话侧的本地记忆。与根目录的档案四件套定位重叠，但保持私有不入库。
+.workbuddy/
+
+# ---------- 编辑器 / 系统 ----------
+.DS_Store
+Thumbs.db
+*.log
+.eslintcache
+*.tsbuildinfo
+
+# ---------- 构建 / 打包产物 ----------
+dist/
+out/
+*.ccx
+
+# ---------- 临时 / 调试 ----------
+_tmp/
+_*.tmp
+_*.bak

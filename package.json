@@ -1,0 +1,15 @@
+{
+  "name": "ps-uxp-dev",
+  "version": "1.0.0",
+  "description": "Photoshop UXP 插件的开发工作区。主线技术 **UXP**，宿主 Photoshop 2026（v27.2）。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@adobe-fixed-uxp/uxp-devtools-cli": "^1.6.7"
+  }
+}

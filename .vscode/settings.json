@@ -1,0 +1,25 @@
+{
+  "files.eol": "\n",
+  "files.encoding": "utf8",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.formatOnSave": false,
+
+  "// UXP 工程说明": "manifest.json / index.html / index.js 是插件本体；改 manifest.json 后需在 UDT 里 Unload 再 Load",
+  "files.associations": {
+    "*.psjs": "javascript"
+  },
+  "json.schemas": [],
+
+  "search.exclude": {
+    "**/official-samples": true,
+    "**/node_modules": true,
+    "**/dist": true
+  },
+  "files.watcherExclude": {
+    "**/official-samples/**": true
+  }
+}

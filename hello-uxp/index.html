@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {
+      margin: 0;
+      padding: 12px;
+      font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+      font-size: 12px;
+      color: var(--uxp-host-text-color, #e8ebf0);
+      background: var(--uxp-host-background-color, #232323);
+    }
+    h1 { font-size: 14px; margin: 0 0 6px; font-weight: 600; }
+    p.hint { margin: 0 0 12px; font-size: 11.5px; opacity: .7; line-height: 1.6; }
+    .row { display: flex; flex-direction: column; gap: 8px; }
+    #log {
+      margin-top: 14px;
+      padding: 10px;
+      font-family: Consolas, "SFMono-Regular", monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border: 1px solid rgba(128, 128, 128, .3);
+      border-radius: 6px;
+      min-height: 64px;
+      opacity: .9;
+    }
+  </style>
+  <script src="index.js"></script>
+</head>
+<body>
+  <h1>Hello UXP</h1>
+  <p class="hint">
+    环境冒烟测试。主要用途是让外部脚本拿到结论：自检结果会写成
+    <code>report.json</code> 落到插件数据目录，交给 <code>tools/report.mjs</code> 读取。
+  </p>
+
+  <div class="row">
+    <sp-button id="btnSelftest" variant="cta">运行自检并写报告</sp-button>
+    <sp-button id="btnReload">查看 / 切换自动自检</sp-button>
+    <sp-button id="btnDoc">新建文档</sp-button>
+    <sp-button id="btnInfo">读取当前文档信息</sp-button>
+  </div>
+
+  <div id="log">等待操作…</div>
+</body>
+</html>

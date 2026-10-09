@@ -1,0 +1,17 @@
+# 统一换行符：仓库内一律 LF。
+# 本机 core.autocrlf=true，若不钉住，Windows 检出会把 tools/uxp 落成 CRLF ——
+# 它带 shebang（#!/usr/bin/env bash），CRLF 会导致脚本执行失败。
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制，不做换行符转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.ccx  binary
+*.zip  binary

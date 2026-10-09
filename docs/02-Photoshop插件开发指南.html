@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Photoshop 插件开发指南 · 资料总库 + 环境体检</title>
+<style>
+  :root{
+    --bg:#0f1115;
+    --bg-soft:#161a21;
+    --card:#1a1f28;
+    --card-2:#20262f;
+    --line:#2b323d;
+    --line-soft:#232a34;
+    --text:#e8ebf0;
+    --text-dim:#a6b0be;
+    --text-faint:#78828f;
+    --accent:#4c9aff;
+    --accent-soft:rgba(76,154,255,.12);
+    --green:#3fb950;
+    --green-soft:rgba(63,185,80,.1);
+    --amber:#e3b341;
+    --red:#ff6b81;
+    --purple:#b18cff;
+    --pink:#ff7b9c;
+    --radius:14px;
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.7;
+    font-size:15px;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1040px;margin:0 auto;padding:48px 28px 96px}
+
+  /* header */
+  header.hero{margin-bottom:40px}
+  .badge{
+    display:inline-block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--accent);background:var(--accent-soft);border:1px solid rgba(76,154,255,.3);
+    padding:4px 12px;border-radius:999px;margin-bottom:18px;font-weight:600;
+  }
+  h1{font-size:34px;line-height:1.25;font-weight:700;letter-spacing:-.01em;margin-bottom:14px}
+  h1 .grad{background:linear-gradient(100deg,#4c9aff,#b18cff 60%,#ff7b9c);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{color:var(--text-dim);font-size:16px;max-width:760px}
+  .meta-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+  .pill{font-size:12.5px;color:var(--text-dim);background:var(--bg-soft);border:1px solid var(--line);padding:5px 12px;border-radius:999px}
+
+  /* toc */
+  nav.toc{
+    background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px 22px;margin-bottom:44px;
+  }
+  nav.toc .t{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint);margin-bottom:12px;font-weight:600}
+  nav.toc ol{list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px 24px}
+  nav.toc li a{color:var(--text-dim);font-size:14px;display:block;padding:3px 0}
+  nav.toc li a:hover{color:var(--text)}
+  nav.toc .num{color:var(--accent);font-family:var(--mono);font-size:12px;margin-right:8px}
+
+  section{margin-bottom:56px;scroll-margin-top:24px}
+  h2{font-size:23px;font-weight:700;margin-bottom:8px;letter-spacing:-.01em;display:flex;align-items:center;gap:12px}
+  h2 .idx{
+    font-family:var(--mono);font-size:13px;color:var(--accent);
+    background:var(--accent-soft);border:1px solid rgba(76,154,255,.25);
+    width:30px;height:30px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;flex:none;
+  }
+  h2+.lead{color:var(--text-dim);margin-bottom:22px;font-size:14.5px}
+  h3{font-size:16px;font-weight:650;margin:26px 0 12px;color:var(--text)}
+
+  /* cards / grid */
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px 20px;transition:border-color .2s,transform .2s;
+  }
+  .card:hover{border-color:#3a4453}
+  .card h4{font-size:15px;font-weight:650;margin-bottom:6px}
+  .card p{font-size:13.5px;color:var(--text-dim);margin:0}
+  .card .tag{font-size:11px;font-family:var(--mono);color:var(--text-faint);display:block;margin-top:10px;word-break:break-all}
+
+  /* route cards */
+  .route{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:20px 22px;position:relative;overflow:hidden;
+  }
+  .route::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent)}
+  .route.rec::before{background:var(--green)}
+  .route.legacy::before{background:var(--text-faint)}
+  .route.hybrid::before{background:var(--purple)}
+  .route .head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  .route .head h4{font-size:16px;font-weight:650}
+  .route .flag{font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid}
+  .flag.rec{color:var(--green);border-color:rgba(63,185,80,.4);background:var(--green-soft)}
+  .flag.legacy{color:var(--text-faint);border-color:var(--line);background:var(--bg-soft)}
+  .flag.hybrid{color:var(--purple);border-color:rgba(177,140,255,.4);background:rgba(177,140,255,.1)}
+  .route p{font-size:13.5px;color:var(--text-dim)}
+  .route .specs{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .spec{font-size:12px;font-family:var(--mono);color:var(--text-dim);background:var(--bg-soft);border:1px solid var(--line-soft);padding:3px 9px;border-radius:6px}
+
+  /* link list */
+  .linkgroup{margin-bottom:22px}
+  .linkgroup .gh{
+    font-size:13px;font-weight:650;color:var(--text);margin-bottom:10px;padding-bottom:8px;
+    border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:9px;
+  }
+  .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  ul.links{list-style:none}
+  ul.links li{padding:7px 0;border-bottom:1px solid var(--line-soft);display:flex;flex-direction:column;gap:2px}
+  ul.links li:last-child{border-bottom:none}
+  ul.links a{font-size:14px;font-weight:550}
+  ul.links .desc{font-size:12.5px;color:var(--text-faint)}
+  ul.links .path{font-size:11.5px;font-family:var(--mono);color:var(--text-faint);word-break:break-all}
+
+  /* steps */
+  ol.steps{list-style:none;counter-reset:s;position:relative}
+  ol.steps::before{content:"";position:absolute;left:15px;top:10px;bottom:14px;width:1px;background:var(--line)}
+  ol.steps li{position:relative;padding:0 0 20px 46px;counter-increment:s}
+  ol.steps li::before{
+    content:counter(s);position:absolute;left:0;top:0;width:31px;height:31px;border-radius:50%;
+    background:var(--card-2);border:1px solid var(--line);color:var(--accent);
+    font-family:var(--mono);font-size:13px;display:flex;align-items:center;justify-content:center;font-weight:600;
+  }
+  ol.steps li h4{font-size:14.5px;font-weight:650;margin-bottom:5px}
+  ol.steps li p{font-size:13.5px;color:var(--text-dim)}
+  ol.steps li:last-child{padding-bottom:0}
+
+  code,pre{font-family:var(--mono)}
+  code{background:var(--bg-soft);border:1px solid var(--line-soft);padding:1.5px 6px;border-radius:5px;font-size:12.5px;color:#c9d6e5}
+  pre{
+    background:#0b0d11;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+    overflow-x:auto;font-size:12.5px;line-height:1.65;color:#c9d6e5;margin:10px 0;
+  }
+  pre .c{color:var(--text-faint)}
+
+  /* callout */
+  .note{
+    border-left:3px solid var(--accent);background:var(--accent-soft);
+    border-radius:0 10px 10px 0;padding:13px 18px;font-size:13.5px;color:var(--text-dim);margin:14px 0;
+  }
+  .note.warn{border-left-color:var(--amber);background:rgba(227,179,65,.09)}
+  .note.tip{border-left-color:var(--green);background:rgba(63,185,80,.09)}
+  .note.danger{border-left-color:var(--red);background:rgba(255,107,129,.09)}
+  .note strong{color:var(--text)}
+
+  /* table */
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:12px 0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th{background:var(--card-2);text-align:left;padding:10px 14px;font-weight:650;color:var(--text);border-bottom:1px solid var(--line);font-size:12.5px}
+  td{padding:10px 14px;border-bottom:1px solid var(--line-soft);color:var(--text-dim);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td code{font-size:12px}
+
+  /* status */
+  .st{font-weight:650;white-space:nowrap}
+  .st.ok{color:var(--green)}
+  .st.miss{color:var(--red)}
+  .st.warn{color:var(--amber)}
+
+  /* kpi */
+  .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:18px 0}
+  .kpi .k{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .k .n{font-size:22px;font-weight:700;line-height:1.2}
+  .kpi .k .l{font-size:12.5px;color:var(--text-faint);margin-top:2px}
+  .kpi .k.g .n{color:var(--green)}
+  .kpi .k.r .n{color:var(--red)}
+  .kpi .k.a .n{color:var(--amber)}
+
+  footer{border-top:1px solid var(--line);padding-top:24px;color:var(--text-faint);font-size:12.5px}
+  footer .upd{color:var(--text-dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="badge">Developer Reference</span>
+    <h1>Photoshop 插件开发指南<br><span class="grad">资料总库 · 环境体检 · AI 辅助开发</span></h1>
+    <p class="sub">把 Adobe 官方文档、教程与工具链按用途整理成索引，附本机开发环境实测结果与补齐步骤。主线技术 <strong>UXP</strong>，PS 22.0+ 通用。</p>
+    <div class="meta-row">
+      <span class="pill">更新 2026-10-09</span>
+      <span class="pill">主线：UXP Plugins</span>
+      <span class="pill">宿主：Photoshop 2026 (v27.2)</span>
+      <span class="pill">Manifest v5</span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <div class="t">目录</div>
+    <ol>
+      <li><a href="#env-check"><span class="num">01</span>本机环境体检</a></li>
+      <li><a href="#route"><span class="num">02</span>技术路线选型</a></li>
+      <li><a href="#docs"><span class="num">03</span>官方文档地图</a></li>
+      <li><a href="#learn"><span class="num">04</span>教程与学习资源</a></li>
+      <li><a href="#tools"><span class="num">05</span>工具链全景</a></li>
+      <li><a href="#setup"><span class="num">06</span>环境搭建步骤</a></li>
+      <li><a href="#samples"><span class="num">07</span>官方示例速查</a></li>
+      <li><a href="#ai"><span class="num">08</span>AI 辅助开发</a></li>
+      <li><a href="#pitfall"><span class="num">09</span>常见坑与备忘</a></li>
+    </ol>
+  </nav>
+
+  <!-- ============ 01 环境体检 ============ -->
+  <section id="env-check">
+    <h2><span class="idx">01</span>本机环境体检</h2>
+    <p class="lead">2026-10-09 对开发机做了实测扫描。结论很干净：<strong>宿主和 Node 工具链都已就位，只差一条「Creative Cloud → UXP Developer Tool」的安装通道。</strong></p>
+
+    <div class="kpi">
+      <div class="k g"><div class="n">7</div><div class="l">已就位组件</div></div>
+      <div class="k r"><div class="n">3</div><div class="l">缺失组件</div></div>
+      <div class="k a"><div class="n">1</div><div class="l">待留意风险</div></div>
+      <div class="k"><div class="n">v27.2</div><div class="l">Photoshop 版本</div></div>
+    </div>
+
+    <table>
+      <thead><tr><th>组件</th><th>状态</th><th>实测结果 / 位置</th></tr></thead>
+      <tbody>
+        <tr><td>Photoshop</td><td class="st ok">✅ 已装</td><td>2026（v27.2）<br><code>D:\software\adobe\Adobe Photoshop 2026\</code></td></tr>
+        <tr><td>PS 内置 UXP 运行时</td><td class="st ok">✅ 正常</td><td><code>...\Required\UXP\</code> 含 <code>photoshop.js</code> / <code>constants.js</code> / <code>host-theme.css</code>，UXP 通道可用</td></tr>
+        <tr><td>UXP 插件存储</td><td class="st ok">✅ 存在</td><td><code>%APPDATA%\Adobe\UXP\PluginsStorage\PHSP\27\</code>（对应 PS 27）</td></tr>
+        <tr><td>Node.js</td><td class="st ok">✅ 已装</td><td>v22.22.2（偶数版，符合官方建议）</td></tr>
+        <tr><td>npm</td><td class="st ok">✅ 已装</td><td>10.9.7，registry 已指向 <code>registry.npmmirror.com</code>（国内镜像）</td></tr>
+        <tr><td>git</td><td class="st ok">✅ 已装</td><td>2.55.0</td></tr>
+        <tr><td>Python</td><td class="st ok">✅ 已装</td><td>3.13.14（跑 adb-mcp 这类 MCP 桥需要）</td></tr>
+        <tr><td><strong>UXP Developer Tool (UDT)</strong></td><td class="st miss">❌ 缺失</td><td>全盘未找到 —— <strong>当前最大缺口，开发必装</strong></td></tr>
+        <tr><td><strong>Creative Cloud 桌面端</strong></td><td class="st miss">❌ 缺失</td><td>未找到 <code>Creative Cloud.exe</code>；而 UDT 只能经它安装</td></tr>
+        <tr><td>VS Code</td><td class="st miss">❌ 缺失</td><td>官方推荐编辑器，可用 winget 一键装</td></tr>
+        <tr><td>开发者模式 settings.json</td><td class="st warn">⚠️ 未配置</td><td><code>%CommonProgramFiles%\Adobe\UXP\Developer\settings.json</code> 不存在（装 UDT 后由它写入）</td></tr>
+      </tbody>
+    </table>
+
+    <div class="note warn"><strong>需要留意：</strong>本机 Photoshop 来自离线安装包，而非 Creative Cloud 安装。UDT 通过 UXP 宿主进程连接 PS，通常可用；一旦出现「UDT 左侧看不到 Photoshop / 插件加载失败」，优先用 CC 桌面端重装一次 Photoshop 来消除安装来源差异。</div>
+
+    <div class="note tip"><strong>最短补齐路径：</strong>装 CC 桌面端 → 在 CC 里装 UXP Developer Tools → 首次启动点 Enable 开开发者模式 → 在 PS 里勾选「设置 → 插件 → 启用开发人员模式」→ 重启 PS。即可开工。</div>
+    <p style="font-size:13.5px;color:var(--text-dim)">详细清单与逐步操作见同目录 <code>01-官方文档与环境清单.md</code> 的 §0 与 §5。</p>
+  </section>
+
+  <!-- ============ 02 技术路线 ============ -->
+  <section id="route">
+    <h2><span class="idx">02</span>技术路线选型</h2>
+    <p class="lead">Adobe 在 Photoshop v22.0（2021）引入新扩展平台 <strong>UXP</strong>，逐步取代旧的 CEP / ExtendScript。<strong>新项目一律走 UXP</strong>，旧技术仅在维护老插件时才需要了解。</p>
+
+    <div class="grid g2">
+      <div class="route rec">
+        <div class="head"><h4>UXP Plugins（插件）</h4><span class="flag rec">推荐 · 主线</span></div>
+        <p>用 HTML / CSS / JavaScript 构建面板与模态对话框，可直接调用 Photoshop DOM API 与 UXP API，无需字符串序列化桥接。是用 AI 开发的首选形态。</p>
+        <div class="specs"><span class="spec">PS ≥ 22.0</span><span class="spec">JS / HTML / CSS</span><span class="spec">.ccx</span><span class="spec">持续开发</span></div>
+      </div>
+      <div class="route">
+        <div class="head"><h4>UXP Scripts（脚本）</h4><span class="flag rec" style="color:var(--green);border-color:rgba(63,185,80,.4);background:var(--green-soft)">入门最快</span></div>
+        <p>直接写现代 JS 自动化重复任务，无需打包和完整插件结构，适合验证想法、跑批处理。文件后缀 <code>.psjs</code>。</p>
+        <div class="specs"><span class="spec">PS ≥ 23.5</span><span class="spec">JavaScript ES6+</span><span class="spec">.psjs</span></div>
+      </div>
+      <div class="route hybrid">
+        <div class="head"><h4>UXP Hybrid Plugins（混合）</h4><span class="flag hybrid">进阶</span></div>
+        <p>JS / HTML / CSS 配合 C++（WASM 原生模块），适合需要高性能计算或访问原生能力的场景。</p>
+        <div class="specs"><span class="spec">PS ≥ 24.2</span><span class="spec">C++ + JS</span><span class="spec">.ccx</span></div>
+      </div>
+      <div class="route legacy">
+        <div class="head"><h4>CEP + ExtendScript</h4><span class="flag legacy">已停止开发</span></div>
+        <p>旧插件体系（PS 14–20），Adobe 已不再积极开发，未来将逐步移除。<strong>仅用于维护存量插件</strong>，且不兼容 Apple Silicon 与 Windows ARM。产物 <code>.zxp</code>。</p>
+        <div class="specs"><span class="spec">PS 14–20</span><span class="spec">ExtendScript (ES3)</span></div>
+      </div>
+      <div class="route legacy">
+        <div class="head"><h4>C++ Plug-in SDK</h4><span class="flag legacy">底层</span></div>
+        <p>最底层的原生插件（过滤器、图像格式、选择工具等），性能最强但门槛最高。PS CS3+ 均支持。</p>
+        <div class="specs"><span class="spec">C++</span><span class="spec">DLL / EXE / DMG</span></div>
+      </div>
+      <div class="route">
+        <div class="head"><h4>Photoshop API（云端 REST）</h4><span class="flag rec" style="color:var(--green);border-color:rgba(63,185,80,.4);background:var(--green-soft)">服务端</span></div>
+        <p>在云端用任意语言调 REST API 批量处理图片，支持播放 Photoshop 动作。<strong>不是本机插件</strong>，适合服务端自动化。</p>
+        <div class="specs"><span class="spec">任意语言</span><span class="spec">REST / APIs</span></div>
+      </div>
+    </div>
+
+    <h3>产品形态：先想清楚是 Command 还是 Panel</h3>
+    <div class="grid g2">
+      <div class="card">
+        <h4>Command（命令）</h4>
+        <p>一次性动作：从菜单触发，执行一个任务后结束，只有可选的输入/确认对话框，没有常驻 UI。</p>
+        <span class="tag">entrypoints: [{ type: "command" }]</span>
+      </div>
+      <div class="card">
+        <h4>Panel（面板）</h4>
+        <p>常驻工作区：停靠在宿主自带面板旁边，整个会话期间持续存在、可交互。复杂工具几乎都是这个形态。</p>
+        <span class="tag">entrypoints: [{ type: "panel" }]</span>
+      </div>
+    </div>
+    <div class="note">产品形态未定也不必卡住：两者可以同时存在于一个插件里。建议先各做一个最小样例找手感，再定方向。</div>
+  </section>
+
+  <!-- ============ 03 官方文档地图 ============ -->
+  <section id="docs">
+    <h2><span class="idx">03</span>官方文档地图</h2>
+    <p class="lead">全部来自 <code>developer.adobe.com</code> 官方域名。2026 年 Adobe 把 UXP 文档重组为跨应用的 <strong>UXP Hub</strong>；Photoshop 专属文档仍在 <code>.../photoshop/uxp/2022/</code> 路径下，内容持续更新（最近一次 2026-05）。</p>
+
+    <div class="linkgroup">
+      <div class="gh"><span class="dot" style="background:var(--accent)"></span>总入口（新 UXP Hub）</div>
+      <ul class="links">
+        <li>
+          <a href="https://developer.adobe.com/uxp/" target="_blank">UXP Hub — 跨应用总入口</a>
+          <span class="desc">UXP 是什么、能做什么、Command vs Panel、按宿主选文档（PS / InDesign / Premiere / Media Encoder）</span>
+          <span class="path">developer.adobe.com/uxp/</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/uxp/guides/" target="_blank">UXP Guides</a>
+          <span class="desc">完整开发路径：环境准备 → 核心概念 → 教程 → 打包分发</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/uxp/uxp-api/" target="_blank">UXP API（跨宿主共享能力）</a>
+          <span class="desc">文件 I/O、网络、存储、UI 等平台能力，各宿主通用</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/uxp/migration-center/" target="_blank">CEP → UXP 迁移中心</a>
+          <span class="desc">已有 CEP 插件要迁移时从这里开始</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/" target="_blank">Photoshop 扩展性总入口</a>
+          <span class="desc">所有扩展方式的对比表与选型指南</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="linkgroup">
+      <div class="gh"><span class="dot" style="background:var(--green)"></span>API 参考（日常最常用）</div>
+      <ul class="links">
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/ps-reference/" target="_blank">Photoshop DOM API Reference</a>
+          <span class="desc">app / document / layer / selection / action 等，ExtendScript 的后继者。最常翻的一本</span>
+          <span class="path">.../photoshop/uxp/2022/ps-reference/</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/uxp-api/" target="_blank">UXP API Reference（PS 版）</a>
+          <span class="desc">文件、网络、存储、UI。注意与浏览器 API 的差异</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/uxp-api/reference-spectrum/spectrum-uxp-widgets/user-interface/" target="_blank">Spectrum UXP 组件参考</a>
+          <span class="desc">官方 UI 组件（sp-button 等），让插件外观与 PS 原生一致</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/ps-reference/media/batchplay" target="_blank">batchPlay（关键）</a>
+          <span class="desc">DOM API 未覆盖的功能靠它回放 Action Manager 动作。写插件几乎必用</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/ps-reference/media/executeasmodal" target="_blank">executeAsModal（必读）</a>
+          <span class="desc">所有修改文档的操作必须包在模态作用域内，这是新范式的核心约束</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="linkgroup">
+      <div class="gh"><span class="dot" style="background:var(--purple)"></span>配置 / Manifest（v5 为当前版本）</div>
+      <ul class="links">
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/guides/uxp-guide/uxp-misc/manifest-v5/" target="_blank">UXP Manifest v5 规范</a>
+          <span class="desc">当前版本，需 PS ≥ 23.3 / UXP 6.0+。新增权限模型与 WebView</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/guides/uxp-guide/uxp-misc/manifest-v4/" target="_blank">Manifest v4（历史版本）</a>
+          <span class="desc">字段逐一说明，读 v5 的差异对照时用</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/guides/uxp-guide/uxp-misc/manifest-v4/photoshop-manifest/" target="_blank">Photoshop Manifest 附录</a>
+          <span class="desc">PS 特有字段与版本破坏性变更说明</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="note"><strong>Manifest v5 三个必记要点：</strong>① 顶层写 <code>"manifestVersion": 5</code>，UI 入口用 <code>entrypoints</code>（v4 时代叫 <code>uiEntryPoints</code>）；② <strong>权限默认全关</strong>，用到的能力必须在 <code>requiredPermissions</code> 显式声明；③ 权限类型：<code>network.domains</code> / <code>clipboard</code> / <code>localFileSystem</code>(request·plugin·fullAccess) / <code>launchProcess</code> / <code>webview</code> / <code>ipc</code> / <code>enableUserInfo</code>。</div>
+
+<pre><span class="c">// 最小可用 manifest.json（官方示例精简）</span>
+{
+  "manifestVersion": 5,
+  "id": "com.yourname.plugin",
+  "name": "My Plugin",
+  "version": "1.0.0",
+  "main": "index.html",
+  "host": { "app": "PS", "minVersion": "23.3.0" },
+  "entrypoints": [
+    { "type": "panel", "id": "mainPanel",
+      "label": { "default": "My Panel" },
+      "minimumSize": { "width": 230, "height": 200 } }
+  ],
+  "requiredPermissions": { "localFileSystem": "request" }
+}</pre>
+
+    <div class="linkgroup">
+      <div class="gh"><span class="dot" style="background:var(--amber)"></span>工具 · 示例 · 设计</div>
+      <ul class="links">
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/guides/devtool/" target="_blank">UXP Developer Tool（UDT）文档</a>
+          <span class="desc">创建 / 加载 / 调试 / 打包插件的官方工具，开发流程核心</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/guides/devtool/udt-walkthrough/" target="_blank">UDT 走查教程（建议先读）</a>
+          <span class="desc">从建工程到面板跑起来的手把手实操，含连接失败排查</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/guides/devtool/installation/" target="_blank">UDT 安装指南</a>
+          <span class="desc">安装步骤与开发者模式（Developer Mode）启用方式</span>
+        </li>
+        <li>
+          <a href="https://github.com/AdobeDocs/uxp-photoshop-plugin-samples" target="_blank">官方示例仓库 uxp-photoshop-plugin-samples</a>
+          <span class="desc">Vanilla / React / Vue / Svelte / TS / WASM 全套 starter，学与抄都靠它</span>
+          <span class="path">github.com/AdobeDocs/uxp-photoshop-plugin-samples</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/guides/code-samples/" target="_blank">Code Samples</a>
+          <span class="desc">官方整理的代码片段索引</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/photoshop/uxp/2022/design/" target="_blank">Design Guides</a>
+          <span class="desc">插件 UI/UX 设计规范，保证体验与 PS 一致</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="linkgroup">
+      <div class="gh"><span class="dot" style="background:var(--pink)"></span>发布 · 社区</div>
+      <ul class="links">
+        <li>
+          <a href="https://developer.adobe.com/console" target="_blank">Adobe Developer Console</a>
+          <span class="desc">申请正式插件 ID、管理分发与凭据（发布必须）</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/uxp/guides/how-to/distribution/overview/" target="_blank">分发总览（打包 / 上架 / 企业内分发）</a>
+          <span class="desc">三条分发路径的对比与选择</span>
+        </li>
+        <li>
+          <a href="https://forums.creativeclouddeveloper.com/" target="_blank">Adobe Creative Cloud Developer Forums</a>
+          <span class="desc">官方开发者论坛，遇到问题优先在这里搜/问</span>
+        </li>
+        <li>
+          <a href="https://developer.adobe.com/uxp/faq/" target="_blank">UXP FAQ</a>
+          <span class="desc">安装、打包、合规等常见问题的官方快答</span>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ 04 教程与学习资源 ============ -->
+  <section id="learn">
+    <h2><span class="idx">04</span>教程与学习资源</h2>
+    <p class="lead">官方教程偏「流程正确」，社区教程偏「坑在哪里」。两组配合看效率最高。</p>
+
+    <h3>官方教程（按推荐顺序）</h3>
+    <div class="grid g2">
+      <div class="card">
+        <h4>① UDT 走查教程</h4>
+        <p>从「PS 已装、UDT 已装」到面板跑起来的完整实操，包含连接失败时的错误日志排查。</p>
+        <span class="tag">.../guides/devtool/udt-walkthrough/</span>
+      </div>
+      <div class="card">
+        <h4>② 创建你的第一个插件</h4>
+        <p>官方 Getting Started 系列，讲清工程结构与加载流程。</p>
+        <span class="tag">.../guides/getting-started/creating-your-first-plugin/</span>
+      </div>
+      <div class="card">
+        <h4>③ Build Your First Plugin（跨应用）</h4>
+        <p>新版 UXP 通用教程，Photoshop / Premiere / InDesign 通用流程。</p>
+        <span class="tag">developer.adobe.com/uxp/guides/tutorials/build-your-first-plugin/</span>
+      </div>
+      <div class="card">
+        <h4>④ Panels 与 Commands</h4>
+        <p>决定产品形态的核心概念：一次性命令 vs 常驻面板，以及如何在一个插件里组合两者。</p>
+        <span class="tag">UXP Hub → What You Can Build</span>
+      </div>
+    </div>
+
+    <h3>视频与系统课程</h3>
+    <div class="grid g2">
+      <div class="card">
+        <h4>Davide Barranca：Adobe UXP — Things You Need to Know</h4>
+        <p>免费 YouTube 播放列表，约 3 小时以上，每集约 20 分钟并带时间码字幕，配套文字稿发布在其博客上。<br>
+        #2 文档导览 · #3 UDT 全流程 · #4 Panels/Commands 与 manifest · #5 同步 vs 异步 · #6–8 batchPlay 三部曲。</p>
+        <span class="tag">davidebarranca.com</span>
+      </div>
+      <div class="card">
+        <h4>Adobe Tech Blog：8 Steps to Your First Photoshop UXP Plugin</h4>
+        <p>上述视频的官方导读版，逐集提炼要点。适合先快速扫一遍建立全局观。</p>
+        <span class="tag">blog.developer.adobe.com</span>
+      </div>
+    </div>
+
+    <h3>社区博客与深度文章</h3>
+    <div class="grid g2">
+      <div class="card">
+        <h4>davidebarranca.com（国外元老）</h4>
+        <p>PS 脚本与插件开发先驱，出过书与课程。batchPlay 深挖系列是目前最系统的中文外资料。</p>
+        <span class="tag">davidebarranca.com</span>
+      </div>
+      <div class="card">
+        <h4>minifloppy.it：Photoshop Plugins With UXP</h4>
+        <p>从 UXP Script 切入的系列文章，讲清 <code>require</code> 模块（uxp / fs / shell / photoshop）、DOM vs batchPlay、脚本调试与对话框 UI，代码质量高。</p>
+        <span class="tag">minifloppy.it/posts/2023/photoshop-plugins-with-uxp-scripting/</span>
+      </div>
+      <div class="card">
+        <h4>uiscripting.com/resources（中文）</h4>
+        <p>中文圈的插件开发资源合集，CEP 与 UXP 双线，含工具、框架、论坛、脚本文档聚合入口。</p>
+        <span class="tag">uiscripting.com/resources</span>
+      </div>
+      <div class="card">
+        <h4>官方论坛（遇坑第一站）</h4>
+        <p>搜报错信息命中率最高；Adobe 工程师会参与回复 UXP 相关问题。</p>
+        <span class="tag">forums.creativeclouddeveloper.com</span>
+      </div>
+    </div>
+
+    <h3>建议的学习路径</h3>
+    <ol class="steps">
+      <li><h4>写一个 UXP Script（.psjs）</h4><p>不打包、不建工程，直接在 PS 里跑一段 JS 操作图层，先理解 <code>app</code> / <code>document</code> / <code>layer</code> 对象模型与异步写法。</p></li>
+      <li><h4>跑通 vanilla starter</h4><p>用 UDT 建 <code>ps-starter</code> / <code>hello-world-panel-js-sample</code>，理解 manifest、entrypoints、面板加载流程。</p></li>
+      <li><h4>进阶到框架 starter</h4><p>改用 <code>ui-react-starter</code> / <code>ui-vue-starter</code>，引入 Node 构建链，做更复杂的 UI。</p></li>
+      <li><h4>用 Alchemist + batchPlay 做真实功能</h4><p>录一段你常做的操作 → 生成 batchPlay → 包进 <code>executeAsModal</code> → 做成自己的工具按钮。</p></li>
+      <li><h4>打包发布</h4><p>UDT 一键打包 <code>.ccx</code>；上架 Marketplace 则去 Developer Console 申请正式插件 ID 并走审核。</p></li>
+    </ol>
+  </section>
+
+  <!-- ============ 05 工具链 ============ -->
+  <section id="tools">
+    <h2><span class="idx">05</span>工具链全景</h2>
+    <p class="lead">官方工具负责「跑起来」，社区工具负责「写得快」。下面这几个是实际会用到的全部。</p>
+
+    <table>
+      <thead><tr><th>工具</th><th>定位</th><th>获取方式 / 备注</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>UXP Developer Tool</strong><br><span style="font-size:12px;color:var(--text-faint)">UDT</span></td>
+          <td>官方 GUI：建 / 加载 / 热重载 / 调试 / 打包，含 Code Playground</td>
+          <td><strong>只能经 Creative Cloud 桌面端安装</strong>。启动需管理员权限</td>
+        </tr>
+        <tr>
+          <td>UDT CLI</td>
+          <td>命令行版开发工具，含 <code>uxp plugin test</code>（基于 WebDriverIO 的自动化 UI 测试）</td>
+          <td><code>github.com/adobe-uxp/devtools-cli</code></td>
+        </tr>
+        <tr>
+          <td><strong>Alchemist</strong><br><span style="font-size:12px;color:var(--text-faint)">强烈推荐</span></td>
+          <td>监听 PS 事件、反编译 <code>.atn</code> 动作文件、<strong>自动生成 batchPlay 代码</strong>、一键出插件骨架</td>
+          <td><code>github.com/jardicc/alchemist</code> ｜ 需 PS 24.2+。可装 <code>.ccx</code> 或走开发模式加载</td>
+        </tr>
+        <tr>
+          <td>adb-mcp</td>
+          <td>让 AI（Claude 等工具）通过 MCP 协议直接驱动 Photoshop / Premiere</td>
+          <td><code>github.com/mikechambers/adb-mcp</code> ｜ 需 PS 26.0+。三层架构：Python MCP Server + Node 代理（:3001）+ UXP 插件；PS 侧约 60+ 工具</td>
+        </tr>
+        <tr>
+          <td>TS 类型包</td>
+          <td>TypeScript 类型提示，显著减少 AI 编造不存在的 API</td>
+          <td><code>@adobe-uxp-types/photoshop</code> + <code>@adobe-uxp-types/uxp</code>（社区维护、非 Adobe 官方，目前最活跃）；旧包 <code>uxp-types</code> 已停更</td>
+        </tr>
+        <tr>
+          <td>Spectrum Web Components</td>
+          <td>新版官方组件库，UI 与 Adobe 生态一致</td>
+          <td>见 <code>swc-uxp-starter</code>。注意锁死版本号</td>
+        </tr>
+        <tr>
+          <td>ExtendScript Debugger</td>
+          <td>VS Code 插件，调试旧 <code>.jsx</code></td>
+          <td>仅 CEP / ExtendScript 路线需要</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note tip"><strong>AI 辅助黄金组合：</strong>Alchemist 把目标操作「录」成 batchPlay 代码 → 连同官方 API 文档贴给 AI → AI 产出插件逻辑 → UDT 的 Load &amp; Watch 实时验证 → 报错与日志回喂 AI 迭代。AI 不会凭空写出 batchPlay 描述符，这一步必须靠工具。</div>
+  </section>
+
+  <!-- ============ 06 环境搭建 ============ -->
+  <section id="setup">
+    <h2><span class="idx">06</span>环境搭建步骤</h2>
+    <p class="lead">最小可用环境只有两样：<strong>Photoshop</strong> + <strong>UXP Developer Tool</strong>，两者都通过 Creative Cloud 桌面端安装。只有用 React/Vue 等框架时才需要 Node 构建链。</p>
+
+    <h3>必需组件（对照本机现状）</h3>
+    <table>
+      <thead><tr><th>组件</th><th>本机</th><th>获取方式</th></tr></thead>
+      <tbody>
+        <tr><td>Adobe Creative Cloud 桌面端</td><td class="st miss">❌ 缺失</td><td><code>creativecloud.adobe.com/apps/download/creative-cloud</code></td></tr>
+        <tr><td>Adobe Photoshop</td><td class="st ok">✅ v27.2</td><td>已装，走 UXP 通道无障碍</td></tr>
+        <tr><td>UXP Developer Tool（UDT）</td><td class="st miss">❌ 缺失</td><td>CC → Apps → 搜 "UXP Developer Tools" → Install</td></tr>
+        <tr><td>代码编辑器</td><td class="st miss">❌ 缺失</td><td>推荐 VS Code：<code>winget install Microsoft.VisualStudioCode</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3>可选组件（框架 / 打包 / AI 直连）</h3>
+    <table>
+      <thead><tr><th>工具</th><th>本机</th><th>用途与版本建议</th></tr></thead>
+      <tbody>
+        <tr><td><code>Node.js</code></td><td class="st ok">✅ v22.22.2</td><td>构建与依赖管理。官方建议 LTS 偶数大版本，starter 要求 ≥ 14.20.0</td></tr>
+        <tr><td><code>npm</code></td><td class="st ok">✅ 10.9.7</td><td>包管理器，已指向国内镜像 <code>registry.npmmirror.com</code></td></tr>
+        <tr><td><code>yarn</code></td><td class="st warn">未装（无需装）</td><td>示例仓库多用 yarn；Node 自带 corepack，执行 <code>corepack enable</code> 即可</td></tr>
+        <tr><td>TS 类型</td><td class="st warn">未装（按需）</td><td><code>npm i -D @adobe-uxp-types/photoshop @adobe-uxp-types/uxp</code></td></tr>
+        <tr><td><code>Python</code></td><td class="st ok">✅ 3.13.14</td><td>跑 adb-mcp 这类 MCP 桥需要</td></tr>
+      </tbody>
+    </table>
+
+    <h3>补齐缺口：五步走</h3>
+    <ol class="steps">
+      <li>
+        <h4>装 Creative Cloud 桌面端并安装 UDT</h4>
+        <p>下载安装 CC 桌面端 → 登录 Adobe 账号 → <strong>Apps</strong> 分区搜索 "UXP Developer Tools" → 点 Install。UDT 目前<strong>无法单独下载</strong>，CC 是唯一官方通道。</p>
+      </li>
+      <li>
+        <h4>启用开发者模式（Developer Mode）</h4>
+        <p>首次启动 UDT 会弹窗提示，点 <strong>Enable</strong> 并授予管理员权限。<br>
+        兜底（需管理员）：在 <code>%CommonProgramFiles%\Adobe\UXP\Developer\</code> 建 <code>settings.json</code>，内容 <code>{"developer": true}</code>（macOS 为 <code>/Library/Application Support/Adobe/UXP/Developer/</code>）。<br>
+        同时在 Photoshop 内：<strong>设置 → 插件 → 勾选「启用开发人员模式」</strong>，然后重启 PS。</p>
+      </li>
+      <li>
+        <h4>创建插件工程</h4>
+        <p>两种方式：① UDT 里点 <strong>Create Plugin</strong>，填 Name / Plugin ID / Host = Adobe Photoshop / 版本，模板选 <code>ps-starter</code>（vanilla）或 <code>ps-react-starter</code>。<br>
+        ② 克隆官方示例仓库里合适的 starter：</p>
+        <pre>git clone https://github.com/AdobeDocs/uxp-photoshop-plugin-samples.git
+cd uxp-photoshop-plugin-samples/ui-react-starter
+corepack enable          <span class="c"># 如需 yarn，Node 自带，无需另装</span>
+yarn install &amp;&amp; yarn build   <span class="c"># 生成 dist/</span></pre>
+      </li>
+      <li>
+        <h4>加载到 Photoshop 调试</h4>
+        <p>保持 Photoshop 运行 → UDT 左侧应出现 <strong>"Adobe Photoshop"</strong>（含宿主版本与 UXP 版本）→ 插件行点 <strong>Load</strong>（或 ••• → Load）。<br>
+        <strong>框架工程注意：</strong>加载路径要指向 <code>dist/manifest.json</code>，而不是源码根目录。</p>
+      </li>
+      <li>
+        <h4>迭代与验证</h4>
+        <p>Watch 模式下改 HTML/CSS/JS 自动热重载；<strong>改 <code>manifest.json</code> 不会热重载</strong>，必须先 Unload 再 Load。调试用 ••• → Debug 打开开发者控制台。</p>
+      </li>
+    </ol>
+
+    <div class="note"><strong>最小工程结构：</strong><code>manifest.json</code>（配置）+ <code>index.html</code>（面板 UI）+ <code>index.js</code>（逻辑）+ <code>icons/</code>（图标）。框架工程在此基础上加 <code>package.json</code> / <code>webpack.config.js</code> / <code>src/</code>，产物在 <code>dist/</code>。</div>
+  </section>
+
+  <!-- ============ 07 示例速查 ============ -->
+  <section id="samples">
+    <h2><span class="idx">07</span>官方示例速查</h2>
+    <p class="lead">按需求挑，不要从零写。仓库：<code>github.com/AdobeDocs/uxp-photoshop-plugin-samples</code></p>
+    <table>
+      <thead><tr><th>示例</th><th>技术栈</th><th>适合场景</th></tr></thead>
+      <tbody>
+        <tr><td><code>hello-world-panel-js-sample</code></td><td>Vanilla JS</td><td>最小面板，第一次跑通用它</td></tr>
+        <tr><td><code>ps-starter</code> / <code>quick-layers-starter</code></td><td>Vanilla JS</td><td>UDT 内置模板，图层操作入门</td></tr>
+        <tr><td><code>ui-react-starter</code></td><td>React</td><td>React 面板</td></tr>
+        <tr><td><code>ui-vue-starter</code> / <code>ui-vue-3-starter</code></td><td>Vue</td><td>Vue 面板</td></tr>
+        <tr><td><code>ui-svelte-starter</code></td><td>Svelte</td><td>Svelte 面板</td></tr>
+        <tr><td><code>typescript-webpack-sample</code></td><td>TS + Webpack</td><td>类型安全的正式工程</td></tr>
+        <tr><td><code>swc-uxp-starter</code></td><td>Spectrum Web Components</td><td>用新版 SWC 组件库</td></tr>
+        <tr><td><code>desktop-helper-sample</code></td><td>Electron + Socket.io</td><td>插件与外部桌面程序双向通信</td></tr>
+        <tr><td><code>wasm-rust-sample</code></td><td>Rust + WASM</td><td>高性能原生计算</td></tr>
+        <tr><td><code>web-service-call-js-sample</code></td><td>Fetch + batchPlay</td><td>调外部 Web API</td></tr>
+        <tr><td><code>oauth-workflow-sample</code></td><td>Express</td><td>OAuth 登录第三方服务</td></tr>
+        <tr><td><code>secure-storage-sample</code></td><td>—</td><td>安全存储凭据</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============ 08 AI 辅助开发 ============ -->
+  <section id="ai">
+    <h2><span class="idx">08</span>AI 辅助开发</h2>
+    <p class="lead">用 AI 写 PS 插件完全可行，但必须理解 UXP 的边界——它不是浏览器，也不是 Node。把正确的上下文喂给 AI，是效果好坏的分水岭。</p>
+
+    <h3>必须先让 AI 知道的硬约束</h3>
+    <div class="grid g2">
+      <div class="card">
+        <h4>UXP ≠ 浏览器 / ≠ Node</h4>
+        <p>只支持 HTML/CSS/JS 的<strong>子集</strong>。引宿主模块用 <code>require("photoshop")</code> / <code>require("uxp")</code>，不是 <code>import</code> 那套；没有完整 DOM。</p>
+      </div>
+      <div class="card">
+        <h4>改文档必须包模态作用域</h4>
+        <p>所有会修改文档的操作都要放进 <code>core.executeAsModal(async () =&gt; {...})</code>，否则报错（模态被占用返回错误码 9）。这是 AI 最容易写错的地方。</p>
+      </div>
+      <div class="card">
+        <h4>API 未覆盖 → 用 batchPlay</h4>
+        <p>Photoshop DOM API 仍在完善，未暴露的功能靠 batchPlay 回放 Action Manager 描述符。<strong>不能让 AI 凭空编，要用 Alchemist 录。</strong></p>
+      </div>
+      <div class="card">
+        <h4>权限默认全关（v5）</h4>
+        <p>文件、网络、剪贴板、本地存储等必须在 manifest 的 <code>requiredPermissions</code> 显式声明，沙盒不会默认放开。</p>
+      </div>
+    </div>
+
+    <h3>给 AI 的「知识来源」建议</h3>
+    <table>
+      <thead><tr><th>方式</th><th>做法</th><th>适用</th></tr></thead>
+      <tbody>
+        <tr><td>文档上下文</td><td>把 DOM API / UXP API / Manifest v5 / Spectrum 文档关键页贴进会话或做成知识库</td><td>通用编码辅助</td></tr>
+        <tr><td>官方示例当模板</td><td>让 AI 参考 <code>uxp-photoshop-plugin-samples</code> 里的同类 starter 再改</td><td>快速起步</td></tr>
+        <tr><td>TS 类型定义</td><td>引入 <code>@adobe-uxp-types/photoshop</code>，让 AI 有类型提示、减少瞎编 API</td><td>TypeScript 工程</td></tr>
+        <tr><td>Alchemist 录 batchPlay</td><td>录出真实描述符再交给 AI 改，而不是让 AI 猜</td><td>功能实现</td></tr>
+        <tr><td>MCP 直连</td><td>用 <code>adb-mcp</code> 让 AI 直接驱动 PS 并自我验证</td><td>自动化与验证</td></tr>
+      </tbody>
+    </table>
+
+    <h3>可直接粘贴给 AI 的上下文模板</h3>
+<pre><span class="c">【项目】Photoshop UXP 插件开发</span>
+<span class="c">【宿主】Photoshop 2026 (27.x)，Windows</span>
+<span class="c">【规范】manifest v5；UI 用 HTML/CSS/JS（UXP 子集）+ Spectrum 组件</span>
+<span class="c">【硬约束】</span>
+1. UXP 不是浏览器也不是 Node：引模块用 require("photoshop") / require("uxp")，不是 import。
+2. 任何修改文档的操作必须包在 core.executeAsModal(async () =&gt; {...}) 内。
+3. DOM API 未覆盖的能力，用 batchPlay 回放 Action Manager 描述符（不要编造 DOM 方法）。
+4. 文件/网络/剪贴板/本地存储等权限必须在 manifest 的 requiredPermissions 显式声明。
+5. 面板入口用 entrypoints（type: "panel"），命令入口用 type: "command"。
+<span class="c">【参考】Photoshop DOM API: developer.adobe.com/photoshop/uxp/2022/ps-reference/</span>
+<span class="c">        UXP API: developer.adobe.com/photoshop/uxp/2022/uxp-api/</span>
+<span class="c">        Manifest v5: developer.adobe.com/photoshop/uxp/2022/guides/uxp-guide/uxp-misc/manifest-v5/</span>
+<span class="c">【产出要求】给出完整可运行文件 + manifest，并标注需要声明的权限。</span></pre>
+  </section>
+
+  <!-- ============ 09 坑 ============ -->
+  <section id="pitfall">
+    <h2><span class="idx">09</span>常见坑与备忘</h2>
+    <div class="grid g2">
+      <div class="card"><h4>改了 manifest 不生效</h4><p>manifest.json 不参与热重载。改完必须 Unload → 重新 Load。</p></div>
+      <div class="card"><h4>框架工程加载失败</h4><p>UDT 里要指向 <strong>dist/manifest.json</strong>，不是源码根目录。</p></div>
+      <div class="card"><h4>UDT 连不上 PS</h4><p>确认 PS ≥ 22.0、已开启开发人员模式、UDT 以管理员权限运行。</p></div>
+      <div class="card"><h4>改文档报错</h4><p>检查是否遗漏 <code>executeAsModal</code> 包裹；模态被占用会返回错误码 9。</p></div>
+      <div class="card"><h4>权限被拒</h4><p>v5 起权限默认全关，用到什么就声明什么；<code>openExternal</code> / <code>openPath</code> 会弹运行时同意框。</p></div>
+      <div class="card"><h4>依赖版本冲突</h4><p>Spectrum 组件跨版本有破坏性变更，建议<strong>锁定确切版本号</strong>而非用 <code>^</code>/<code>~</code>。</p></div>
+      <div class="card"><h4>npm / yarn 报错</h4><p>多为 Node 版本不匹配；本机已用偶数版 v22，必要时改用 npm。</p></div>
+      <div class="card"><h4><code>import</code> 报错</h4><p>UXP 里必须用 <code>require</code> 引宿主模块，不支持 ESM 的 <code>import</code>。</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <p class="upd">资料来源：Adobe 官方开发者站点（developer.adobe.com）与官方 GitHub 仓库，逐条核实于 2026-10-09。官方文档持续更新，具体版本号与字段请以官网为准。</p>
+    <p style="margin-top:8px">主要来源：UXP Hub · Photoshop UXP 官方文档 · UXP Manifest v5 规范 · uxp-photoshop-plugin-samples · Adobe Creative Cloud Developer Forums</p>
+  </footer>
+
+</div>
+</body>
+</html>
