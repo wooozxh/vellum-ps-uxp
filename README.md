@@ -20,14 +20,22 @@ Photoshop UXP 插件的开发工作区。宿主 **Photoshop 2026（v27.2）**，
 |---|---|---|
 | 把代码送进 PS | `uxp plugin load` | 脚本（AI） |
 | 改完自动生效 | `uxp plugin watch`（存盘即重载） | 脚本（AI） |
-| **把结果取回来** | **插件自己把结论写成 `report.json` 落盘** | 插件内代码 |
+| **把自检结果取回来** | **插件把结论写成 `report.json` 落盘** | 插件内代码 |
 | 读结果并判断对错 | `node tools/report.mjs` | 脚本（AI） |
-| 看面板长什么样 | 截图 Photoshop 窗口 | 脚本（AI） |
+| **把你点按钮之后发生了什么取回来** | **插件把事件追加到 `boot.log`** | 插件内代码 |
+| 看面板长什么样 | 截图 Photoshop 窗口（本环境不稳，现已不依赖它） | 脚本（AI） |
 
-第二列里最关键的是第三行。**反馈不走日志、只走文件**，因为只有文件是脚本能稳定读到的。
-为了不让「跑测试」依赖人去点按钮，`hello-uxp/` 下放了一个 `autorun.flag`：
-只要这个文件在，插件每次加载都会自动跑一遍全量自检并写报告。
-于是 **`reload` 就等于 `跑测试`**。想关掉自动自检就删掉那个文件。
+第二列里最关键的是「写文件」那两行。**反馈不走日志、只走文件**，因为只有文件是脚本能稳定读到的。
+`console.log` 只进调试窗口，外部脚本拿不到 —— 这是 UXP 的硬限制，只能绕、不能破。
+
+两种自动触发开关，都用**文件**控制（脚本可一键切换，且不污染代码）：
+
+| 开关文件 | 作用 | 用在哪 |
+|---|---|---|
+| `hello-uxp/autorun.flag` | 存在 = 每次加载自动跑**全量自检**并写 `report.json` | 探针插件 |
+| `hello-world/verify.flag` | 存在 = 每次加载跑一次**无痕演练**（建临时文档验证 batchPlay 描述符后关掉） | 样板插件 |
+
+于是 **`load` 就等于 `跑测试`**。想关掉自动自检，删掉对应文件即可。
 
 ---
 
@@ -46,6 +54,11 @@ Photoshop UXP 插件的开发工作区。宿主 **Photoshop 2026（v27.2）**，
 实测数据：`node tools/doctor.mjs` → **13/15，闭环关键项 5/5**；
 `hello-uxp` 探针插件加载后自检 **7/7 全通过**，`report.json` 落盘并被外部脚本读回。
 「改代码 → load → 读报告」这条循环已经完整验证过（含一次真实的改码-重载-复验）。
+
+第二个插件 `hello-world`（Panel + Command 双入口）也已跑通，并验证了**更强的闭环**：
+它的 `boot.log` 记录下了用户**亲手点击面板按钮**的那次执行
+（`insert  via=panel  doc=晋升公告.psd  layers=11`）—— 也就是说，
+**「用户操作 → AI 可读」这条通道也成立了**，不必再靠截图或让用户复述。
 
 一个好消息：**Creative Cloud 和图形版 UXP Developer Tool 都不用装。**
 CLI 里已打包完整原生桥接（`VulcanControl.dll` 等，就是 UDT 用的那套），
@@ -139,6 +152,11 @@ ps-uxp-dev/
 │   ├── index.html               面板 UI
 │   ├── index.js                 自检用例 + 写报告 + 自动触发
 │   └── autorun.flag            存在=加载时自动跑自检；删掉即关闭
+├── hello-world/                第一个真插件 = 写新插件的骨架样板
+│   ├── manifest.json            两个 entrypoint：panel（常驻面板）+ command（菜单命令）
+│   ├── index.html               面板 UI（UXP 内置 Spectrum 组件，零依赖、零构建）
+│   ├── index.js                 插入 “Hello World” 文字图层 + 事件日志 + 开发期自检
+│   └── （verify.flag）          本地开关，存在才跑自检；已 gitignore
 ├── tools/
 │   ├── doctor.mjs              环境自检（按 vibecoding 闭环口径）
 │   ├── enable-devtools.mjs     启用/关闭开发者工作流（需管理员）
@@ -176,14 +194,15 @@ ps-uxp-dev/
 
 ## 七、写新插件时的约定（写给 AI，也写给未来的你）
 
-1. **从 `hello-uxp` 抄骨架**，而不是从零写——它已经把 manifest v5 的坑、模态约束、
-   报告通道都踩平了。也可以从 `official-samples/` 里挑更合适的：
+1. **从 `hello-world` 抄骨架**（新插件的模板；只有做环境探针时才看 `hello-uxp`）。两者都已把
+   manifest v5 的坑、模态约束、反馈通道踩平。也可以从 `official-samples/` 里挑更合适的：
    `hello-world-panel-js-sample`（最小面板）、`ui-react-starter` / `ui-vue-starter` /
    `ui-svelte-starter`（框架面板）、`typescript-webpack-sample`（类型安全工程）、
    `swc-uxp-starter`（Spectrum Web Components，v5 manifest）。
-2. **新插件的 `id` 必须唯一**，别和 `com.wooozxh.hellouxp` 撞。
-3. **凡是有副作用的操作都要能被验证**，也就是跑完之后文档里要留下可检查的痕迹，
-   并写进报告。否则 AI 只能"看起来对"，没法确认。
+2. **新插件的 `id` 必须唯一**，别和 `com.wooozxh.hellouxp` / `com.wooozxh.helloworld` 撞。
+3. **凡是有反馈价值的事件都写进 `boot.log`**（加载 / 执行 / 失败）—— 这是 AI 唯一能看到
+   「你点了什么」的通道，见 `hello-world/index.js` 的 `appendLog`。有副作用的操作要留下
+   可检查的痕迹，否则 AI 只能"看起来对"，没法确认。
 4. **测试不能污染用户工作区**：像 `hello-uxp` 那样，临时建的文档跑完自己关掉。
 5. 框架工程（React/Vue/TS）要先 `yarn install && yarn build`，然后让 CLI / UDT
    指向构建产物里的 **`dist/manifest.json`**，不是源码目录里的那份。
@@ -212,7 +231,7 @@ ps-uxp-dev/
 
 **远程**：https://github.com/wooozxh/vellum-ps-uxp （Public）
 
-- **已入库**：档案四件套、`README.md`、`hello-uxp/`、`tools/`、`docs/`、`.vscode/`、`package-lock.json`
+- **已入库**：档案四件套、`README.md`、`hello-uxp/`、`hello-world/`、`tools/`、`docs/`、`.vscode/`、`package-lock.json`
 - **不入库**（见 `.gitignore`）：`node_modules/`、`official-samples/`、`.workbuddy/`、构建产物
 
 `official-samples/` 不入库的原因：它本身是个**独立的 git 仓库**（自带 `.git`），

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="index.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+
+      body {
+        padding: 12px 14px 14px;
+        font-family: system-ui, "Segoe UI", sans-serif;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--uxp-host-text-color, #d5d5d5);
+      }
+
+      sp-heading {
+        margin: 0 0 2px;
+      }
+
+      .sub {
+        margin: 0 0 10px;
+        font-size: 11px;
+        line-height: 1.45;
+        opacity: 0.6;
+      }
+
+      sp-divider {
+        margin: 0 0 12px;
+      }
+
+      .card {
+        margin-bottom: 12px;
+        padding: 9px 11px;
+        border: 1px solid var(--uxp-host-border-color, rgba(127, 127, 127, 0.35));
+        border-radius: 6px;
+        font-size: 11.5px;
+        line-height: 1.7;
+      }
+
+      .card .k {
+        opacity: 0.58;
+      }
+
+      .buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .row {
+        display: flex;
+        gap: 6px;
+      }
+
+      .row sp-button {
+        flex: 1;
+      }
+
+      #status {
+        margin-top: 12px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: rgba(127, 127, 127, 0.12);
+        font-size: 11px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+
+  <body>
+    <sp-heading>Hello World</sp-heading>
+    <p class="sub">我的第一个 Photoshop 插件 · Panel + Command 双入口</p>
+
+    <sp-divider size="small"></sp-divider>
+
+    <div class="card" id="docInfo"></div>
+
+    <div class="buttons">
+      <sp-button id="btnInsert" variant="cta">
+        在当前文档插入 “Hello World” 文字
+      </sp-button>
+      <div class="row">
+        <sp-button id="btnRefresh">刷新文档信息</sp-button>
+        <sp-button id="btnGreet">弹窗打招呼</sp-button>
+      </div>
+    </div>
+
+    <div id="status">就绪。</div>
+  </body>
+</html>

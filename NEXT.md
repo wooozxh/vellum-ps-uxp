@@ -32,6 +32,16 @@ D:/software/adobe/Adobe Photoshop 2026/）。
   ② PS 开发者模式已开启（PS 会主动连上 devtools 服务端口 14001）
   跑 `node tools/doctor.mjs` 应得 **13/15、闭环关键项 5/5**。若不对，按 `README.md` 第三节重做。
 - **当前唯一待办 = 产品形态未定**（Command vs Panel、是否上框架）。先找我聊形态，**别先写代码**。
+  **形态的参考物已经就位**：`hello-world/` 是「一个插件、两个入口」（panel + command），两个都能跑；
+  形态对比表在 `docs/03-HelloWorld与插件形态.md`。
+- **已就位的两个插件**：
+  - `hello-uxp` —— 环境探针，跑全量自检并写 `report.json`（8 个用例）
+  - `hello-world` —— 骨架样板，插入 “Hello World” 文字图层，写 `boot.log`
+  加载任一：`tools\uxp.cmd plugin load --manifest hello-world\manifest.json`（幂等，重复 load = 重载）
+- **反馈通道有两条，都在插件自己的数据目录**：
+  （`%APPDATA%\Adobe\UXP\PluginsStorage\PHSP\27\Developer\<插件 id>\PluginData\`）
+  - `report.json` —— 插件自检结论（探针用）
+  - `boot.log` —— 事件流水：加载 / 执行 / 失败，**含用户点了什么**（`via=panel|command`）
 - 仓库：**已上线** → https://github.com/wooozxh/vellum-ps-uxp（Public）。
   改完代码要推的时候：先试常规 `git push`；若报 `Failed to connect to github.com:443`
   就改用 `python tools/push_via_api.py`（兜底通道，见第四节）。
@@ -52,7 +62,7 @@ D:/software/adobe/Adobe Photoshop 2026/）。
 
 | # | 事项 | 选项 | 说明 |
 |---|---|---|---|
-| 1 | **产品形态** | Command / Panel | Command = 菜单点一下跑完；Panel = 常驻面板。**最该先定的** |
+| 1 | **产品形态** | Command / Panel / 两个都要 | Command = 菜单点一下跑完；Panel = 常驻面板。**最该先定的**。`hello-world` 已把两种都做出来，各点一次即可对比 |
 | 2 | **是否上框架** | vanilla JS / React / Svelte / Vue / TS | 建议先 vanilla 跑通链路，再决定 |
 | 3 | **许可证** | 无（当前）/ MIT / Apache-2.0 | 仓库是 Public；无 LICENSE = 他人不可合法复用 |
 
@@ -63,7 +73,7 @@ D:/software/adobe/Adobe Photoshop 2026/）。
 
 ## 三、下一步候选（等用户拍板）
 
-- **A. 定产品形态（推荐 —— 当前唯一前置未决项）** → 出 `docs/03-产品形态方案.md`（不依赖环境，随时可做）
+- **A. 定产品形态（推荐 —— 当前唯一前置未决项）** → 出 `docs/10-产品方案.md`（不依赖环境，随时可做）
 - **B. 搭断言台雏形** —— 等第一个真插件落地后再做，现在没有可断言的对象
 - **C. 试 `adb-mcp`** —— 让 AI 直接驱动 PS 自我验证（需 Python + Node，本机都齐）
 
@@ -93,3 +103,5 @@ D:/software/adobe/Adobe Photoshop 2026/）。
 | ⛔ **`plugin reload` 不可靠** | 不接受 `--manifest`，实测还会报 `Command execution failed in all connected applications`。**用 `plugin load --manifest` 代替**（幂等：重复 load = 重新加载 + 重跑自检）。 |
 | ⛔ **`app.name` / `app.version` 在本机读不到** | PS 27.2 / UXP 9.0.2 下这两个 getter 返回 `undefined`；batchPlay 取 `application.version` 也拿不到。别拿它们当「连接是否建立」的判据（用 `app.documents.length`）。 |
 | **怎么验证 PS 开发者模式真的生效了** | 看 `netstat` 里 `127.0.0.1:14001` 有没有一条来自 **Photoshop PID** 的 ESTABLISHED 连接 —— 有就是生效了，比翻设置界面可靠。 |
+| ⛔ **本环境截图路线不可用** | `windows-app-screenshot` 的 `capture_window.ps1` 跑不出 PNG，且 PowerShell 工具的输出经常被整体吞掉（同一段命令重跑或用 Bash 才正常）。**要"看到"插件行为，用 `boot.log` 而不是截图** —— 它还能证明用户操作成功与否，信息量比截图大。 |
+| ⛔ **`rm` 删不了 `$APPDATA` 展开出的路径** | 报 `[safe-delete][SAFE_DELETE_INVALID_PATH] embedded drive prefix is not allowed`。删这类文件改用相对路径（先 `cd` 进目录再删），或让插件自己覆写。 |

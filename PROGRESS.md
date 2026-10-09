@@ -6,11 +6,13 @@
 
 ## 当前状态
 
-- 阶段：**环境已就绪，等待产品形态立项**（业务代码 0 行）
+- 阶段：**环境与闭环全部就绪，等待产品形态立项**
 - 完成度：环境调研 **100%**；工具链 **100%**；**闭环打通 100%**；档案与仓库 **100%**；
-  **无阻塞**；产品形态 **0%（未定）**
+  **最小插件样板 100%**；**无阻塞**；产品形态 **0%（未定）**
 - 环境基线：`node tools/doctor.mjs` = **13/15 项**，其中「闭环关键项 **5/5**」
 - 闭环实证：`hello-uxp` 探针插件加载后自检 **7/7 全通过**，`report.json` 落盘并被外部脚本读回
+- 样板实证：`hello-world` 插件（Panel + Command 双入口）加载成功，`boot.log` 落盘；
+  **面板按钮已被用户实际点击并成功插入图层**；文字图层描述符经无痕自检验证通过
 - 仓库：**已上线** → https://github.com/wooozxh/vellum-ps-uxp （Public）
 
 ## 已完成
@@ -36,11 +38,20 @@
       （修掉探针 `app.name` 误报：该属性在 PS 27.2 / UXP 9.0.2 下返回 `undefined`）
 - [x] 2026-10-09　实测并校正 README 命令：`plugin load` 幂等可作主力；`reload` 不接受 `--manifest`
       且实测失败；`watch --path` / `validate --manifest` 均可用
+- [x] 2026-10-09　**第一个真插件 `hello-world`**：Panel + Command 双入口，manifest v5，
+      零依赖零构建。加载成功；**面板按钮被用户实际点击并成功插入文字图层**
+- [x] 2026-10-09　**事件日志通道 `boot.log`** 建立 —— 插件把「加载 / 执行 / 失败」追加写入
+      自己的数据目录。于是「用户点了什么 → AI 能读到」这条通道成立
+- [x] 2026-10-09　**开发期自检 `verify.flag`** 建立 —— 无痕演练（建临时文档 → 插文图 → 验 → 关掉），
+      首次运行即通过：`selfverify ok=true layers=["Hello World","背景"] cleaned=yes`
+- [x] 2026-10-09　`docs/03-HelloWorld与插件形态.md`：Panel vs Command 形态对比 + 反馈通道说明
 
 ## 待办
 
 - [ ] **【当前唯一待办 · 需用户拍板】产品形态**（Command / Panel、是否上框架）
-      → 拍板后产出 `docs/03-产品形态方案.md`，用户确认后才动代码
+      → 拍板后产出 `docs/10-产品方案.md`，用户确认后才动代码
+- [ ] **【待用户回填】** `hello-world` 在 PS 菜单里的**确切位置** —— `docs/03` 里写的是通用说法，
+      请在 PS 里找一下「窗口」菜单与「插件 / 增效工具」菜单，回填实际路径
 - [ ] （可选）给仓库加许可证 —— 当前**无 LICENSE**，公开仓库下他人不可合法复用
 - [ ] （可选）探针插件用例从 7 项扩充（如 batchPlay 写属性、UXP 权限声明校验、面板 UI 交互）
 
@@ -48,8 +59,11 @@
 
 1. **环境已就绪，不必重新调研环境** —— 跑 `node tools/doctor.mjs` 应得 13/15、闭环 5/5；
    若不对，先看 `README.md` 第三节（两步准备工作）
-2. 直接进入**产品形态立项**：与用户敲定 Command / Panel、是否上框架
-3. 形态定了 → 写 `docs/03-产品形态方案.md` → 用户确认 → 才开始写代码
+2. **直接进入产品形态立项**（唯一未决项）—— 与用户敲定 Command / Panel、是否上框架。
+   参考物已备好：`hello-world` 两个入口都能跑，`docs/03` 有形态对比表
+3. 形态定了 → 写 `docs/10-产品方案.md` → 用户确认 → 才开始写业务代码
+4. 每做完一个真插件，顺手做两件事：把 `boot.log` 的日志点补齐；给新插件的关键描述符
+   加一次 `verify.flag` 式自检（batchPlay 描述符与 PS 版本强相关，只能实测）
 
 ## 已知问题与风险
 
@@ -82,4 +96,21 @@
 - **反证技巧**：PS 开启开发者模式后，会主动连上 `127.0.0.1:14001`（netstat 里能看到来自
   Photoshop PID 的 ESTABLISHED 连接）。这比翻设置界面更能证明该开关生效。
 - **改了哪些文件**：`hello-uxp/index.js`（宿主连接用例改用 DOM API 判定）、`README.md`（状态与命令校正）
+- **遗留**：产品形态未定（当前唯一待办）
+
+### 2026-10-09（第 3 次会话）— 第一个真插件与「双向」闭环
+- **做了什么**：写并跑通 `hello-world`（Panel + Command 双入口）；建立事件日志通道与开发期自检机制
+- **关键结论**：
+  - `hello-world` 加载成功；**用户亲手点面板按钮的那次被执行日志记录下来**
+    （`insert  via=panel  doc=晋升公告.psd  layers=11`）→ 「用户操作 → AI 可读」通道成立
+  - 文字图层的 batchPlay 描述符经无痕自检验证通过（`layers=["Hello World","背景"]  cleaned=yes`）
+  - `entrypoints.setup({ plugin, panels, commands })` 是 v5 标准写法；command 回调写在 `commands[id].run()`
+  - 官方文档确认：entrypoint 只有 `panel` / `command` 两种 type，对应「插件面板」与「插件菜单」
+- **踩的坑**：
+  - **截图路线在本环境不可用** —— `windows-app-screenshot` 的脚本跑不出 PNG，且 PowerShell 输出常被吞。
+    → 改用 `boot.log`，**反而得到比截图更强的验证能力**（能证明用户操作是否成功）
+  - `rm` 对 `$APPDATA` 展开出的 `C:\...` 路径会被安全层拒绝
+    （`[safe-delete][SAFE_DELETE_INVALID_PATH] embedded drive prefix is not allowed`）
+- **改了哪些文件**：新建 `hello-world/`（3 个文件）、`docs/03-HelloWorld与插件形态.md`；
+  更新 `README.md` / `PROGRESS.md` / `DECISIONS.md` / `.gitignore`
 - **遗留**：产品形态未定（当前唯一待办）
