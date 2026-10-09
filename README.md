@@ -31,48 +31,50 @@ Photoshop UXP 插件的开发工作区。宿主 **Photoshop 2026（v27.2）**，
 
 ---
 
-## 二、当前状态
+## 二、当前状态：闭环已打通（2026-10-09 首次实跑）
 
 ```
 [ ✓ ] Photoshop 2026 (v27.2)        D:\software\adobe\Adobe Photoshop 2026\
 [ ✓ ] PS 内置 UXP 运行时
 [ ✓ ] UXP Developer CLI              （Adobe 官方工具，从 npm 装，已就位）
 [ ✓ ] devtools 原生桥接              （含 AID.dll / VulcanControl.dll）
-[ ✗ ] 开发者工作流开关  ★关键闸门     需要一次管理员操作
-[ ✗ ] 自检报告通道                  等插件第一次跑过就会生成
+[ ✓ ] 开发者工作流开关  ★关键闸门     已启用
+[ ✓ ] PS 开发者模式                 已启用（PS 主动连上服务端口 14001）
+[ ✓ ] 自检报告通道  ★反馈回路        探针插件已跑通 7/7
 ```
 
-**只差一步**：`C:\Program Files\Common Files\Adobe\UXP\Developer\settings.json`
-这个开关文件（内容是 `{"developer":true,"hostAppPluginWorkspace":true}`）。
-它在 Program Files 下，必须管理员权限才能写。
+实测数据：`node tools/doctor.mjs` → **13/15，闭环关键项 5/5**；
+`hello-uxp` 探针插件加载后自检 **7/7 全通过**，`report.json` 落盘并被外部脚本读回。
+「改代码 → load → 读报告」这条循环已经完整验证过（含一次真实的改码-重载-复验）。
 
-一个好消息：**Creative Cloud 和图形版 UXP Developer Tool 现在都不是必需的了。**
-CLI 里已经打包了完整的原生桥接（`VulcanControl.dll` 等，就是 UDT 用的那套），
-所以只要能写上面那个开关文件，load / reload / watch / logs 全都能由脚本完成。
-CC 只有在你想用 UDT 图形界面时才需要——而你既然走 vibecoding，基本用不上。
+一个好消息：**Creative Cloud 和图形版 UXP Developer Tool 都不用装。**
+CLI 里已打包完整原生桥接（`VulcanControl.dll` 等，就是 UDT 用的那套），
+所以 load / watch / logs / validate 全都能由脚本完成。CC 只在你想用 UDT 图形界面时才需要。
 
 ---
 
-## 三、一次性动作（需要你，约 1 分钟）
+## 三、已完成的准备工作（存档，换机器时需重做）
+
+这两步用户已于 2026-10-09 完成，留档备查：
 
 **第 1 步：开开发者工作流（需要管理员）**
-
-按 Win 键 → 输入 `PowerShell` 或 `终端` → **右键 → 以管理员身份运行** → 粘贴：
 
 ```powershell
 cd "D:\ps-uxp-dev"
 node tools\enable-devtools.mjs
 ```
 
-看到 `✓ 开发者工作流已启用` 即可。随时可以用 `node tools\enable-devtools.mjs --check`
-查看状态，用 `--off` 关掉（关掉后 PS 不会再加载开发版插件）。
+→ 写入 `C:\Program Files\Common Files\Adobe\UXP\Developer\settings.json`
+（内容 `{"developer":true,"hostAppPluginWorkspace":true}`）。
+随时可用 `--check` 查看状态、`--off` 关闭（关闭后 PS 不再加载开发版插件）。
 
-**第 2 步：在 Photoshop 里也开一下**
+**第 2 步：在 Photoshop 里开启开发者模式（不需要管理员）**
 
-`编辑 → 首选项 → 插件 → 勾选「启用开发人员模式」` → **重启 Photoshop**。
-（这一项和上面的开关各管一层，都开最稳。这一项不需要管理员权限。）
+`编辑 → 首选项 → 插件 → 勾选「启用开发人员模式」` → 重启 Photoshop。
 
-做完这两步告诉我，我跑一次自检确认，然后就能开始写真正的插件了。
+> 验证方法：PS 启动后会**主动连上** devtools 服务的 `127.0.0.1:14001`。
+> 若 `netstat` 里看到 `14001` 上有一条来自 Photoshop PID 的 ESTABLISHED 连接，
+> 就说明这一层确实生效了（比翻设置界面可靠）。
 
 ---
 
@@ -95,24 +97,31 @@ tools\uxp.cmd plugin watch --path hello-uxp
 node tools\report.mjs
 ```
 
-手动重载一次并立刻看结果（最常用的一行）：
+手动迭代一次并立刻看结果（最常用的一行）：
 
 ```bash
-tools\uxp.cmd plugin reload && node tools\report.mjs
+tools\uxp.cmd plugin load --manifest hello-uxp\manifest.json && node tools\report.mjs
 ```
 
-其它有用命令：
+> **实测备注（2026-10-09 真机验证）**：`plugin load` 是**幂等**的 —— 插件已加载时再 load
+> 会重新加载并重跑自检。所以「改代码 → load → 读报告」就是完整的开发循环。
+> 而 `plugin reload` **不接受 `--manifest`**，实测还会报
+> `Command execution failed in all connected applications`，不作为主力命令。
+
+其它有用命令（均已在真机实测）：
 
 ```bash
-tools\uxp.cmd plugin validate --manifest hello-uxp\manifest.json   # 校验 manifest
+tools\uxp.cmd plugin validate --manifest hello-uxp\manifest.json   # 校验 manifest ✓（走服务）
+tools\uxp.cmd plugin watch --path hello-uxp                        # 存盘自动重载（常驻）✓
 tools\uxp.cmd plugin logs                                          # 插件日志窗口
-tools\uxp.cmd plugin test                                          # 跑插件内测试
+tools\uxp.cmd plugin test -s                                       # 另装 Automation Framework（端口 4797）
 tools\uxp.cmd plugin package --apps PS                             # 打包发布用
 node tools\doctor.mjs                                              # 环境自检
 node tools\report.mjs --all                                        # 列出所有历史报告
+node tools\report.mjs --raw                                        # 原样输出 JSON
 ```
 
-改 `manifest.json` 必须重新 `load`（`reload` 不带 manifest 变更）。
+改 `manifest.json` 必须重新 `load`。
 
 ---
 

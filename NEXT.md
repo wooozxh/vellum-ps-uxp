@@ -27,12 +27,11 @@ D:/software/adobe/Adobe Photoshop 2026/）。
 ③ 你建议的下一步方向 + 理由
 
 本机现状（拿不准就实测，别猜）：
-- 唯一阻塞 = 两件事，都还没做：
-  ① 我以管理员身份跑 `node tools\enable-devtools.mjs`（往 Common Files 写开发者开关）
-  ② PS 里勾「编辑 → 首选项 → 插件 → 启用开发人员模式」并重启 PS
-  这两件没做之前，UXP CLI 全线不可用（连纯本地的 `plugin validate` 都会报连不上服务）。
-- **产品形态仍未定**（Command vs Panel、是否上框架）。这是当前最该推进、且不依赖环境的事 ——
-  如果环境还没打通，别空转，直接找我聊形态。
+- **环境已就绪**，两步准备工作都已完成（2026-10-09）：
+  ① 管理员开关已写入 `C:\Program Files\Common Files\Adobe\UXP\Developer\settings.json`
+  ② PS 开发者模式已开启（PS 会主动连上 devtools 服务端口 14001）
+  跑 `node tools/doctor.mjs` 应得 **13/15、闭环关键项 5/5**。若不对，按 `README.md` 第三节重做。
+- **当前唯一待办 = 产品形态未定**（Command vs Panel、是否上框架）。先找我聊形态，**别先写代码**。
 - 仓库：**已上线** → https://github.com/wooozxh/vellum-ps-uxp（Public）。
   改完代码要推的时候：先试常规 `git push`；若报 `Failed to connect to github.com:443`
   就改用 `python tools/push_via_api.py`（兜底通道，见第四节）。
@@ -64,10 +63,11 @@ D:/software/adobe/Adobe Photoshop 2026/）。
 
 ## 三、下一步候选（等用户拍板）
 
-- **A. 打通环境**（前置依赖：那两步管理员动作）→ 验证 `hello-uxp` 全链路 8/8
-- **B. 定产品形态** → 出 `docs/03-产品形态方案.md`（不依赖环境，随时可做）
-- **C. 搭断言台雏形** —— 等第一个真插件落地后再做，现在没有可断言的对象
-- **D. 试 `adb-mcp`** —— 让 AI 直接驱动 PS 自我验证（需 Python + Node，本机都齐）
+- **A. 定产品形态（推荐 —— 当前唯一前置未决项）** → 出 `docs/03-产品形态方案.md`（不依赖环境，随时可做）
+- **B. 搭断言台雏形** —— 等第一个真插件落地后再做，现在没有可断言的对象
+- **C. 试 `adb-mcp`** —— 让 AI 直接驱动 PS 自我验证（需 Python + Node，本机都齐）
+
+> **环境打通已 ✅ 完成**（2026-10-09），不再列为候选。闭环可用的命令序列见 `README.md` 第四节。
 
 ---
 
@@ -90,3 +90,6 @@ D:/software/adobe/Adobe Photoshop 2026/）。
 | **`plugin validate` / 所有 CLI 子命令都要先 `service start`** | 常驻服务不能关。 |
 | **报告在 C 盘、项目在 D 盘是正常的** | 插件运行时数据由 Adobe 硬编码在 `%APPDATA%\Adobe\UXP\PluginsStorage\PHSP\<ver>\`。`report.mjs` 按 `%APPDATA%` 递归搜，不写死路径。 |
 | **PS 是离线安装包装的（非 CC）** | 若「CLI 加载成功但 PS 里看不到插件」，优先怀疑这一点（理论上不影响，但这是本机与官方文档描述的差异点）。 |
+| ⛔ **`plugin reload` 不可靠** | 不接受 `--manifest`，实测还会报 `Command execution failed in all connected applications`。**用 `plugin load --manifest` 代替**（幂等：重复 load = 重新加载 + 重跑自检）。 |
+| ⛔ **`app.name` / `app.version` 在本机读不到** | PS 27.2 / UXP 9.0.2 下这两个 getter 返回 `undefined`；batchPlay 取 `application.version` 也拿不到。别拿它们当「连接是否建立」的判据（用 `app.documents.length`）。 |
+| **怎么验证 PS 开发者模式真的生效了** | 看 `netstat` 里 `127.0.0.1:14001` 有没有一条来自 **Photoshop PID** 的 ESTABLISHED 连接 —— 有就是生效了，比翻设置界面可靠。 |

@@ -156,6 +156,33 @@
   兜底工具只在「网络或工具链已经不正常」时才用，**「验证过」比「风格统一」重要**。
 - **放弃**：等网络恢复再推（不可控）；改用 SSH（本机没有 SSH 密钥）。
 
+## 2026-10-09　闭环打通：加载用 `plugin load`，不用 `plugin reload`
+
+- **决定**：日常迭代命令统一用 `uxp plugin load --manifest <path>`，**不用** `plugin reload`。
+- **实测依据**（真机验证）：
+  - `plugin load` **幂等** —— 插件已加载时再 load 会重新加载并重跑自检，于是
+    「改代码 → load → 读 `report.json`」就是完整开发循环。
+  - `plugin reload` **不接受 `--manifest`**（它按 cwd 定位插件），且实测报
+    `Command execution failed in all connected applications`（插件实例状态失效时）。
+  - `watch --path <dir>`（存盘自动重载）与 `validate --manifest` 实测均可用。
+- **验证结果**：`hello-uxp` 加载后自检 **7/7**，`report.json` 落盘并被 `report.mjs` 读回。
+
+## 2026-10-09　探针的「宿主连接」判据改用 DOM API，不依赖 `app.name` / `app.version`
+
+- **决定**：`hello-uxp` 的「宿主连接（photoshop 模块）」用例改用 `app.documents.length` 作判据。
+- **原因**：这两个 getter 在 **PS 27.2 / UXP 9.0.2** 下返回 `undefined`（首份报告里
+  `host:{}` 就是值全为 undefined 被 JSON 序列化丢弃的结果）；改用 batchPlay 取
+  `application.version` **同样拿不到**。而同一份报告里 `executeAsModal`、`batchPlay`、
+  建文档与建图层全部成功 —— 说明连接本身没问题，是**断言写法**的问题。
+- **教训**：验证「模块是否可用」要挑**一定可用**的成员当判据，别挑易碎的元数据属性。
+
+## 2026-10-09　怎么验证 PS「开发者模式」真的生效（反证法）
+
+- **方法**：看 `netstat` 里 `127.0.0.1:14001` 有没有一条来自 **Photoshop PID** 的
+  ESTABLISHED 连接。有 → 该开关生效。
+- **理由**：管理员层那个 `settings.json` 可以程序化查，但 PS 内的那个勾选项没有可靠的
+  程序化读法。PS 开启后会**主动连**devtools 服务，这条连接比翻设置界面更硬。
+
 ## 待定（尚未拍板，别当已决）
 
 | 项 | 选项 | 备注 |

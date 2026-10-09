@@ -75,12 +75,27 @@ const CHECKS = [
   {
     name: "宿主连接（photoshop 模块）",
     async run() {
-      const name = app.name;
-      const version = app.version;
-      if (!name) throw new Error("app.name 为空");
+      // ⚠️ 实测（PS 27.2 / UXP 9.0.2）：app.name 与 app.version 这两个 getter
+      // 会直接抛异常（不是返回空串），batchPlay 取 application.version 也拿不到。
+      // 所以别拿它们当"连接是否建立"的判据 —— 改用 DOM API 访问宿主对象图，
+      // 这个一定可用；batchPlay 的实际能力由最后一项端到端用例覆盖。
+      const docCount = app.documents.length;
+
+      const probes = [];
+      for (const k of ["name", "version"]) {
+        try {
+          probes.push(k + "=" + JSON.stringify(app[k]));
+        } catch {
+          probes.push(k + "=抛异常");
+        }
+      }
+
       return {
         detail:
-          "宿主：" + name + "\n" + "版本：" + version
+          "DOM API 可用：app.documents.length = " + docCount +
+          "\n（本版本下 app.name / app.version 不可直接读：" +
+          probes.join("，") +
+          "）"
       };
     }
   },
