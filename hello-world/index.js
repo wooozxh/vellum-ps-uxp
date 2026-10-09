@@ -153,54 +153,109 @@ function renderDocument() {
 
 /**
  * 建文字图层。
- * insertHelloWorld（正式流程）与 selfVerify（开发期自检）共用这一份 descriptor，
+ * insertHelloWorld（正式流程）与 selfVerify（开发期自检）共用这一份实现，
  * 避免两处各写一份、改一处漏一处。
+ *
+ * ⚠️ 2026-10-09 用户报 bug 后实测的硬结论（探针见 hello-world/probe-text.js）：
+ *
+ *   在 PS 2026 v27.2 / UXP 9.0.2 上，**batchPlay 造不出文本图层**。这几种写法
+ *   我们都真跑过，结果一致 —— 只生成 layerKind=1 的普通像素图层：
+ *     A1 { _obj:"make", using:{ _obj:"layer",   name, textKey } }
+ *     A2 同上再加 layerKind:{ _enum:"layerKind", _value:"textLayer" }
+ *     A3 { _obj:"make", using:{ _obj:"textLayer", name, textKey } }
+ *   名字倒是对的（所以只比对图层名的自检会假阳性），类型却是普通层。
+ *   紧接着对 textLayer 发 set，PS 会弹出原生框「命令"设置"当前不可用。」
+ *   并把整个 executeAsModal 作用域卡死 —— 这正是用户看到的那一幕。
+ *
+ *   唯一可靠路径是 DOM：
+ *     app.activeDocument.createTextLayer({ contents })   → layerKind=3 / kind="text"
+ *
+ *   字号同理，DOM 的 TextItem 上**没有** fontSize（实测 undefined），
+ *   得写 textItem.characterStyle.size。
  */
 async function makeTextLayer() {
-  // 1) 建文字图层
-  await batchPlay(
-    [
-      {
-        _obj: "make",
-        _target: [{ _ref: "layer" }],
-        using: { _obj: "layer", name: TEXT, textKey: TEXT },
-        _options: { dialogOptions: "dontDisplay" }
-      }
-    ],
-    {}
-  );
+  const layer = await app.activeDocument.createTextLayer({ contents: TEXT });
 
-  // 2) 润色：把字号调大，否则默认 12pt 在白底上几乎看不见。
-  //    这一步是可选的，失败也不该影响主流程，所以单独 try 掉。
+  // 润色：默认 12pt 在白底上几乎看不见，调到 72pt。
+  // 这一步失败不该影响主流程 —— 图层本身已经建对了。
   try {
-    await batchPlay(
+    layer.textItem.characterStyle.size = 72;
+  } catch {
+    /* 字号没设上也照样算成功 */
+  }
+
+  return layer;
+}
+
+/** UXP 返回的枚举可能是字符串，也可能是 { _enum, _value } 对象，统一成字符串。 */
+function normalizeEnum(v) {
+  if (v === null || v === undefined) return "?";
+  if (typeof v === "object") {
+    return String(v._value !== undefined ? v._value : JSON.stringify(v));
+  }
+  return String(v);
+}
+
+/**
+ * 读「当前选中图层」的名称与类型。**需要在 executeAsModal 内调用**（用了 batchPlay）。
+ *
+ * 为什么必须读类型、不能只看名字：
+ *   2026-10-09 踩过的坑 —— 只看图层**名字**会让自检出现假阳性：
+ *   建出来的其实是普通图层，名字却照样叫 "Hello World"，于是 ok=true 被写进日志，
+ *   而用户看到的是报错弹窗 + 一个普通图层。名称对 ≠ 类型对。
+ *
+ * 两条读法并存，因为它们的取值形态不一样（实测）：
+ *   DOM 侧     layer.kind  → 字符串 "text" / "pixel"
+ *   batchPlay  layerKind   → 数字   3 / 1
+ * 判定统一交给 isTextLayer()。
+ */
+async function readActiveLayer() {
+  let name = "?";
+  let layers = 0;
+  let domKind = "?";
+
+  try {
+    const doc = app.activeDocument;
+    layers = doc.layers.length;
+    const top =
+      doc.activeLayers && doc.activeLayers.length ? doc.activeLayers[0] : doc.layers[0];
+    if (top) {
+      name = top.name;
+      try {
+        domKind = String(top.kind);
+      } catch (e) {
+        domKind = "ERR:" + (e && e.message ? e.message : String(e));
+      }
+    }
+  } catch (e) {
+    name = "ERR:" + (e && e.message ? e.message : String(e));
+  }
+
+  let psdKind = "?";
+  try {
+    const res = await batchPlay(
       [
         {
-          _obj: "set",
-          _target: [{ _ref: "textLayer", _enum: "ordinal", _value: "targetEnum" }],
-          to: {
-            _obj: "textLayer",
-            textKey: TEXT,
-            textStyleRange: [
-              {
-                _obj: "textStyleRange",
-                from: 0,
-                to: TEXT.length,
-                textStyle: {
-                  _obj: "textStyle",
-                  size: { _unit: "pointsUnit", _value: 72 }
-                }
-              }
-            ]
-          },
+          _obj: "get",
+          _target: [{ _ref: "layer", _enum: "ordinal", _value: "targetEnum" }],
           _options: { dialogOptions: "dontDisplay" }
         }
       ],
       {}
     );
-  } catch {
-    /* 字号没设上也照样算成功，状态里会说明 */
+    psdKind = normalizeEnum(res && res[0] ? res[0].layerKind : null);
+  } catch (e) {
+    psdKind = "ERR:" + (e && e.message ? e.message : String(e));
   }
+
+  return { name: name, domKind: domKind, psdKind: psdKind, layers: layers };
+}
+
+/** 文本层判定：DOM 的 kind 是 "text"，batchPlay 的 layerKind 是数字 3，两种形态都认。 */
+function isTextLayer(info) {
+  const dom = String((info && info.domKind) || "").toLowerCase();
+  const psd = String((info && info.psdKind) || "").toLowerCase();
+  return dom === "text" || dom.indexOf("text") >= 0 || psd === "3" || psd.indexOf("text") >= 0;
 }
 
 /** 插件目录下是否存在某个文件（用于开关开发期自检）。 */
@@ -224,6 +279,9 @@ async function selfVerify() {
   let ok = false;
   let detail = "";
   try {
+    let names = [];
+    let info = { name: "?", domKind: "?", psdKind: "?", layers: 0 };
+
     await runModal(async () => {
       await app.createDocument({
         width: 640,
@@ -232,11 +290,18 @@ async function selfVerify() {
         name: "HW-verify"
       });
       await makeTextLayer();
+      info = await readActiveLayer();
+      names = Array.from(app.activeDocument.layers).map((l) => l.name);
     }, "Hello World 自检：临时文档 + 文字图层");
 
-    const names = Array.from(app.activeDocument.layers).map((l) => l.name);
-    ok = names.indexOf(TEXT) >= 0;
-    detail = "layers=" + JSON.stringify(names);
+    const named = names.indexOf(TEXT) >= 0;
+    const isText = isTextLayer(info);
+
+    // ⚠️ 判据必须是「名字对」**并且**「类型对」。
+    //    只查名字的旧版本会放过"名字叫 Hello World 的普通图层"，即假阳性。
+    ok = named && isText;
+    detail = "layers=" + JSON.stringify(names) + "  kind=" + info.domKind + "/" + info.psdKind;
+    if (named && !isText) detail += "  ← 名称对了但类型不是文本图层（假阳性）";
 
     await runModal(async () => {
       await app.activeDocument.closeWithoutSaving();
@@ -252,10 +317,13 @@ async function selfVerify() {
 /**
  * 核心动作：在当前文档插入一个内容为 “Hello World” 的文字图层。
  * 若一个文档都没打开，先新建一个 1200×800 的画布。
- * @returns {Promise<boolean>} 是否顺带新建了文档
+ *
+ * @returns {Promise<{createdDoc: boolean, layerInfo: object}>}
+ *   createdDoc 是否顺带新建了文档；layerInfo 是新建图层的实测类型（写日志用）。
  */
 async function insertHelloWorld() {
   let createdDoc = false;
+  let layerInfo = { name: "?", domKind: "?", psdKind: "?", layers: 0 };
 
   await runModal(async () => {
     if (app.documents.length === 0) {
@@ -269,26 +337,70 @@ async function insertHelloWorld() {
     }
 
     await makeTextLayer();
+
+    // 建完就地读回图层类型 —— 让日志里留下「到底是不是文本层」的凭证，
+    // 而不是像从前那样只记一个图层数量、真假无从分辨。
+    layerInfo = await readActiveLayer();
   }, "Hello World：插入文字图层");
 
-  return createdDoc;
+  return { createdDoc: createdDoc, layerInfo: layerInfo };
+}
+
+/** 把类型说成人话。 */
+function kindLabel(info) {
+  return isTextLayer(info) ? "文本图层" : "普通图层(" + info.domKind + "/" + info.psdKind + ")";
+}
+
+/**
+ * 纯只读：快照当前活动文档最上面几层的「名字:类型」。不改任何东西，也不需要模态。
+ * 用途 —— 让 AI 从外部 reload 一次，就能知道用户上一次操作到底建出了什么层。
+ */
+function snapshotActiveDoc() {
+  try {
+    if (app.documents.length === 0) return "无打开的文档";
+    const doc = app.activeDocument;
+    const layers = Array.from(doc.layers)
+      .slice(0, 6)
+      .map((l) => {
+        let k = "?";
+        try {
+          k = String(l.kind);
+        } catch {
+          /* 读不到就留 ? */
+        }
+        return l.name + ":" + k;
+      });
+    return (
+      "active=" + doc.name +
+      "  总数=" + doc.layers.length +
+      "  顶层=[" + layers.join(", ") + "]"
+    );
+  } catch (e) {
+    return "ERR:" + (e && e.message ? e.message : String(e));
+  }
 }
 
 /** 「插入」按钮 / 菜单命令共用的执行体。who 用于区分触发来源。 */
 async function actionInsert(who) {
   setStatus("正在插入文字图层…（触发来源：" + who + "）");
   try {
-    const created = await insertHelloWorld();
+    const r = await insertHelloWorld();
     const d = renderDocument();
+    const label = kindLabel(r.layerInfo);
+
     await appendLog(
       "insert  via=" + who +
         "  doc=" + (d.has ? d.name : "-") +
         "  layers=" + (d.has ? d.layers : "-") +
-        (created ? "  createdDoc=yes" : "")
+        "  newLayer=" + r.layerInfo.name + "/" + r.layerInfo.domKind +
+        "/" + r.layerInfo.psdKind +
+        "  type=" + (isTextLayer(r.layerInfo) ? "TEXT" : "NOT-TEXT") +
+        (r.createdDoc ? "  createdDoc=yes" : "")
     );
+
     setStatus(
-      "✓ 已插入「" + TEXT + "」文字图层\n" +
-        (created ? "（当时没有打开的文档，已先新建 1200×800）\n" : "") +
+      "✓ 已插入「" + TEXT + "」" + label + "\n" +
+        (r.createdDoc ? "（当时没有打开的文档，已先新建 1200×800）\n" : "") +
         "当前文档：" + (d.has ? d.name : "?") +
         "　图层：" + (d.has ? d.layers : "?") + " 个"
     );
@@ -346,6 +458,22 @@ entrypoints.setup({
     async create() {
       // 「插件真的被加载并执行了代码」这件事，必须留下可被外部读到的凭证
       await appendLog("loaded  plugin=" + PLUGIN_ID + "  uxp=" + safeUxpVersion());
+
+      // 只读快照：让外部脚本能看见「用户当前文档里到底有哪些层、什么类型」。
+      // 不动文档，也不需要用户点任何东西。
+      await appendLog("docs    " + snapshotActiveDoc());
+
+      // 开发期探针：插件目录下存在 probe-text.flag 时，跑一遍「文本图层写法矩阵」。
+      // 放在 try 里 —— 探针挂了绝不能牵连插件本体。
+      if (await hasFlag("probe-text.flag")) {
+        try {
+          const probe = require("./probe-text.js");
+          await probe.run({ appendLog: appendLog });
+        } catch (e) {
+          await appendLog("probe  FAILED  " + (e && e.message ? e.message : String(e)));
+        }
+      }
+
       // 开发期自检：插件目录下存在 verify.flag 时跑一次无痕演练（默认关闭，删掉即关）
       if (await hasFlag("verify.flag")) await selfVerify();
     }

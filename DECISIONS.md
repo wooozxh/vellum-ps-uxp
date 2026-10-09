@@ -207,8 +207,59 @@
   （建临时文档 → 插入文字图层 → 读回验证 → 关掉临时文档）。开关放文件、不放代码。
 - **原因**：`batchPlay` 的 ActionDescriptor 与 PS 版本强相关，**必须实测**；
   但正式使用时不该每次都跑。文件开关让脚本能一键切换，且不污染代码。
-- **验证记录**：首次运行即通过 —— `selfverify  ok=true  layers=["Hello World","背景"]  cleaned=yes`。
+- **验证记录**：首次运行显示通过 —— `selfverify  ok=true  layers=["Hello World","背景"]  cleaned=yes`。
+  ⚠️ **但这条结论后来被证明是假阳性**（2026-10-09）：当时自检只比对图层**名字**，
+  而 PS 2026 建出来的其实是同名**普通图层**。已修正，见下方「文本图层只能走 DOM」与 `docs/04`。
 - **注意**：`verify.flag` 已进 `.gitignore`（属本地行为开关，不入库）。
+
+## 2026-10-09　文本图层只能走 DOM（batchPlay 造不出来）
+
+- **决定**：建文本图层一律用 `app.activeDocument.createTextLayer({ contents })`；
+  **弃用** `batchPlay` 的 `{ _obj:"make", using:{ _obj:"layer", name, textKey } }` 一系写法。
+  设字号用 `layer.textItem.characterStyle.size`（**不是** `textItem.fontSize`，实测不存在）。
+- **原因**：PS 2026 v27.2 / UXP 9.0.2 实测，三种 batchPlay 写法（含显式 `layerKind:textLayer`）
+  **全部只生成 `layerKind=1` 的普通图层**；唯一能建出文本层的是 DOM 的 `createTextLayer`。
+- **连带发现（重要）**：在**非**文本层上执行 `set` 带 `textKey` 的 `textLayer`，PS 会弹出
+  **原生模态框**「命令"设置"当前不可用。」并**阻塞整个 `executeAsModal`** ——
+  它不等同于 JS 异常，从插件看是 `await` 永不返回，从外部看是日志卡死。
+- **证据**：`docs/04-文本图层正确写法.md`（含完整实测矩阵 A1–A4 / B 轮）。
+  三重验证：探针 `A4 PASS` → 无痕自检 `kind=text/3` → 用户真实点击后快照 `Hello World:text`。
+- **影响**：`hello-world/index.js` 的 `makeTextLayer()` 重写；后续任何涉及文字图层的功能先看 `docs/04`。
+
+## 2026-10-09　自检判据必须判「本质属性」，不能判表象
+
+- **决定**：自检/断言的判据要落在**本质属性**上。凡是「名字 / 标题 / 显示文本」这类表象，
+  一律不足以作为通过依据 —— 至少要有「名字 + 类型」双条件。
+- **原因**：本次 bug 能溜进 `boot.log` 并显示 `ok=true`，根因就是自检只比对了**图层名**。
+  图层名是对的，类型是错的，判据停在了表象上。
+- **同时确立一条排障纪律**：判据必须**照抄数据的实际形态**，不能凭想象写。
+  本次连踩两次同款坑 —— `layerKind` 经 batchPlay 是**数字** `1/3`、经 DOM 是**字符串** `"pixel"/"text"`；
+  `size` 回读是 `{"_unit":"pointsUnit","_value":72}` 而非数字 `72`。
+  两次都因此把**正确答案判成失败**（假阴性）。
+- **影响**：判定统一收敛到 `isTextLayer(info)` 这类**同时接受两种形态**的函数里；
+  正则一律对着 PS 的真实返回写。
+
+## 2026-10-09　插件目录只读：开关由外部管，印章写 PluginData
+
+- **决定**：插件目录（`getPluginFolder()`）里的文件开关（`*.flag`），
+  只能由**外部**（人或 AI）创建/删除，插件自己不做增删；
+  插件需要落盘的运行时产物（报告、印章）一律写 `getDataFolder()`（PluginData）。
+- **原因**：实测两个硬约束 ——
+  ① UXP 的 `Folder` **没有** `deleteEntry` 方法；
+  ② `getPluginFolder()` 是**只读**存储，`createFile` 报
+  `The file uses a storage provider that is read-only.`。
+- **影响**：`probe-text.js` 的「跑过没有」改用 `probe-text.done`（存 PluginData）；
+  想重跑就删该文件，想关掉探针就删插件目录里的 `probe-text.flag`。
+
+## 2026-10-09　新增排障工具：定位 PS 原生模态框
+
+- **决定**：新增 `tools/win_dialog.py`，用于枚举 Photoshop 进程的顶层窗口，
+  并可指定类名/标题关键字关闭其中的模态框。
+- **原因**：PS 的原生错误框会让插件「无声」卡死（见上文）。
+  没有这个工具时，只能靠肉眼发现「插件没反应」，无从判断卡在哪。
+  本次即用它定位并关掉了阻塞探针的 `PSDialogBox`。
+- **安全设计**：默认**只列不关**；`--close` 必须显式给出类名/标题关键字才会动手。
+- **影响**：以后遇到「插件跑一半没动静」，第一步就是 `python tools/win_dialog.py`。
 
 ## 待定（尚未拍板，别当已决）
 

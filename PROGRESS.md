@@ -12,7 +12,8 @@
 - 环境基线：`node tools/doctor.mjs` = **13/15 项**，其中「闭环关键项 **5/5**」
 - 闭环实证：`hello-uxp` 探针插件加载后自检 **7/7 全通过**，`report.json` 落盘并被外部脚本读回
 - 样板实证：`hello-world` 插件（Panel + Command 双入口）加载成功，`boot.log` 落盘；
-  **面板按钮已被用户实际点击并成功插入图层**；文字图层描述符经无痕自检验证通过
+  **面板按钮已被用户实际点击，并确认为真正的「文本图层」**
+  （只读快照：`active=HelloWorld.psd 总数=2 顶层=[Hello World:text, 图层 0:pixel]`）
 - 仓库：**已上线** → https://github.com/wooozxh/vellum-ps-uxp （Public）
 
 ## 已完成
@@ -45,6 +46,16 @@
 - [x] 2026-10-09　**开发期自检 `verify.flag`** 建立 —— 无痕演练（建临时文档 → 插文图 → 验 → 关掉），
       首次运行即通过：`selfverify ok=true layers=["Hello World","背景"] cleaned=yes`
 - [x] 2026-10-09　`docs/03-HelloWorld与插件形态.md`：Panel vs Command 形态对比 + 反馈通道说明
+- [x] 2026-10-09　**【修 bug】** 用户报「插入文字」弹错框 + 只建出普通图层 → 定位并修复。
+  根因：PS 2026 v27.2 下 `batchPlay` 的 `make`+`textKey` **不再生成文本图层**；
+  随后对非文本层 `set` 又触发 PS 原生模态框卡死。改走 DOM `createTextLayer` 后通过
+- [x] 2026-10-09　**【修 bug】** 修掉自检的**假阳性**：判据从「只比图层名」改为「名字 + 类型」双条件
+  （本次 bug 能显示 `ok=true` 正是因为它只看名字）
+- [x] 2026-10-09　**【新工具】** `hello-world/probe-text.js` 写法矩阵探针：
+  真实 PS 里逐个跑候选写法、读回 `layerKind` 定论；`tools/win_dialog.py` 定位/关闭 PS 原生模态框
+- [x] 2026-10-09　**【新通道】** `boot.log` 增加 `newLayer=名字/类型` 与 `docs` 只读快照 ——
+  以后每次点击都能自证「建出来的层是什么类型」
+- [x] 2026-10-09　`docs/04-文本图层正确写法.md`：完整实测矩阵（A1–A4 / B 轮）+ 四个坑 + 环境硬约束速查
 
 ## 待办
 
@@ -79,6 +90,10 @@
 | **`plugin reload` 不可靠** | 实测：不接受 `--manifest`，且在插件实例状态失效时报 `Command execution failed in all connected applications`。**改用 `plugin load --manifest`**（幂等：重复 load = 重新加载 + 重跑自检）。 |
 | **`app.name` / `app.version` 在本机读不到** | PS 27.2 / UXP 9.0.2 下这两个 getter 返回 `undefined`，batchPlay 取 `application.version` 也拿不到。探针已改用 `app.documents.length` 作「宿主连接」判据。写新插件别依赖这两个属性。 |
 | **`plugin test` 需要额外安装** | 它要 `-s/--setup` 装 UXP Automation Framework（jest 风格，端口 4797），是**另一条**测试路线；本工作区用的是 `report.json` 落盘方案，两者可并存但别混淆。 |
+| **PS 原生错误框会「无声」卡死模态** | `batchPlay` 失败时 PS 可能弹**原生模态框**，它**不等于** JS Promise reject：插件侧 `await` 永不返回，外部侧日志停在某行再也不动，用户只看到弹窗。排障：`python tools/win_dialog.py` 列窗口 → `--close PSDialogBox` 关掉它。典型诱因：在非文本层上 `set` 带 `textKey` 的 `textLayer`。 |
+| **插件目录是只读存储** | `getPluginFolder()` 既不能建文件也删不掉文件（`The file uses a storage provider that is read-only.`），且 UXP 的 `Folder` **没有** `deleteEntry`。故 `*.flag` 开关只能由外部创建/删除；插件自己产出的文件一律写 `getDataFolder()`（PluginData）。 |
+| **文本图层只能走 DOM** | PS 2026 v27.2 下 `batchPlay` 的 `make`+`textKey`（含显式 `layerKind:{_enum:"layerKind",_value:"textLayer"}`）**只生成普通图层**；必须用 `app.activeDocument.createTextLayer({contents})`。字号在 `textItem.characterStyle.size`，**不是** `textItem.fontSize`（后者不存在）。详见 `docs/04-文本图层正确写法.md`。 |
+| **判据要照抄数据形态** | 同一属性两条通道两种形态：`layerKind` 经 batchPlay 是数字 `1`/`3`、经 DOM 是字符串 `"pixel"`/`"text"`；`size` 回读是多层对象 `{"_unit":"pointsUnit","_value":72}`。本次两次因判据凭想象写，把**正确答案判成失败**。 |
 
 ## 会话日志
 
@@ -103,7 +118,9 @@
 - **关键结论**：
   - `hello-world` 加载成功；**用户亲手点面板按钮的那次被执行日志记录下来**
     （`insert  via=panel  doc=晋升公告.psd  layers=11`）→ 「用户操作 → AI 可读」通道成立
-  - 文字图层的 batchPlay 描述符经无痕自检验证通过（`layers=["Hello World","背景"]  cleaned=yes`）
+  - ⚠️ ~~文字图层的 batchPlay 描述符经无痕自检验证通过~~ —— **此结论后经复查为「假阳性」**：
+    当时的自检只比对图层**名字**，而 PS 2026 建出来的其实是同名**普通图层**。
+    详见第 4 次会话与 `docs/04-文本图层正确写法.md`
   - `entrypoints.setup({ plugin, panels, commands })` 是 v5 标准写法；command 回调写在 `commands[id].run()`
   - 官方文档确认：entrypoint 只有 `panel` / `command` 两种 type，对应「插件面板」与「插件菜单」
 - **踩的坑**：
@@ -114,3 +131,33 @@
 - **改了哪些文件**：新建 `hello-world/`（3 个文件）、`docs/03-HelloWorld与插件形态.md`；
   更新 `README.md` / `PROGRESS.md` / `DECISIONS.md` / `.gitignore`
 - **遗留**：产品形态未定（当前唯一待办）
+
+### 2026-10-09（第 4 次会话）— 修「插入文字」的 bug
+
+- **触发**：用户报 bug —— 点「在当前文档插入 "Hello World" 文字」后弹出 PS 原生错框
+  「命令"设置"当前不可用。」，并且只建出一个**普通图层**，不是文本图层（其余功能正常）。
+- **怎么定位的**：不猜，写 `probe-text.js` 让插件当探针，在真实 PS 里逐个跑候选写法、
+  读回 `layerKind` 定论。第一轮 4 种 batchPlay 写法全部 `layerKind=1`，只有 DOM 的
+  `createTextLayer` 得到 `3`。中途被 PS 原生错误框卡死一次 → 顺手做出 `tools/win_dialog.py` 把它点掉。
+- **根因**：
+  1. PS 2026 v27.2 下 `batchPlay` 的 `make`+`textKey` **不再生成文本图层**（图层名却依然正确）
+  2. 紧接着对非文本层 `set` 带 `textKey` 的 `textLayer`，PS 弹**原生模态框**并**阻塞**整个模态作用域
+  3. 而自检**只比对图层名**，于是把这次失败记成了 `ok=true`（假阳性）—— 这解释了「日志说成功、用户看到失败」
+- **踩的坑（两条判据都凭想象写，把正确答案判成了失败）**：
+  - `layerKind` 经 batchPlay 是**数字** `1/3`、经 DOM 是**字符串** `"pixel"/"text"` → 第一版按字符串匹配，A4 被误判 FAIL
+  - `size` 从 PS 回读是 `{"_unit":"pointsUnit","_value":72}` 不是数字 `72` → 第二版正则又误判 FAIL
+- **改了哪些文件**：
+  - `hello-world/index.js`：`makeTextLayer()` 改走 DOM；`readActiveLayer()` 增读 DOM `kind`；
+    新增 `isTextLayer()` 统一双形态判定；`selfVerify` 判据加「类型」；日志增 `newLayer=名字/类型`；
+    插件加载时写一份**只读**文档快照（`docs` 行）
+  - 新建 `hello-world/probe-text.js`（写法矩阵探针）、`tools/win_dialog.py`（PS 模态框排障）
+  - 新建 `docs/04-文本图层正确写法.md`
+- **验证（三重，全部落盘可查）**：
+  1. 探针：`A 轮可用写法 = A4 DOM：document.createTextLayer({contents})`；`probe B PASS ... "sizeApplied":true`
+  2. 无痕自检：`selfverify ok=true layers=["Hello World","背景"] kind=text/3 cleaned=yes`
+  3. **用户真实点击 + 只读快照**：`insert via=panel doc=HelloWorld.psd layers=2`
+     → `docs active=HelloWorld.psd 总数=2 顶层=[Hello World:text, 图层 0:pixel]`
+- **顺带挖到的环境硬约束**：插件目录是**只读**存储（不能建文件、也删不掉文件）；
+  UXP 的 `Folder` 没有 `deleteEntry` → 文件开关只能由外部管。
+- **遗留**：产品形态仍未定（唯一待办）；
+  `hello-world` 两个入口在中文版 PS 菜单里的确切译名，仍待用户回填。
