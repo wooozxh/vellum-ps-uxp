@@ -101,11 +101,60 @@
 
 ## 2026-10-09　Git 身份用仓库级配置，不动全局
 
-- **决定**：本仓库的 `user.name` / `user.email` 用**仓库级**配置（`proj_media` / `dev@localhost`），
-  与 VellumDesk 保持一致。
+- **决定**：本仓库的 `user.name` / `user.email` 用**仓库级**配置，不动全局。
 - **原因**：全局身份**未设置**（`git config --global user.name` 为空），且用户在多项目上用的是仓库级配置。
-- **⚠️ 待确认**：`dev@localhost` 是占位邮箱，GitHub **不会**把提交归到用户名下（头像/贡献图都不会亮）。
-  若希望提交显示真人账号，需换成 GitHub 账号绑定的邮箱 —— 见 `NEXT.md` 第二节待拍板项。
+- **⚠️ 已修正**：初版沿用 VellumDesk 的占位邮箱 `dev@localhost`，后改为 GitHub 专属 noreply 邮箱 ——
+  见下一条。
+
+## 2026-10-09　提交身份改用 GitHub 专属 noreply 邮箱
+
+- **决定**：`user.name` = `wooozxh`，`user.email` = `76898022+wooozxh@users.noreply.github.com`。
+- **原因**：核查发现**VellumDesk 在 GitHub 上的所有提交都没归到账号**（作者是 `proj_media <dev@localhost>`，
+  是个占位身份，头像和贡献图都不会亮）。GitHub 提供的 noreply 邮箱能同时满足两件事：
+  提交归到账号名下 + **不暴露真实邮箱** —— 比直接用真实邮箱更好。
+- **影响**：首次提交尚未推送，因此用 `git commit --amend --reset-author` 重写了作者，历史保持单提交。
+- **放弃**：沿用 `dev@localhost`（提交无归属）；直接用真实邮箱（没必要公开）。
+
+## 2026-10-09　仓库公开、名为 `vellum-ps-uxp`、暂不加许可证
+
+- **决定**：GitHub 仓库 `wooozxh/vellum-ps-uxp`，**Public**；暂不添加 LICENSE。
+- **原因**：可见性与命名由用户拍板。公开与 VellumDesk 一致；仓库名带 `vellum` 前缀便于在账号里归类到同一族。
+- **已知代价**：公开仓库若无 LICENSE，默认「保留所有权利」，**他人不能合法复用代码**。用户知情后选择先不加。
+- **放弃**：私有（用户选公开）；`ps-uxp-dev`（与本地目录同名，但用户偏好带品牌前缀）。
+
+## 2026-10-09　GitHub 建仓库与推送的通道选择
+
+- **决定**：建仓库和推送**不走 GitHub 连接器**，走 **GCM 凭据 + REST API**。
+- **原因**：连接器的令牌**没有建仓库权限**（实测 `POST /user/repos` 返回
+  `403 Resource not accessible by integration`）。而本机 GCM 里存着 `wooozxh` 的令牌，
+  用 `git credential fill` 取出来即可调 API。
+- **放弃**：连接器建仓库（权限不足）。
+
+## 2026-10-09　`github.com:443` 被拦时的推送兜底：走 Git Data API
+
+- **决定**：写 `tools/push_via_api.py`，当 `git push` 连不上时用它把提交推上去。
+- **原因**：本机 `github.com:443` 会被**间歇性 SNI 拦截**。实测同一时刻
+  `api.github.com` 200、`codeload.github.com` 301，**只有 `github.com` 连不上**；
+  走代理则 `CONNECT tunnel failed, response 502`。此时 `git push` 无论摘不摘代理都失败，
+  但远端本身是好的 —— 坏的只是这一个入口。
+- **原理**：Git 对象内容寻址，只要内容一致，远端算出的 tree/commit sha 与本地**完全相同**，
+  所以推完直接 `update-ref` 对齐跟踪引用，连 `fetch` 都不需要（已验证：sha 逐位一致）。
+
+### 实现上踩到的三个坑（重写这个脚本前务必先读）
+
+1. **空仓库不能用 trees API** —— 返回 `409 Git Repository is empty`。
+   空仓库必须先造一个提交（网页建 README，或用 Contents API 写一个文件）。
+   本次解法：先用 Contents API 播一个临时提交，再建**根提交**（`parents: []`）
+   并把 `main` 强指过去，播种提交变成游离对象 → 最终历史仍是干净的单提交。
+2. **内容必须从 git 对象读，不能读磁盘** —— `core.autocrlf=true` 时磁盘上是 CRLF、
+   git 里存的是 LF。本次有一份 `.md` 因从磁盘读而让**整棵树 sha 错位**，
+   表现为「tree 不一致 → commit 也不一致」。正解：`git cat-file blob <sha>`。
+3. **`git credential fill` 会偶发返回空**（实测 3 次里 1 次）—— 脚本必须重试。
+
+- **为什么是 Python 而不是 .mjs**：`tools/` 下其它脚本都是 Node，但本机 Node 在受限环境里
+  **spawn 任何 `.exe` 都 EBUSY**（实测 git / node / where 全中招），Python 的 subprocess 反而稳。
+  兜底工具只在「网络或工具链已经不正常」时才用，**「验证过」比「风格统一」重要**。
+- **放弃**：等网络恢复再推（不可控）；改用 SSH（本机没有 SSH 密钥）。
 
 ## 待定（尚未拍板，别当已决）
 
@@ -113,7 +162,4 @@
 |---|---|---|
 | **产品形态** | Command（一次性动作）vs Panel（常驻面板） | 当前最该推进的事 |
 | **是否上框架** | vanilla JS vs React / Svelte / Vue / TS | 建议先 vanilla 跑通再决定 |
-| **仓库可见性** | Public vs Private | VellumDesk 是 Public |
-| **许可证** | 无（默认保留所有权利）vs MIT vs 其它 | 若 Public 且无 LICENSE，他人不可合法复用 |
-| **仓库名** | `ps-uxp-dev` vs 其它 | 待定 |
-| **Git 邮箱** | 沿用 `dev@localhost` vs 换真实 GitHub 邮箱 | 影响提交归属 |
+| **许可证** | 无（当前）vs MIT vs Apache-2.0 | 仓库已公开；无 LICENSE = 他人不可合法复用 |

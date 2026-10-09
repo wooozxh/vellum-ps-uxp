@@ -10,7 +10,7 @@
 - 完成度：环境调研 **100%**；工具链 **100%**；档案与仓库 **100%**；
   **阻塞 1 项**（管理员开关）；产品形态 **0%（未定）**
 - 环境基线：`node tools/doctor.mjs` = **10/15 项**，其中「闭环关键项 **3/5**」
-- 仓库：本地已 `git init` + 首次提交；**远程尚未推送**（可见性与仓库名待用户拍板）
+- 仓库：**已上线** → https://github.com/wooozxh/vellum-ps-uxp （Public；单提交 `76bddfb`，25 个文件）
 
 ## 已完成
 
@@ -24,7 +24,9 @@
 - [x] 2026-10-09　自检探针插件 `hello-uxp`（manifest v5，8 个用例，自检即报告）
 - [x] 2026-10-09　档案四件套建立（`PROJECT` / `PROGRESS` / `DECISIONS` / `NEXT`）
 - [x] 2026-10-09　`docs/` 编号制度建立（现有资料纳入 `NN-xxx.md` 体系）
-- [x] 2026-10-09　GitHub 仓库准备：`.gitignore` 写好、`git init`、首次提交完成
+- [x] 2026-10-09　GitHub 仓库准备：`.gitignore` / `.gitattributes` 写好、`git init`、首次提交
+- [x] 2026-10-09　**GitHub 仓库上线**：公开仓库 `wooozxh/vellum-ps-uxp`；
+      提交身份改用 GitHub noreply 邮箱（提交可归到账号）；`tools/push_via_api.py` 兜底通道
 
 ## 待办
 
@@ -35,7 +37,7 @@
 - [ ] 打通后验证：`uxp plugin load --manifest hello-uxp/manifest.json` →
       跑全量自检 → `node tools/report.mjs` 看到 **8/8** → 环境闭环成立
 - [ ] **与用户确认产品形态**（Command / Panel、是否上框架）→ 产出 `docs/03-xxx方案.md`
-- [ ] 推 GitHub（等用户确认可见性与仓库名后执行）
+- [ ] （可选）给仓库加许可证 —— 当前**无 LICENSE**，公开仓库下他人不可合法复用
 
 ## 下一步（下次开工从这里开始）
 
@@ -51,7 +53,9 @@
 | PS 来自离线安装包 | PS 2026 是 `D:\安装包\Win版 PS 2026 v27.2.zip` 装的，**不是 CC 装的**。多数情况下 CLI 照常能连；若出现「加载后 PS 里看不到插件」，优先怀疑这一点。 |
 | **产品形态未定** | 最大风险 = 在形态未明时写大量代码，白做。所以铁律第一条就是「先出方案再动代码」。 |
 | 官方示例仓库不入库 | 它是独立 git 仓库 + 第三方代码。换机器需重新克隆（命令在 `README.md`）。 |
-| 沙箱三条限制 | 本会话环境里 `spawn cmd.exe` → ENOENT、COM 实例化被拦、`reg.exe` 被禁。写脚本时**别走 shell**，改成「扫 PATH 找 exe + 直调」。详见 `NEXT.md` 第四节。 |
+| 沙箱三条限制 | 本会话环境里 `spawn cmd.exe` → ENOENT、Node spawn 任何 `.exe` → **EBUSY**、COM 实例化被拦、`reg.exe` 被禁。写脚本时**别走 shell**；Node 里干脆别指望 spawn 外部命令（Python 的 subprocess 反而可用）。详见 `NEXT.md` 第四节。 |
+| **`github.com:443` 间歇被封** | 实测同一时刻 `api.github.com` 200、`codeload.github.com` 301，只有 `github.com` 连不上（代理则 502）。`git push` 会失败但**远端没坏**。兜底：`python tools/push_via_api.py`。 |
+| Git 凭据读取不稳定 | `git credential fill` 实测 3 次里会有 1 次返回空。脚本里务必**重试**（`push_via_api.py` 内置 6 次）。 |
 
 ## 会话日志
 
@@ -60,4 +64,4 @@
   建立档案四件套；准备 GitHub 仓库。
 - **改了哪些文件**：全部为新建（新工程）。核心是 `PROJECT.md` / `PROGRESS.md` / `DECISIONS.md` / `NEXT.md`
   + `tools/` 四个脚本 + `hello-uxp/` 三个文件 + `.gitignore`。
-- **遗留**：管理员开关未启用（唯一阻塞）；产品形态未定；远程仓库未推送。
+- **遗留**：管理员开关未启用（唯一阻塞）；产品形态未定。

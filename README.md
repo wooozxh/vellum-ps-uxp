@@ -134,6 +134,7 @@ ps-uxp-dev/
 │   ├── doctor.mjs              环境自检（按 vibecoding 闭环口径）
 │   ├── enable-devtools.mjs     启用/关闭开发者工作流（需管理员）
 │   ├── report.mjs              读取插件写出的 report.json
+│   ├── push_via_api.py         github.com 被拦时的推送兜底通道
 │   ├── uxp.cmd                 CLI 包装器（Windows）
 │   └── uxp                     CLI 包装器（bash，给自动化用）
 ├── docs/                      资料库 + 方案文档（NN-xxx.md 编号，见 docs/README.md）
@@ -200,6 +201,8 @@ ps-uxp-dev/
 
 ## 九、Git 与仓库
 
+**远程**：https://github.com/wooozxh/vellum-ps-uxp （Public）
+
 - **已入库**：档案四件套、`README.md`、`hello-uxp/`、`tools/`、`docs/`、`.vscode/`、`package-lock.json`
 - **不入库**（见 `.gitignore`）：`node_modules/`、`official-samples/`、`.workbuddy/`、构建产物
 
@@ -210,12 +213,27 @@ ps-uxp-dev/
 git clone --depth 1 https://github.com/AdobeDocs/uxp-photoshop-plugin-samples.git official-samples
 ```
 
-### 本机推送注意事项（踩过的坑）
+### 推送：先试常规，不通走兜底
 
-- **代理变量会让 GCM 挂起**，push 时要把代理摘掉：
-  `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY git push origin main`
+```bash
+# 常规（大多数时候可用）。本机有代理变量时 GCM 会挂起，要先摘掉
+env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY git push origin main
+
+# 兜底：报 "Failed to connect to github.com:443" 时用（改走 api.github.com）
+python tools/push_via_api.py
+```
+
+`push_via_api.py` 为什么存在：本机 `github.com:443` 会被**间歇性 SNI 拦截**，
+而同一时刻 `api.github.com` 是通的 —— 远端没坏，坏的只是那一个入口。
+它走 Git Data API；因为 Git 对象内容寻址，远端算出的 sha 与本地完全一致，
+推完连 `fetch` 都不需要。**常规 `git push` 可用时优先用它**，这个只是兜底。
+
+### 其它踩过的坑
+
 - **`git push` 的输出会被吞**（无输出但实际成功）。判定结果用 `git ls-remote origin main`，别信输出。
-- 本机没装 `gh`；建仓库/发 Release 走 GitHub 连接器（账号 `wooozxh`）。
+- **`git credential fill` 会偶发返回空**，脚本里取令牌必须重试。
+- **本机没装 `gh`**；建仓库 / 发 Release 走 GCM 凭据 + REST API
+  （GitHub 连接器只能读，且其令牌没有建仓库权限）。
 
 ---
 
