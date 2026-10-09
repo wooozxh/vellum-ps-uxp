@@ -11,6 +11,12 @@
 开工。项目在 D:/ps-uxp-dev —— Photoshop UXP 插件开发工作区（宿主 Photoshop 2026 v27.2，装在
 D:/software/adobe/Adobe Photoshop 2026/）。
 
+⚠️ 上一轮收工**关了机**，常驻服务（`uxp service start`）已随关机消失。所以开机后先做这三件事，
+**再**去读档案 —— 没做的话所有 CLI 命令都会报「连不上服务」，别误判成环境坏了：
+  ① 打开 Photoshop（必须先开着，CLI 要连它）
+  ② 起常驻服务：`tools\uxp.cmd service start`（后台常驻，别关；这一步没做完后面的都会失败）
+  ③ 确认认到 PS：`tools\uxp.cmd apps list`（能列出 Photoshop 即通）
+
 工作模式是 vibecoding：我提需求和验收，你写代码并自己验证。注意别给我安排「你去点一下看看」
 这类任务，凡是能脚本化的你自己跑完再把证据给我；只有管理员授权、PS 里勾选项这种物理上没法代劳的才找我。
 
@@ -31,6 +37,11 @@ D:/software/adobe/Adobe Photoshop 2026/）。
   ① 管理员开关已写入 `C:\Program Files\Common Files\Adobe\UXP\Developer\settings.json`
   ② PS 开发者模式已开启（PS 会主动连上 devtools 服务端口 14001）
   跑 `node tools/doctor.mjs` 应得 **13/15、闭环关键项 5/5**。若不对，按 `README.md` 第三节重做。
+  （这两步是**持久**的，重启机器/PS 后依然生效，不用重做；只有上面那个常驻服务要重起。）
+- **最近进展（2026-10-09 晚）**：`hello-world` 的「插入文字图层」bug **已修**。
+  根因：PS 2026 不再吃 batchPlay 的 `make`+`textKey`（照样设对图层名，但只建出普通层），
+  且紧随其后的 `set textLayer` 会弹原生模态框并阻塞 `executeAsModal`。
+  已改走 DOM `createTextLayer`。完整实测矩阵 + 4 个坑见 `docs/04-文本图层正确写法.md`。
 - **当前唯一待办 = 产品形态未定**（Command vs Panel、是否上框架）。先找我聊形态，**别先写代码**。
   **形态的参考物已经就位**：`hello-world/` 是「一个插件、两个入口」（panel + command），两个都能跑；
   形态对比表在 `docs/03-HelloWorld与插件形态.md`。
@@ -105,3 +116,6 @@ D:/software/adobe/Adobe Photoshop 2026/）。
 | **怎么验证 PS 开发者模式真的生效了** | 看 `netstat` 里 `127.0.0.1:14001` 有没有一条来自 **Photoshop PID** 的 ESTABLISHED 连接 —— 有就是生效了，比翻设置界面可靠。 |
 | ⛔ **本环境截图路线不可用** | `windows-app-screenshot` 的 `capture_window.ps1` 跑不出 PNG，且 PowerShell 工具的输出经常被整体吞掉（同一段命令重跑或用 Bash 才正常）。**要"看到"插件行为，用 `boot.log` 而不是截图** —— 它还能证明用户操作成功与否，信息量比截图大。 |
 | ⛔ **`rm` 删不了 `$APPDATA` 展开出的路径** | 报 `[safe-delete][SAFE_DELETE_INVALID_PATH] embedded drive prefix is not allowed`。删这类文件改用相对路径（先 `cd` 进目录再删），或让插件自己覆写。 |
+| ⛔ **插件目录是只读存储，插件删不掉自己的文件** | 往插件目录写/删文件报 `The file uses a storage provider that is read-only.`；且 UXP 的 `Folder` **没有 `deleteEntry`**。所以「文件开关」只能由**外部**管理，插件产物一律写 `PluginData`。想重跑一次性探针，用「外部删 flag」而不是让插件自己清。 |
+| ⛔ **PS 原生模态框会卡死 `executeAsModal`** | 对非文本层 `set textLayer` 等非法操作会让 PS 弹原生错误框，并**阻塞整个模态作用域** —— 插件侧 `await` 永不返回，外部看日志会以为「卡住了」。此时用 `tools/win_dialog.py` 定位/关闭那个 `PSDialogBox`（`python tools/win_dialog.py <PS_PID>` 列表、`--close PSDialogBox` 关闭）。**预防 > 抢救**：探针里剔除一切会触发 `set` 的危险变体。 |
+| ⛔ **`batchPlay` 的 `make`+`textKey` 建不出文本图层** | 在 PS 2026 v27.2 / UXP 9.0.2 上它只建出 `layerKind=1` 的普通层（图层名却是对的 → 极易假阳性）。正解：DOM `app.activeDocument.createTextLayer({contents})`。字号写 `textItem.characterStyle.size`（`TextItem` 上**没有** `fontSize`）。判类型别只比名字，要**名字 + 类型**双条件。详见 `docs/04-文本图层正确写法.md`。 |
