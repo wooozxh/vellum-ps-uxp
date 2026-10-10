@@ -38,6 +38,11 @@
  *   v0.2.7 **素材库界面落地**（`tools/library.js`）：库切换 / 分组筛选 / 缩略图网格 /
  *          详情 / 每 3 秒对 revision 自动刷新 / 置入（先直连 absPath，不行再走 handoff 握手）
  *          —— 见 docs/23。
+ *   v0.2.8 跟进软件侧按契约 §十 提的三处**加法**（不升契约版本，见 LINK-LOG）：
+ *          `groups[].parentId` 两级分组 → 筛选区第二行；`asset.source` → 来源筛选 + 卡片角标；
+ *          缩略图命名空间 `t<b>` → 对插件透明，但**它暴露了本项目一个真实缺陷**：
+ *          缩略图缓存键原来用 `asset.id`，而两库 id 各自从 1 起 ⇒ 切库可能串图
+ *          —— 已改为按 `asset.thumb` 做键（离线断言 32 钉死）。
  *
  * ⚠️ 两条真机硬纪律（改 UI 前必读 index.html 头部注释）
  *   ① SVG 每个子元素都要显式写 fill/stroke（UXP 不做继承）→ 见 lib/icons.js
@@ -67,7 +72,7 @@ const selfcheck = require("./lib/selfcheck.js");
 
 /** ⚠️ 必须与 manifest.json 的 version 一致 —— 两者任一改动都要同步另一处。 */
 const PLUGIN_ID = "com.vellum.toolbox";
-const VERSION = "0.2.7";
+const VERSION = "0.2.8";
 
 let ui = null;
 let homeBinder = null;

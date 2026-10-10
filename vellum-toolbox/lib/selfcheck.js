@@ -89,6 +89,15 @@
  *       所以那条读数**无结论**，只能说明"这么用不行"，不能说明"权限边界在哪"。
  *       ⇒ 代码里刻意把结论分成三档（基准失败 = 无结论），免得下次又拿错读数当结论。
  *
+ *   v0.2.8 新增（跟进软件侧按契约 §十 提的三处加法）：
+ *   · S19 扩了两条**解析层**判据：`groups[].parentId` 解析出子组（§5.3 加法 ③）、
+ *     `asset.source` 被读成来源计数（§5.4 加法 ②）。缩略图命名空间（§5.5 加法 ①）
+ *     对插件是透明的，所以它的验证点在**离线回归 32 条**（缓存键）而不是这里。
+ *   · S20c 两级分组筛选 —— **顶层不得出现子组 chip**，点了父组之后子组行才出现，
+ *     且"点父组的卡片数 = 父组直接素材 + 它的子组素材"（这正是两级分组的意义）。
+ *   · S20d 来源筛选 —— 「来源」行只在当前分组内真有 ≥2 种来源时出现；
+ *     点它能收窄；切到单一来源的分组后该行**必须消失**（不构成筛选就不画）。
+ *
  *   版本状态（v0.2.4）：S17 建的「纯色填充图层」改色**仍未解决**（已知限制，非回归），
  *   而**形状图层改色正常**（用户 2026-10-10 真机确认，日志 via=contentColorA）。
  *
@@ -271,6 +280,86 @@ async function run(ctx, deps) {
     results.push({ name: name, ok: !!ok, detail: detail || "" });
   };
   const started = Date.now();
+
+  /* ---------------------------------------------------------------- 素材库自检小工具
+     ⚠️ 一律**从 DOM 读**，不碰 tools/library.js 的内部状态 ——
+        否则就是"拿被测模块自己的输出验它自己"。 */
+  /** 在筛选区按 `data-key` 找 chip。 */
+  function libChip(key) {
+    const bar = document.getElementById("vt-lib-bar");
+    if (!bar) return null;
+    const walk = (n) => {
+      for (let i = 0; i < n.children.length; i++) {
+        const c = n.children[i];
+        const k = c.getAttribute ? c.getAttribute("data-key") : null;
+        if (k !== null && k === key) return c;
+        const d = walk(c);
+        if (d) return d;
+      }
+      return null;
+    };
+    return walk(bar);
+  }
+  /** 筛选区当前有几「行」（.frow）。 */
+  function libRowCount() {
+    const bar = document.getElementById("vt-lib-bar");
+    if (!bar) return -1;
+    let n = 0;
+    for (let i = 0; i < bar.children.length; i++) {
+      const c = bar.children[i];
+      const cls = String((c.getAttribute && c.getAttribute("class")) || "");
+      if (cls.indexOf("frow") >= 0) n++;
+    }
+    return n;
+  }
+  /**
+   * 等网格的卡片数 == n（n < 0 表示只等"有卡片"）。
+   * ⚠️ **必须点名 `scope`** —— 否则条件会被**上一个库留下的旧网格**满足。
+   *    v0.2.7 的 S20b 和 v0.2.8 的 S20c/S20d 都栽在这上面（同一族：判据不够强，
+   *    它描述的是"DOM 里现在有什么"，而不是"我要的那个库渲染完了没有"）。
+   * `scope` 缺省时退回旧行为（只在明确不需要区分时用）。
+   * 返回网格元素或 null。
+   */
+  async function libWaitCards(n, ms, scope) {
+    return await waitFor(() => {
+      const el = document.getElementById("vt-lib-grid");
+      if (!el) return null;
+      if (scope && String(el.getAttribute("data-scope") || "") !== scope) return null;
+      if (n < 0) return el.children.length > 0 ? el : null;
+      return el.children.length === n ? el : null;
+    }, ms || 5000, 150);
+  }
+  /** 网格当前属于哪个库（读 DOM，不读模块状态）。 */
+  function libGridScope() {
+    const el = document.getElementById("vt-lib-grid");
+    return el ? String(el.getAttribute("data-scope") || "") : "";
+  }
+  /**
+   * 切到某个库**并等它真的渲染完**。
+   * 判据三条缺一不可：chip 高亮 + **网格的 `data-scope` 等于目标库** + 有卡片。
+   * 少第三条就会读到上一个库的网格与筛选行（症状：筛选 chip 一个都找不到）。
+   */
+  async function libSwitchTo(id, ms) {
+    const chip = document.getElementById("vt-lib-tab-" + id);
+    if (!chip) return false;
+    syntheticClick(chip, false);
+    const ok = await waitFor(() => {
+      const on = document.getElementById("vt-lib-tab-" + id);
+      const cls = on ? String(on.getAttribute("class") || "") : "";
+      if (cls.indexOf("is-on") < 0) return null;
+      const el = document.getElementById("vt-lib-grid");
+      if (!el) return null;
+      if (String(el.getAttribute("data-scope") || "") !== id) return null;
+      return el.children.length > 0 ? el : null;
+    }, ms || 6000, 200);
+    return !!ok;
+  }
+  /** 把筛选复位到「全部」（点第一行的「全部」chip）。 */
+  function libResetFilter() {
+    const c = libChip("");
+    if (c) syntheticClick(c, false);
+    return !!c;
+  }
 
   await log.appendLog("selfcheck START  plugin=com.vellum.toolbox");
 
@@ -990,6 +1079,7 @@ async function run(ctx, deps) {
     // ② 两个 scope 的解析 + 展平
     let taskRows = 0;
     let brandRows = 0;
+    let brandItems = [];
     let taskRev = null;
     let firstRow = null;
     let taskErr = null;
@@ -1009,10 +1099,20 @@ async function run(ctx, deps) {
       const bs = m.scopes.filter((s) => s.id === "brand")[0];
       if (bs) {
         const r = await mirror.readScope(bs);
-        if (r.ok) brandRows = mirror.flatten("brand", r.data).length;
-        else brandErr = r.error;
+        if (r.ok) {
+          brandItems = mirror.flatten("brand", r.data);
+          brandRows = brandItems.length;
+        } else brandErr = r.error;
       } else brandErr = "总索引里没有 brand scope";
     }
+
+    // ②b 软件侧 2026-10-10 提的两处加法（契约 §5.3 parentId / §5.4 source）：
+    //     只验"解析层"是否把它们变成了可用的结构；**界面**由 S20c / S20d 负责。
+    const subRows = brandItems.filter((x) => !!x.sub).length;
+    const srcSig = mirror
+      .sourceSummary(brandItems)
+      .map((s) => s.value + ":" + s.count)
+      .join("|");
 
     // ③ 渲染缩略图 —— 容器**必须可见**（display:none 里 UXP 不加载图片，表现为超时）
     s19Holder = document.createElement("div");
@@ -1043,11 +1143,14 @@ async function run(ctx, deps) {
 
     rec(
       S19,
-      m.ok && taskRows === 2 && brandRows === 3 && renderOk && !!guard.webp,
+      m.ok && taskRows === 2 && brandRows === 4 && subRows === 1 &&
+        srcSig === "company:3|user:1" && renderOk && !!guard.webp,
       "契约=" + (m.ok ? m.manifest.contract + " ✓" : "✗ " + m.error) +
       "　scopes=[" + (m.scopes || []).map((s) => s.id + ":rev" + s.revision).join(" ") + "]" +
       "　任务库=" + taskRows + " 条" + (taskErr ? " ✗ " + taskErr : "") +
       "　通用库=" + brandRows + " 条" + (brandErr ? " ✗ " + brandErr : "") +
+      "　两级分组=子组 " + subRows + " 条" +
+      "　来源=" + (srcSig || "（无 source 字段）") +
       "　缩略图=" + renderInfo +
       "　webp 防御=" + (guard.webp ? "已拦截 ✓" : "✗ 未拦截") +
       "　首条面包屑=" + (firstRow ? firstRow.crumb.join(" › ") : "-")
@@ -1160,9 +1263,11 @@ async function run(ctx, deps) {
       }
 
       // 等缩略图读完（library.js 是顺序读的，所以给足时间）
+      // ⚠️ 也要点名 scope —— 与 S20b/S20c 同一族纪律：判据必须说清"是哪块网格"。
       await waitFor(() => {
         const g = document.getElementById("vt-lib-grid");
         if (!g) return null;
+        if (String(g.getAttribute("data-scope") || "") !== String(activeId || "")) return null;
         const imgs = collectImgs(g, []);
         if (!imgs.length) return null;
         for (const im of imgs) {
@@ -1198,6 +1303,7 @@ async function run(ctx, deps) {
 
       const okAll =
         !!tabsEl &&
+        !!barEl &&
         tabCount === man.scopes.length &&
         onChips === 1 &&
         !!grid &&
@@ -1212,7 +1318,7 @@ async function run(ctx, deps) {
         okAll,
         "库 chips=" + tabCount + "/" + man.scopes.length +
         "（激活 1 个？" + (onChips === 1 ? "是" : "否！") + "，当前 " + activeId + "）" +
-        "　筛选行元素=" + (barEl ? barEl.children.length : 0) +
+        "　筛选区行数=" + libRowCount() + "（0 = 不构成筛选，只显示总计数）" +
         "　卡片=" + cards + "（自数期望 " + expect + "）" +
         "　缩略图 " + loaded + "/" + imgs.length + " 解出尺寸" +
         "　详情行含「" + firstName + "」=" + detailOk
@@ -1234,12 +1340,15 @@ async function run(ctx, deps) {
           // ⚠️ 判据必须是"**新的**库已经渲染完"，不能只等"网格里有东西"——
           //    旧网格还在 DOM 里，那种等法第一轮就命中，量到的永远是上一个库的卡片数。
           //    （v0.2.7 第一版就是这么误报的：切到通用库却量到 2 张 = 任务库的张数。）
+          //    v0.2.8 改成**点名 scope**：直接读网格的 `data-scope`，不再靠"卡片数恰好不同"。
           const g2 = await waitFor(() => {
             const onChip = document.getElementById("vt-lib-tab-" + other.id);
             const cls = onChip ? String(onChip.getAttribute("class") || "") : "";
             if (cls.indexOf("is-on") < 0) return null;
             const el = document.getElementById("vt-lib-grid");
-            if (!el || el.children.length !== expect2) return null;
+            if (!el) return null;
+            if (String(el.getAttribute("data-scope") || "") !== String(other.id)) return null;
+            if (el.children.length !== expect2) return null;
             return el;
           }, 6000, 200);
           const c2 = g2 ? g2.children.length : 0;
@@ -1263,6 +1372,149 @@ async function run(ctx, deps) {
       "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S20c / S20d: 软件侧 2026-10-10 提的两处加法，落到界面上（v0.2.8 新增） ----------
+     契约 §5.3 加法 ③（`groups[].parentId` 两层分组）与 §5.4 加法 ②（`asset.source`）。
+     这两条**必须真机验**：解析层对了不代表界面用上了（S19 只验了前者）。
+     共同纪律：**期望值全部从原始 JSON 自己数**，绝不读 tools/library.js 的内部状态。 */
+  let brandGroups = [];
+  let twoLevel = null; // { parent, kids, kid, expParent, expKid }
+  let srcInfo = null; // { counts, keys }
+  try {
+    const raw = await data.readTextIn(["library"], "brand.json", "");
+    const bd = raw && raw.trim() ? JSON.parse(raw) : null;
+    brandGroups = (bd && bd.groups) || [];
+
+    const byId = {};
+    for (const g of brandGroups) byId[String(g.id)] = g;
+    const assetsOf = (g) => (g && Array.isArray(g.assets) ? g.assets.length : 0);
+    const isTop = (g) => {
+      const r = g.parentId;
+      return r === undefined || r === null || r === "" || !byId[String(r)];
+    };
+    for (const g of brandGroups) {
+      if (!isTop(g)) continue;
+      const kids = brandGroups.filter((x) => !isTop(x) && String(x.parentId) === String(g.id));
+      // 找"**既有直接素材、又有子组**"的父组 —— 这正是两级分组存在的意义；
+      // 只有这种样本才能验出"点父组要能看到子组里的素材"。
+      if (kids.length && assetsOf(g) > 0) {
+        twoLevel = {
+          parent: g,
+          kids: kids,
+          kid: kids[0],
+          expParent: assetsOf(g) + kids.reduce((s, k) => s + assetsOf(k), 0),
+          expKid: assetsOf(kids[0]),
+        };
+        break;
+      }
+    }
+
+    const counts = {};
+    for (const g of brandGroups) {
+      for (const a of g.assets || []) if (a.source) counts[a.source] = (counts[a.source] || 0) + 1;
+    }
+    srcInfo = { counts: counts, keys: Object.keys(counts) };
+  } catch (e) {
+    await log.appendLog("selfcheck S20c/d 前置失败 " + ((e && e.message) || e));
+  }
+
+  /* S20c 两级分组筛选 */
+  try {
+    const S20C = "S20c 两级分组筛选 —— 点父组含子组素材、点子组收窄（契约 §5.3 parentId）";
+    if (!twoLevel) {
+      rec(S20C, false, "镜像里没有「两层分组」样本（需要一个既有直接素材、又有子组的父组）—— 本条不作数");
+    } else {
+      const pName = twoLevel.parent.name;
+      const kName = twoLevel.kid.name;
+      const okSwitch = await libSwitchTo("brand");
+      libResetFilter();
+
+      // 关键语义：**顶层不该出现子组 chip**（旧版平铺时会），点了父组之后才出现
+      const kidBefore = !!libChip(kName);
+      const pChip = libChip(pName);
+      const nTxt = pChip && pChip.children[1] ? String(pChip.children[1].textContent || "") : "";
+
+      let cardsParent = -1;
+      if (pChip) {
+        syntheticClick(pChip, false);
+        const g1 = await libWaitCards(twoLevel.expParent, 5000, "brand");
+        cardsParent = g1 ? g1.children.length : -1;
+      }
+      const kidAfter = !!libChip(kName);
+
+      const kChip = libChip(kName);
+      let cardsKid = -1;
+      if (kChip) {
+        syntheticClick(kChip, false);
+        const g2 = await libWaitCards(twoLevel.expKid, 5000, "brand");
+        cardsKid = g2 ? g2.children.length : -1;
+      }
+
+      rec(
+        S20C,
+        okSwitch && !kidBefore && kidAfter && !!pChip &&
+          cardsParent === twoLevel.expParent && !!kChip && cardsKid === twoLevel.expKid,
+        "库=brand（切换=" + okSwitch + "）" +
+        "　顶层就出现子组 chip？" + kidBefore + "（须 false —— 平铺就是这个症状）" +
+        "　父组「" + pName + "」count 标签=" + JSON.stringify(nTxt) +
+        " → 卡片=" + cardsParent + "（自数期望 " + twoLevel.expParent + "）" +
+        "　点父组后子组 chip 出现=" + kidAfter +
+        "　子组「" + kName + "」→ 卡片=" + cardsKid + "（自数期望 " + twoLevel.expKid + "）"
+      );
+      libResetFilter();
+    }
+  } catch (e) {
+    rec("S20c 两级分组筛选 —— 点父组含子组素材、点子组收窄（契约 §5.3 parentId）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* S20d 来源筛选（只在 ≥2 种来源时出现） */
+  try {
+    const S20D = "S20d 来源筛选 —— 「来源」行只在 ≥2 种来源时出现，点了能收窄（契约 §5.4 asset.source）";
+    if (!srcInfo || srcInfo.keys.length < 2) {
+      rec(S20D, false,
+        "镜像里通用库只有 " + (srcInfo ? srcInfo.keys.length : "?") +
+        " 种来源 —— 无法验证来源筛选（本条不适用；老镜像没有 source 字段时属正常）");
+    } else {
+      // 挑"最少的那种来源"，这样"点完卡片变少"是能看出来的
+      const pick = srcInfo.keys.slice().sort((a, b) => srcInfo.counts[a] - srcInfo.counts[b])[0];
+      const okSwitch = await libSwitchTo("brand");
+      libResetFilter();
+      const chip = libChip(pick);
+      let cards = -1;
+      if (chip) {
+        syntheticClick(chip, false);
+        const g = await libWaitCards(srcInfo.counts[pick], 5000, "brand");
+        cards = g ? g.children.length : -1;
+      }
+
+      // 反向验证"不构成筛选就不画"：切到一个单一来源的父组，来源 chip 必须消失
+      let goneWhenSingleSource = null;
+      if (twoLevel) {
+        libResetFilter();
+        const pChip = libChip(twoLevel.parent.name);
+        if (pChip) {
+          syntheticClick(pChip, false);
+          await libWaitCards(twoLevel.expParent, 5000, "brand");
+          goneWhenSingleSource = !libChip(pick);
+        }
+      }
+
+      rec(
+        S20D,
+        okSwitch && !!chip && cards === srcInfo.counts[pick] && goneWhenSingleSource === true,
+        "库=brand（切换=" + okSwitch + "）" +
+        "　来源=" + JSON.stringify(srcInfo.counts) +
+        "　取最少的一种「" + pick + "」chip=" + !!chip +
+        " → 卡片=" + cards + "（自数期望 " + srcInfo.counts[pick] + "）" +
+        "　切到单来源父组后该 chip 消失=" + goneWhenSingleSource + "（须 true —— 只有一种来源时不构成筛选）"
+      );
+      libResetFilter();
+    }
+  } catch (e) {
+    rec("S20d 来源筛选 —— 「来源」行只在 ≥2 种来源时出现，点了能收窄（契约 §5.4 asset.source）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- S21: 置入（placeEvent + 会话令牌）（v0.2.7 新增） ----------
      本项目第一次用 `placeEvent`。判据是**图层数增加**，不是"命令没报错"。
      ⚠️ 第一版（21:32）传的是**裸路径** → `Error: invalid file token used`
@@ -1271,7 +1523,7 @@ async function run(ctx, deps) {
      ⚠️ 只作用在自建的临时文档上，跑完不保存关掉。 */
   try {
     const S21 = "S21 置入（placeEvent + 会话令牌）—— 临时文档上图层数必须增加";
-    const srcEntry = await data.entryIn(["library", "thumb"], "401.png");
+    const srcEntry = await data.entryIn(["library", "thumb"], "t401.png");
     if (!srcEntry) {
       rec(S21, false, "拿不到测试文件 Entry（镜像缺失）—— 先跑 tools/fake-vellumdesk.cjs；本条不作数");
     } else {
@@ -1300,7 +1552,7 @@ async function run(ctx, deps) {
           S21,
           !!(placed && placed.ok && placed.changed),
           "令牌=" + (tok.ok ? tok.token.slice(0, 16) + "…" : "✗ " + tok.error) +
-          "　测试文件=401.png（沙箱内 Entry）" +
+          "　测试文件=t401.png（沙箱内 Entry，命名空间命名）" +
           "　临时文档 id=" + scratch.id +
           "　图层数 " + (placed ? placed.layersBefore : "?") + " → " + (placed ? placed.layersAfter : "?") +
           "　changed=" + (placed ? placed.changed : "?") +
@@ -1320,11 +1572,11 @@ async function run(ctx, deps) {
      整条 handoff 搬运就可以不要了。
      做法：同一套 API 打两个 URL，**用一个"必定成功"的沙箱内路径当基准**
      （纪律：没有基准的失败实验 = 没做实验）：
-       ① file:///…\PluginData\library\thumb\401.png   ← 沙箱内，基准
+       ① file:///…\PluginData\library\thumb\t401.png  ← 沙箱内，基准
        ② file:///D:/ps-uxp-dev/PROGRESS.md            ← 沙箱外（本机固定路径）
      判据定为"两头都给出了明确答案"—— 若 ① 成功而 ② 被拒，那就是权限边界，不是用法问题。 */
   try {
-    const insidePath = await data.nativePathIn(["library", "thumb"], "401.png");
+    const insidePath = await data.nativePathIn(["library", "thumb"], "t401.png");
     const insideUrl = insidePath ? "file:///" + String(insidePath).replace(/\\/g, "/") : null;
     const outsideUrl = "file:///D:/ps-uxp-dev/PROGRESS.md";
 
@@ -1335,7 +1587,7 @@ async function run(ctx, deps) {
       tag + "=" + (r && r.got ? "拿到 entry（" + r.name + "）" : "未拿到（" + ((r && r.error) || "无错误信息") + "）");
 
     // 🔴 判据的关键在这里：**基准没成功时，这个实验没有结论**，不能拿它去证明"沙箱外不可读"。
-    //    首轮（v0.2.7 21:37）的读数就是这种情况 —— 连我们自己沙箱里的 401.png 都没读到，
+    //    首轮（v0.2.7 21:37）的读数就是这种情况 —— 连我们自己沙箱里的缩略图都没读到，
     //    那么"沙箱外也读不到"就完全可能是 URL 形式不对 / API 用法不对，而不是权限边界。
     //    （纪律：没有基准的失败实验 = 没做实验。这条在 S19 的 webp 判别上刚吃过一次。）
     const baseOk = !!(a && a.got);
@@ -1349,7 +1601,7 @@ async function run(ctx, deps) {
     rec(
       "S22 直连置入可行性探针（getEntryWithUrl 能否读沙箱外路径）",
       definite(a) && definite(b),
-      fmt(a, "基准·沙箱内 401.png") + "　" + fmt(b, "沙箱外 PROGRESS.md") + "　⇒ " + conclusion
+      fmt(a, "基准·沙箱内 t401.png") + "　" + fmt(b, "沙箱外 PROGRESS.md") + "　⇒ " + conclusion
     );
   } catch (e) {
     rec("S22 直连置入可行性探针（getEntryWithUrl 能否读沙箱外路径）", false,
@@ -1361,7 +1613,7 @@ async function run(ctx, deps) {
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.2.7",
+    version: "0.2.8",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

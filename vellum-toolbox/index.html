@@ -899,15 +899,41 @@
         word-break: break-all;
       }
 
-      /* 分组筛选 */
+      /* 筛选区：最多三行（顶层分组 / 子组 / 来源）。
+         外层改成 block —— 行与行要竖着排，flex 行会把三行并排。
+         每行自己 flex-wrap：窄面板下 chips 要能换行，所以必须给底部间距，
+         不能像旧版那样只留右间距（一换行上下就贴住了）。 */
       .lib-bar {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
+        display: block;
         min-height: 22px;
         margin-bottom: 9px;
         padding-bottom: 7px;
         border-bottom: 1px solid var(--vt-line2);
+      }
+
+      .frow {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .frow .fchip {
+        margin: 0 6px 4px 0;
+      }
+
+      /* 子组行：缩进一层，一眼看出它在父组下面 */
+      .frow.mid {
+        padding-left: 10px;
+      }
+
+      .frow.src {
+        margin-top: 2px;
+      }
+
+      .frow-lb {
+        margin: 0 6px 4px 0;
+        font-size: 11px;
+        color: var(--vt-tx4);
       }
 
       .fchip {
@@ -923,6 +949,14 @@
         font-size: 11px;
         white-space: nowrap;
         cursor: pointer;
+      }
+
+      /* 子组 chip 比父组小一号，层级关系光靠缩进在小面板里看不出来 */
+      .fchip.sub {
+        height: 20px;
+        line-height: 18px;
+        padding: 0 7px;
+        font-size: 10px;
       }
 
       .fchip:hover {
@@ -1025,6 +1059,24 @@
         color: #ffffff;
         font-size: 10px;
         line-height: 1.6;
+      }
+
+      /* 来源角标（契约 §5.4 可选 asset.source）
+         —— 只在「两种来源混排」时才出现；右下角与左下角的「原文件丢失」对称。
+         「我的」用主色实底，和扩展名/丢失那种"中性深底"区分开。 */
+      .card-src {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        padding: 1px 5px;
+        background: rgba(12, 12, 12, 0.62);
+        color: #ffffff;
+        font-size: 10px;
+        line-height: 1.6;
+      }
+
+      .card-src.is-user {
+        background: var(--vt-ac);
       }
 
       .card-nm {

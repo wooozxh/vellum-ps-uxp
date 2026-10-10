@@ -9,10 +9,23 @@
  * 界面（对齐 docs/10 §10.7 与 docs/11 §五）：
  *   ① 顶层「库」切换 chips —— **由 `manifest.scopes[]` 动态生成**，不是写死的两个 tab
  *      （软件侧将来加第三个库，插件零改动就能显示）
- *   ② 分组筛选 chips —— 通用库是「公司素材 / 我的收藏」，任务库是项目名；**只有一组时不显示**
- *   ③ 缩略图网格（3 列）+ 每格右上角扩展名、丢失标记
- *   ④ 选中详情（面包屑 / 尺寸 / 角色 / 标签 / 原图路径）+「置入到画布」
+ *   ② 筛选区最多三行：
+ *        第一行 顶层分组（任务库的项目名 / 通用库的父组）
+ *        第二行 **子组**（契约 §5.3 加法 ③ `groups[].parentId`；只有当前父组真有子组才出现）
+ *        第三行 **来源**（契约 §5.4 加法 ② `asset.source`；只有当前分组内真有 ≥2 种才出现）
+ *      **不构成筛选的一行一律不画** —— 只有一种取值的那种"筛选"是噪音
+ *   ③ 缩略图网格（3 列）+ 每格右上角扩展名、丢失标记、来源角标（两种来源混排时才有）
+ *   ④ 选中详情（面包屑 / 尺寸 / 角色 / 来源 / 标签 / 原图路径）+「置入到画布」
  *   ⑤ 每 ~3 秒对一次 `manifest.json` 的 revision（契约 §一），变了自动刷新
+ *
+ * ════════════════════════════════════════════════════════════════════════
+ * ★ 软件侧 2026-10-10 按契约 §十 提的三处加法，插件侧的处置
+ * ════════════════════════════════════════════════════════════════════════
+ *   ① 缩略图命名加**命名空间**（任务 `t<id>` / 通用 `b<id>`）→ **界面零改动**：
+ *      `asset.thumb` 对插件一直是"不透明路径"，本文件按字符串取图、从不解析文件名。
+ *   ② `asset.source` → **用到了**（就是上面第三行「来源」+ 详情行 + 卡片角标）。
+ *   ③ `groups[].parentId` → **用到了**：不做两级，筛选行会把"父组"和"子组"平铺成同级 chip
+ *      （父组点了没有素材、子组却和它并列），那是**错的 UI**，不只是缺个功能。
  *
  * ════════════════════════════════════════════════════════════════════════
  * ★ UXP 硬约束（本文件每一处都踩过，改 UI 前先读 index.html 头部三条纪律）
@@ -179,53 +192,151 @@ function renderMeta() {
 
 /* ------------------------------------------------------------- 筛选 chips */
 
-function groupCounts() {
-  const map = {};
-  for (const it of S.items) {
-    const g = it.group || "未分组";
-    map[g] = (map[g] || 0) + 1;
-  }
-  return map;
+/** 只按「分组 / 子组」筛（**不含**来源）—— 来源行要基于它算，否则一选中来源那一行就自己消失了。 */
+function itemsInGroup() {
+  let out = S.items;
+  if (S.group) out = out.filter((it) => (it.group || "未分组") === S.group);
+  if (S.sub) out = out.filter((it) => (it.sub || "") === S.sub);
+  return out;
 }
 
+/** 三个筛选条件全上。 */
+function visibleItems() {
+  const out = itemsInGroup();
+  if (!S.source) return out;
+  return out.filter((it) => String((it.asset && it.asset.source) || "") === S.source);
+}
+
+/** 当前筛选的一句话描述（状态行用）。 */
+function filterLabel() {
+  const bits = [];
+  if (S.group) bits.push(S.group);
+  if (S.sub) bits.push(S.sub);
+  if (S.source) bits.push(mirror.sourceLabel(S.source));
+  return bits.length ? bits.join(" › ") : "全部";
+}
+
+/** 日志用的分组签名：`公司素材(3)|我的收藏(1)`。 */
+function groupsSig() {
+  return mirror
+    .groupTree(S.items)
+    .map((t) => t.name + "(" + t.count + (t.children.length ? "+" + t.children.length + "子" : "") + ")")
+    .join("|");
+}
+
+/** 画一行筛选 chips。`label` 为空则不画前缀；`cls` 为 `mid`（缩进，子组）/ `src`（来源）。 */
+function makeFrow(label, chips, cls, onPick) {
+  const row = dom.el("div", { class: "frow" + (cls ? " " + cls : "") });
+  if (label) row.appendChild(dom.el("span", { class: "frow-lb" }, [label]));
+  for (const c of chips) {
+    const chip = dom.el("div", {
+      class: "fchip" + (cls === "mid" ? " sub" : "") + (c.on ? " is-on" : ""),
+      role: "button",
+      tabindex: "0",
+      "data-key": c.key,
+      title: c.key ? "只看「" + c.label + "」" : "看全部",
+    });
+    chip.appendChild(dom.el("span", {}, [c.label]));
+    chip.appendChild(dom.el("span", { class: "fc-n mono" }, [String(c.n)]));
+    binder.on(chip, "click", () => onPick(c.key));
+    row.appendChild(chip);
+  }
+  return row;
+}
+
+/** 改完筛选条件后的统一收尾（重画 chips + 网格 + 状态行）。 */
+function refreshAfterFilter() {
+  renderFilters();
+  renderGrid(); // 内部会 ++loadToken；缩略图走 mirror 的缓存，不会重新读盘
+  status("筛选：" + filterLabel() + "（" + visibleItems().length + " 张）");
+}
+
+/**
+ * 重画整个筛选区（最多三行）。
+ * ⚠️ **不构成筛选的行一律不画** —— 只有一种取值的"筛选"是噪音，这一点沿用旧版的判断。
+ */
 function renderFilters() {
   dom.clear(refs.bar);
-  const counts = groupCounts();
-  const names = Object.keys(counts);
-  // 只有一组时不给"筛选"，那是噪音 —— 直接换成一个总计数
-  if (names.length <= 1) {
+
+  const tree = mirror.groupTree(S.items);
+  const srcs = mirror.sourceSummary(itemsInGroup());
+  // 只选了一个顶层组时，子组行也该出来（哪怕全库只有这一个顶层组）
+  const activeTop = S.group || (tree.length === 1 ? tree[0].name : "");
+  let activeNode = null;
+  for (const t of tree) if (t.name === activeTop) activeNode = t;
+  const kids = activeNode ? activeNode.children : [];
+
+  if (tree.length <= 1 && !kids.length && srcs.length <= 1) {
     refs.bar.appendChild(
       dom.el("span", { class: "lib-count mono" }, ["共 " + S.items.length + " 张"])
     );
     return;
   }
-  const chips = [{ key: "", label: "全部", n: S.items.length }].concat(
-    names.map((n) => ({ key: n, label: n, n: counts[n] }))
-  );
-  for (const c of chips) {
-    const on = (S.group || "") === c.key;
-    const chip = dom.el("div", {
-      class: "fchip" + (on ? " is-on" : ""),
-      role: "button",
-      tabindex: "0",
-      "data-group": c.key,
-      title: c.key ? "只看「" + c.label + "」" : "看全部",
-    });
-    chip.appendChild(dom.el("span", {}, [c.label]));
-    chip.appendChild(dom.el("span", { class: "fc-n mono" }, [String(c.n)]));
-    binder.on(chip, "click", () => {
-      S.group = c.key;
-      renderFilters();
-      renderGrid();
-      status("筛选：" + (c.key || "全部") + "（" + visibleItems().length + " 张）");
-    });
-    refs.bar.appendChild(chip);
+
+  /* ① 顶层分组 */
+  if (tree.length > 1) {
+    const chips = [{ key: "", label: "全部", n: S.items.length, on: !S.group }];
+    for (const t of tree) chips.push({ key: t.name, label: t.name, n: t.count, on: S.group === t.name });
+    refs.bar.appendChild(
+      makeFrow("", chips, "", (k) => {
+        S.group = k;
+        S.sub = ""; // 换父组 → 子组筛选必须复位（不同父组下可能有同名子组）
+        S.source = "";
+        refreshAfterFilter();
+      })
+    );
+  }
+
+  /* ② 子组（契约 §5.3 加法 ③ 的两层分组） */
+  if (kids.length) {
+    const chips = [{ key: "", label: "全部", n: activeNode ? activeNode.count : 0, on: !S.sub }];
+    for (const k of kids) chips.push({ key: k.name, label: k.name, n: k.count, on: S.sub === k.name });
+    refs.bar.appendChild(
+      makeFrow("", chips, "mid", (k) => {
+        S.sub = k;
+        refreshAfterFilter();
+      })
+    );
+  }
+
+  /* ③ 来源（契约 §5.4 加法 ② 的可选 asset.source） */
+  if (srcs.length > 1) {
+    const chips = [{ key: "", label: "全部", n: itemsInGroup().length, on: !S.source }];
+    for (const s of srcs) chips.push({ key: s.value, label: s.label, n: s.count, on: S.source === s.value });
+    refs.bar.appendChild(
+      makeFrow("来源", chips, "src", (k) => {
+        S.source = k;
+        refreshAfterFilter();
+      })
+    );
   }
 }
 
-function visibleItems() {
-  if (!S.group) return S.items;
-  return S.items.filter((it) => (it.group || "未分组") === S.group);
+/**
+ * 数据刷新后，把**已经失效的**筛选条件清掉。
+ * 例：刚才在「我的收藏」里选着来源「我的」，而这一轮刷新后那张素材没了 ⇒ 条件得复位，
+ * 否则网格会空着，而筛选行上看不出为什么。
+ */
+function pruneFilters() {
+  const tree = mirror.groupTree(S.items);
+  const names = tree.map((t) => t.name);
+  if (S.group && names.indexOf(S.group) < 0) {
+    S.group = "";
+    S.sub = "";
+  }
+  if (S.group) {
+    let node = null;
+    for (const t of tree) if (t.name === S.group) node = t;
+    const kids = node ? node.children.map((c) => c.name) : [];
+    if (S.sub && kids.indexOf(S.sub) < 0) S.sub = "";
+    if (!kids.length) S.sub = "";
+  } else {
+    S.sub = "";
+  }
+  if (S.source) {
+    const vals = mirror.sourceSummary(itemsInGroup()).map((s) => s.value);
+    if (vals.indexOf(S.source) < 0) S.source = "";
+  }
 }
 
 /* ----------------------------------------------------------------- 网格 */
@@ -250,7 +361,7 @@ function renderMessage(title, sub, withRetry) {
   refs.body.appendChild(box);
 }
 
-function makeCard(item) {
+function makeCard(item, showSrc) {
   const a = item.asset;
   const on = S.selected && S.selected.asset && S.selected.asset.id === a.id;
   const card = dom.el("div", {
@@ -273,6 +384,16 @@ function makeCard(item) {
   th.appendChild(dom.el("span", { class: "card-ext mono" }, [String(a.ext || "?").toUpperCase()]));
   if (a.missing) {
     th.appendChild(dom.el("span", { class: "card-miss" }, ["原文件丢失"]));
+  }
+  // 来源角标：只在**两种来源混排**时才画（整库同源时每格都挂一个角标 = 纯噪音）
+  if (showSrc && a.source) {
+    th.appendChild(
+      dom.el(
+        "span",
+        { class: "card-src" + (String(a.source) === "user" ? " is-user" : "") },
+        [mirror.sourceLabel(a.source)]
+      )
+    );
   }
   inner.appendChild(th);
 
@@ -307,9 +428,19 @@ function renderGrid() {
   }
 
   dom.clear(refs.body);
-  const grid = dom.el("div", { class: "lib-grid", id: "vt-lib-grid" });
+  const grid = dom.el("div", {
+    class: "lib-grid",
+    id: "vt-lib-grid",
+    // ⚠️ 自检/排障用：标明**这块网格属于哪个库的第几版**。
+    //    没有它，"切库后的等待条件"只能写"网格里有卡片"—— 而那会被**上一个库留下的
+    //    旧网格**满足（v0.2.7 的 S20b 就这么误报过一次；v0.2.8 的 S20c/S20d 又踩了同一条路）。
+    "data-scope": String(S.tabId || ""),
+    "data-rev": String(S.revision === null || S.revision === undefined ? "" : S.revision),
+  });
+  // 角标规则与「来源」筛选行同一套：只有真能起区分作用时才画
+  const showSrc = mirror.sourceSummary(itemsInGroup()).length > 1;
   for (const it of list) {
-    const made = makeCard(it);
+    const made = makeCard(it, showSrc);
     refs.cards.push(made);
     grid.appendChild(made.card);
   }
@@ -373,6 +504,7 @@ function renderFoot() {
   const sz = fmtSize(a.size);
   if (sz) bits.push(sz);
   if (a.role) bits.push(a.role);
+  if (a.source) bits.push("来源：" + mirror.sourceLabel(a.source));
   if (a.modifiedAt) bits.push("改于 " + fmtTime(a.modifiedAt));
   refs.foot.appendChild(dom.el("span", { class: "lf-s mono" }, [bits.join(" · ") || "—"]));
   if (a.tags && a.tags.length) {
@@ -520,9 +652,8 @@ async function loadScope(via) {
     S.revision = r.revision;
     S.items = mirror.flatten(sc.id, r.data);
     S.tabLabel = sc.label || sc.id;
-    // 切库时把筛选复位；自动刷新时保留（前提是这一组还在）
-    const counts = groupCounts();
-    if (S.group && !counts[S.group]) S.group = "";
+    // 刷新后把已经失效的筛选条件清掉（切库时会先复位，这里兜住"自动刷新"那条路）
+    pruneFilters();
 
     renderFilters();
     renderGrid();
@@ -544,7 +675,8 @@ async function loadScope(via) {
 
   await log.appendLog(
     "library scope id=" + sc.id + " label=" + JSON.stringify(sc.label || "") +
-    " rev=" + r.revision + " items=" + S.items.length + " groups=" + Object.keys(groupCounts()).join("|") +
+    " rev=" + r.revision + " items=" + S.items.length + " groups=" + groupsSig() +
+    " sub=" + (S.sub || "-") + " src=" + (S.source || "-") +
     " via=" + (via || "-")
   );
   status(
@@ -571,6 +703,8 @@ async function switchScope(id) {
   try {
     S.tabId = id;
     S.group = "";
+    S.sub = "";
+    S.source = "";
     S.selected = null;
     const sc = scopeById(id);
     S.tabLabel = sc ? sc.label : id;
@@ -748,6 +882,8 @@ async function mount(container, context) {
     revision: null,
     items: [],
     group: "",
+    sub: "",
+    source: "",
     selected: null,
     busy: false,
     watcher: null,

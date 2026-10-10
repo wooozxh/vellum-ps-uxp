@@ -235,8 +235,18 @@ const dirs = Object.create(null);
 function makeFile(full) {
   return {
     nativePath: "C:/fake/PluginData/" + full,
-    async read() {
-      return files[full];
+    async read(opts) {
+      const v = files[full];
+      // v0.2.8：镜像里的缩略图是**二进制** —— UXP 侧必须 read({format:binary})，
+      // 不传 format 会按文本解码。mock 也得能区分，否则测不到这条路径。
+      if (opts && opts.format) {
+        const s = String(v === undefined || v === null ? "" : v);
+        const ab = new ArrayBuffer(s.length);
+        const u8 = new Uint8Array(ab);
+        for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i) & 0xff;
+        return ab;
+      }
+      return v;
     },
     async write(t) {
       files[full] = String(t);
@@ -273,6 +283,8 @@ const mockFolder = makeFolder("");
 
 const mockUxp = {
   storage: {
+    // v0.2.8：缩略图要按二进制读（lib/data.js readBinaryIn 会先查这个）
+    formats: { binary: "binary" },
     localFileSystem: {
       getDataFolder: async () => mockFolder,
       getPluginFolder: async () => mockFolder,
@@ -1042,6 +1054,111 @@ async function main() {
         "　ok=" + r.ok + "　layers=" + r.layersBefore + "→" + r.layersAfter
     );
     mockApp.documents.length = 0;
+  }
+
+  /* ---- 29~32：软件侧 2026-10-10 按契约 §十 提的三处加法 ----
+     （① 缩略图命名空间 / ② asset.source / ③ groups[].parentId；均为「加法」，不升契约版本）
+     这些都是**跨项目接口**，错了会静默出错（筛选少一批素材 / 切库后显示上一个库的图），
+     所以逐条钉在离线回归里。真机行为由自检 S19 / S20c / S20d 负责。 */
+  {
+    const mirror = require(path.join(PKG, "lib", "mirror.js"));
+
+    /* 29. §5.3 加法 ③：parentId 两级分组 */
+    const two = mirror.flattenBrand({
+      groups: [
+        { id: 1, name: "公司素材", sortOrder: 0, assets: [{ id: 1, name: "a.png", ext: "png", thumb: "thumb/b1.png" }] },
+        { id: 2, name: "我的收藏", sortOrder: 1, assets: [{ id: 3, name: "c.png", ext: "png", thumb: "thumb/b3.png" }] },
+        { id: 11, name: "节日素材", parentId: 1, sortOrder: 0, assets: [{ id: 4, name: "d.png", ext: "png", thumb: "thumb/b4.png" }] },
+      ],
+    });
+    const shape = two.map((r) => [r.group, r.sub]);
+    const tree = mirror.groupTree(two);
+    check(
+      "29 §5.3 加法：parentId 解析成两级（父组含子组素材、顺序父在前）",
+      shape.length === 3 &&
+        shape[0][0] === "公司素材" && shape[0][1] === "" &&
+        shape[1][0] === "公司素材" && shape[1][1] === "节日素材" &&
+        shape[2][0] === "我的收藏" && shape[2][1] === "" &&
+        tree.length === 2 &&
+        tree[0].name === "公司素材" && tree[0].count === 2 &&
+        tree[0].children.length === 1 && tree[0].children[0].name === "节日素材" &&
+        tree[0].children[0].count === 1 &&
+        tree[1].name === "我的收藏" && tree[1].count === 1 && tree[1].children.length === 0,
+      "展平=" + JSON.stringify(shape) + "　树=" + JSON.stringify(tree)
+    );
+
+    /* 30. §5.3 容错：缺失 / 坏 parentId / 三层 —— 一律当顶层，**绝不丢素材**
+       判据是"条数不变"，因为丢素材是最难发现的那种错（界面不报，只是少东西）。 */
+    const safeRows = mirror.flattenBrand({
+      groups: [
+        { id: 5, name: "孤儿", parentId: 999, assets: [{ id: 1, name: "x.png", ext: "png", thumb: "thumb/b1.png" }] },
+        { id: 6, name: "老镜像无此字段", assets: [{ id: 2, name: "y.png", ext: "png", thumb: "thumb/b2.png" }] },
+        { id: 7, name: "A", assets: [] },
+        { id: 8, name: "B", parentId: 7, assets: [] },
+        { id: 9, name: "C", parentId: 8, assets: [{ id: 3, name: "z.png", ext: "png", thumb: "thumb/b3.png" }] },
+      ],
+    });
+    check(
+      "30 §5.3 容错：parentId 缺失 / 指向不存在的组 / 三层 → 当顶层，一个素材都不丢",
+      safeRows.length === 3 &&
+        safeRows.filter((r) => r.group === "孤儿").length === 1 &&
+        safeRows.filter((r) => r.group === "老镜像无此字段").length === 1 &&
+        safeRows.filter((r) => r.group === "C").length === 1,
+      "条数=" + safeRows.length + "（应为 3）　" +
+        JSON.stringify(safeRows.map((r) => [r.group, r.sub]))
+    );
+
+    /* 31. §5.4 加法 ②：source 是**可选**的 —— 老镜像没有它就是空数组，不许当异常 */
+    const withSrc = mirror.flattenBrand({
+      groups: [
+        {
+          id: 1,
+          name: "G",
+          assets: [
+            { id: 1, name: "u.png", ext: "png", thumb: "thumb/b1.png", source: "user" },
+            { id: 2, name: "c.png", ext: "png", thumb: "thumb/b2.png", source: "company" },
+            { id: 3, name: "n.png", ext: "png", thumb: "thumb/b3.png" }, // 无 source
+          ],
+        },
+      ],
+    });
+    const noSrc = mirror.sourceSummary(two); // two 里的 asset 都没有 source
+    const srcRows = mirror.sourceSummary(withSrc);
+    check(
+      "31 §5.4 加法：asset.source 可选（无则空数组）+ 顺序固定 company→user + 空值不计入",
+      noSrc.length === 0 &&
+        srcRows.length === 2 &&
+        srcRows[0].value === "company" && srcRows[0].label === "公司" && srcRows[0].count === 1 &&
+        srcRows[1].value === "user" && srcRows[1].label === "我的" && srcRows[1].count === 1,
+      "无 source 时=" + JSON.stringify(noSrc) + "（应为空数组）　混合时=" + JSON.stringify(srcRows) +
+        "　（3 张里 1 张没有 source，不计入）"
+    );
+
+    /* 32. §5.5 加法 ① 暴露出的**本项目真实缺陷**：缩略图缓存键不能是 asset.id。
+       两库 asset.id **各自从 1 起** ⇒ 同 id 命中同一个缓存项；而"revision 变了就清缓存"
+       兜不住"两库 revision 恰好相等"（首次同步后 task=1 / brand=1 就是这种情形）。
+       判据：两个 **同 id、同 revision**、只差 thumb 的 asset，得到的 URL 必须不同。 */
+    dirs["library"] = true;
+    dirs["library/thumb"] = true;
+    files["library/thumb/t1.png"] = "TASK-BYTES";
+    files["library/thumb/b1.png"] = "BRAND-BYTES";
+    mirror.clearThumbs();
+    const tA = await mirror.thumbUrl({ id: 1, thumb: "thumb/t1.png" }, 5);
+    const tB = await mirror.thumbUrl({ id: 1, thumb: "thumb/b1.png" }, 5); // ← 同一个 revision
+    const tC = await mirror.thumbUrl({ id: 1, thumb: "thumb/t1.png" }, 5);
+    check(
+      "32 §5.5 加法：缩略图缓存键按 thumb（同 id 同 revision 的两库素材不会串图）",
+      tA.ok && tB.ok && tA.url !== tB.url && tC.ok && tC.url === tA.url && tC.cached === true,
+      "task id=1 ok=" + tA.ok + "（cached=" + !!tA.cached + "）" +
+        "　brand id=1 ok=" + tB.ok + "（cached=" + !!tB.cached + "）" +
+        "　两条 URL 不同=" + (tA.url !== tB.url) + "（键若仍是 asset.id 则必然相同）" +
+        "　同 thumb 二次命中缓存=" + (tC.cached === true)
+    );
+    delete dirs["library"];
+    delete dirs["library/thumb"];
+    delete files["library/thumb/t1.png"];
+    delete files["library/thumb/b1.png"];
+    mirror.clearThumbs();
   }
 
   /* ---- 生成浏览器预览（用的是同一份渲染代码产出的 DOM） ---- */

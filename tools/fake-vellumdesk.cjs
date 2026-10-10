@@ -18,6 +18,17 @@
  *   2. JSON 一律 UTF-8 无 BOM；字段名严格照契约 §5.1 / §5.2 / §5.3 / §5.4。
  *   3. `handoff/` 由**软件侧（= 本桩）预建** —— 插件不负责建目录。
  *   4. 三个文件的写入者**只有软件侧**；插件只读（契约 §八）。
+ *
+ * ── 2026-10-10 跟进软件侧的三处加法（契约 §十「加法」，不升版本）
+ *   · §5.5 缩略图命名带**命名空间**：任务库 `t<id>.png`、通用库 `b<id>.png`
+ *     （两库 `asset.id` **各自从 1 起**，共享 `thumb\` 会同名覆盖）。
+ *     本桩刻意**让通用库 id 从 1 起**，好让"两库同 id"这个真实情形在真机上出现。
+ *   · §5.4 通用库 asset 带可选 `source`（`company` / `user`）。
+ *   · §5.3 通用库分组**两层**：子组用 `parentId` 指父组，顶层省略。
+ *     ⚠️ 本桩刻意做出**三种情形**，让插件侧的容错分支都能被验到：
+ *        (a) 顶层组**自己直接挂素材**（`公司素材` 挂 2 张）；
+ *        (b) 顶层组**只当容器、素材在子组里**（`节日素材` 是 `公司素材` 的子组）；
+ *        (c) 两种来源**混在同一个库里**（company 3 张 / user 1 张）→ 插件该给出「来源」筛选。
  */
 
 const fs = require("fs");
@@ -119,13 +130,14 @@ function isoLocal(d) {
 const NOW = isoLocal(new Date());
 const WS = "D:\\vellum_workspace";
 
-/** 缩略图桩：长边 ≤ 320（契约 §5.5） */
+/** 缩略图桩：长边 ≤ 320（契约 §5.5），命名带命名空间（任务 t / 通用 b） */
 const THUMBS = [
-  { file: "401.png", w: 320, h: 240, color: "#2F8FE0" },
-  { file: "402.png", w: 320, h: 240, color: "#23AEC1" },
-  { file: "901.png", w: 160, h: 160, color: "#0F8F63" },
-  { file: "902.png", w: 240, h: 320, color: "#3FCB7B" },
-  { file: "903.png", w: 320, h: 200, color: "#E6D6A8" },
+  { file: "t401.png", w: 320, h: 240, color: "#2F8FE0" },
+  { file: "t402.png", w: 320, h: 240, color: "#23AEC1" },
+  { file: "b1.png", w: 160, h: 160, color: "#0F8F63" },
+  { file: "b2.png", w: 240, h: 320, color: "#3FCB7B" },
+  { file: "b3.png", w: 320, h: 200, color: "#E6D6A8" },
+  { file: "b4.png", w: 200, h: 200, color: "#3A3D42" },
 ];
 
 function manifestJson() {
@@ -137,7 +149,7 @@ function manifestJson() {
     psMajor: PS_MAJOR,
     scopes: [
       { id: "task", label: "任务库", file: "task.json", revision: TASK_REV, count: 2 },
-      { id: "brand", label: "通用库", file: "brand.json", revision: BRAND_REV, count: 3 },
+      { id: "brand", label: "通用库", file: "brand.json", revision: BRAND_REV, count: 4 },
     ],
   };
 }
@@ -174,7 +186,7 @@ function taskJson() {
                 width: 2480,
                 height: 3508,
                 versionId: 30,
-                thumb: "thumb/401.png",
+                thumb: "thumb/t401.png",
                 missing: false,
                 modifiedAt: "2026-10-08T10:00:00+08:00",
                 absPath: WS + "\\海南升学集训营\\开营海报-2026秋季\\V1\\03-工程\\开营主视觉.psd",
@@ -190,7 +202,7 @@ function taskJson() {
                 width: 2480,
                 height: 3508,
                 versionId: 30,
-                thumb: "thumb/402.png",
+                thumb: "thumb/t402.png",
                 missing: false,
                 modifiedAt: "2026-10-08T12:30:00+08:00",
                 absPath: WS + "\\海南升学集训营\\开营海报-2026秋季\\V1\\01-成品\\开营海报.jpg",
@@ -211,6 +223,11 @@ function brandJson() {
     revision: BRAND_REV,
     generatedAt: NOW,
     // 契约 §5.3 补注：通用库 = 公司通用素材 + 用户自积累素材
+    // 契约 §5.3 加法 ③：两层分组（子组用 parentId 指父组；顶层省略）
+    //     · 公司素材（顶层，**自己直接挂 2 张**）+ 它的子组 节日素材（挂 1 张）
+    //     · 我的收藏（顶层，挂 1 张）
+    // 契约 §5.4 加法 ②：asset.source（company / user）
+    // 契约 §5.5 加法 ①：缩略图命名 b<assetId>.png（通用库），id 刻意**从 1 起**
     groups: [
       {
         id: 1,
@@ -218,7 +235,7 @@ function brandJson() {
         sortOrder: 0,
         assets: [
           {
-            id: 901,
+            id: 1,
             name: "品牌标识.png",
             ext: "png",
             kind: "image",
@@ -227,14 +244,15 @@ function brandJson() {
             width: 1024,
             height: 1024,
             versionId: null,
-            thumb: "thumb/901.png",
+            thumb: "thumb/b1.png",
             missing: false,
             modifiedAt: "2026-09-01T09:00:00+08:00",
             absPath: "D:\\vellum_brand\\品牌标识.png",
             tags: ["Logo"],
+            source: "company",
           },
           {
-            id: 902,
+            id: 2,
             name: "竖版海报模板.png",
             ext: "png",
             kind: "image",
@@ -243,11 +261,12 @@ function brandJson() {
             width: 1080,
             height: 1440,
             versionId: null,
-            thumb: "thumb/902.png",
+            thumb: "thumb/b2.png",
             missing: false,
             modifiedAt: "2026-09-02T09:00:00+08:00",
             absPath: "D:\\vellum_brand\\竖版海报模板.png",
             tags: ["模板"],
+            source: "company",
           },
         ],
       },
@@ -257,7 +276,7 @@ function brandJson() {
         sortOrder: 1,
         assets: [
           {
-            id: 903,
+            id: 3,
             name: "收集-纸张纹理.png",
             ext: "png",
             kind: "image",
@@ -266,11 +285,37 @@ function brandJson() {
             width: 1920,
             height: 1200,
             versionId: null,
-            thumb: "thumb/903.png",
+            thumb: "thumb/b3.png",
             missing: false,
             modifiedAt: "2026-10-01T15:00:00+08:00",
             absPath: "D:\\vellum_brand\\收集\\纸张纹理.png",
             tags: ["纹理"],
+            source: "user",
+          },
+        ],
+      },
+      {
+        id: 11,
+        name: "节日素材",
+        sortOrder: 0,
+        parentId: 1, // ← 加法 ③：这是「公司素材」的**子组**
+        assets: [
+          {
+            id: 4,
+            name: "中秋主视觉.png",
+            ext: "png",
+            kind: "image",
+            role: "素材",
+            size: 264000,
+            width: 2480,
+            height: 3508,
+            versionId: null,
+            thumb: "thumb/b4.png",
+            missing: false,
+            modifiedAt: "2026-09-20T09:00:00+08:00",
+            absPath: "D:\\vellum_brand\\节日\\中秋主视觉.png",
+            tags: ["节日", "中秋"],
+            source: "company",
           },
         ],
       },
@@ -293,6 +338,17 @@ function main() {
   fs.mkdirSync(path.join(LIB, "thumb"), { recursive: true });
   fs.mkdirSync(path.join(LIB, "handoff"), { recursive: true }); // 契约 §六：软件侧预建
 
+  // 清掉上一版遗留的缩略图（本桩换过命名空间：401.png → t401.png）。
+  // ⚠️ 只动 `thumb/` 下、且看起来就是缩略图的文件 —— 别的目录一律不碰。
+  const keep = {};
+  for (const t of THUMBS) keep[t.file] = true;
+  for (const name of fs.readdirSync(path.join(LIB, "thumb"))) {
+    if (keep[name]) continue;
+    if (!/\.(png|jpe?g|webp)$/i.test(name)) continue;
+    fs.rmSync(path.join(LIB, "thumb", name), { force: true });
+    console.log("  （清掉遗留缩略图 " + name + "）");
+  }
+
   for (const t of THUMBS) {
     fs.writeFileSync(path.join(LIB, "thumb", t.file), solidPng(t.w, t.h, hex2rgb(t.color)));
   }
@@ -305,9 +361,9 @@ function main() {
   console.log("假 VellumDesk 镜像已写入（契约合规）：");
   console.log("  " + LIB);
   console.log("  manifest.json   scopes: task(rev " + TASK_REV + ") / brand(rev " + BRAND_REV + ")  psMajor=" + PS_MAJOR);
-  console.log("  task.json       1 个项目 / 1 个任务包 / V1 / 2 个素材");
-  console.log("  brand.json      2 个分组（公司素材 2 + 我的收藏 1）");
-  console.log("  thumb/          " + THUMBS.length + " 张 PNG（共 " + total + " 字节）");
+  console.log("  task.json       1 个项目 / 1 个任务包 / V1 / 2 个素材（id 401/402）");
+  console.log("  brand.json      两级分组：公司素材(2) › 节日素材(1) ／ 我的收藏(1)　来源 company 3 / user 1");
+  console.log("  thumb/          " + THUMBS.length + " 张 PNG 命名空间命名（共 " + total + " 字节）");
   console.log("  handoff/        已预建（req.json 由插件写，本桩不碰）");
 }
 
