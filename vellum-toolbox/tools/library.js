@@ -1268,11 +1268,16 @@ async function doInsert() {
       return { ok: false, reason: "incoming", error: inc.error, waited: inc.waited };
     }
 
-    /* ---- ④ 置入（带上"落点锚点"算出来的 offset） ---- */
+    /* ---- ④ 置入 + 精确落点 ----
+       🔴 v0.3.3：改用 `targetRect`（**目标矩形**），不再用 `offset`。
+       原因：`offset` 的前提是"素材在画布上就是它的像素宽高"，而 PS 的置入是
+       **按物理尺寸（ppi 换算）**放的 —— 真机实测源图 1500 px @300ppi 置入
+       72ppi 画布后只剩 360 px（= 1500 × 72/300），尺寸与位置一起错。
+       现在改成"置入 → 量实际 → scale → translate → 再量"，与 ppi 完全无关。 */
     const ai = anchorInfo(a);
     const placed = await ps.placeFile(inc.entry, {
       verify: "change",
-      offset: ai.ok ? { x: ai.off.offsetX, y: ai.off.offsetY } : null,
+      targetRect: ai.ok ? ai.rect : null,
       expectRect: ai.ok ? ai.rect : null,
     });
     await log.appendLog(
@@ -1282,6 +1287,13 @@ async function doInsert() {
       " anchor=" + S.anchor +
       (ai.ok ? " off=" + ai.off.offsetX + "," + ai.off.offsetY +
         " expect=" + ai.rect.left + "," + ai.rect.top + "," + ai.rect.right + "," + ai.rect.bottom : " off=-") +
+      (placed.fix
+        ? " fix=" + (placed.fix.ok ? "ok" : "FAIL") +
+          (placed.fix.before ? " raw=" + placed.fix.before.left + "," + placed.fix.before.top + "," +
+            placed.fix.before.right + "," + placed.fix.before.bottom : "") +
+          " steps=[" + ((placed.fix.steps || []).join(" ") || "无") + "]" +
+          (placed.fix.error ? " err=" + placed.fix.error : "")
+        : "") +
       (placed.rect ? " landed=" + placed.rect.left + "," + placed.rect.top + "," +
         (placed.rect.left + placed.rect.w) + "," + (placed.rect.top + placed.rect.h) +
         " hit=" + (placed.rect.hit === undefined ? "-" : placed.rect.hit) : "") +
@@ -1289,13 +1301,21 @@ async function doInsert() {
       (placed.error ? " err=" + placed.error : "")
     );
     if (placed.ok && placed.changed) {
+      const fx = placed.fix;
+      const rawWH = fx && fx.before
+        ? Math.round(fx.before.right - fx.before.left) + "×" + Math.round(fx.before.bottom - fx.before.top)
+        : null;
       status(
         "✓ 已置入「" + a.name + "」· 落点[" + ps.anchorLabel(S.anchor) + "]" +
         (placed.rect
-          ? "　实际 " + placed.rect.left + "," + placed.rect.top +
+          ? "　" + placed.rect.left + "," + placed.rect.top +
             "（" + placed.rect.w + "×" + placed.rect.h + "）" +
-            (placed.rect.hit === true ? " 命中 ✓" : placed.rect.hit === false ? " ⚠️ 与期望不符" : "")
+            (placed.rect.hit === true ? " 命中 ✓" : placed.rect.hit === false ? " ⚠️ 与目标矩形差 >1px" : "")
           : "") +
+        // PS 的置入是**按 ppi 换算**的 ⇒ 原始落下的尺寸常与素材像素尺寸不同，
+        // 这一步校正必须让用户看得见（否则他会以为"尺寸还是不对"）。
+        (fx && fx.scaled && rawWH ? "　原置入 " + rawWH + " → 已按素材像素尺寸校正" : "") +
+        (fx && !fx.ok ? "　⚠️ 尺寸校正失败：" + (fx.error || "未知") : "") +
         "　图层数 " + placed.layersBefore + " → " + placed.layersAfter +
         "　" + (Date.now() - t0) + "ms"
       );

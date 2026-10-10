@@ -322,6 +322,11 @@
         min-height: 0;
         overflow-y: auto;
         overflow-x: hidden;
+        /* v0.3.3：给"整页撑满型"页面（素材库）当定位上下文 ——
+           素材库要把**滚动条收进瀑布流里**（见 .s-lib），绝对定位需要它。
+           ⚠️ 下拉浮层 .fsel-pop 的包含块是 .fsel-wrap（position:relative），
+              不受这一条影响。 */
+        position: relative;
         background: var(--vt-panel);
       }
 
@@ -834,8 +839,31 @@
             · 所有可点元素是 `div[role="button"]`（无 <button>）
             · 缩略图容器**必须可见**（display:none 里 UXP 根本不加载图片）
       */
+      /* 素材库页：**整页撑满 + 内部只有一个滚动区**（v0.3.3，用户要求）
+         🔴 用户原话：「滚动条应当嵌入瀑布流中，不然还是会导致置入下面的图还要跑回顶部点击置入」。
+         改法：页面拆成「固定区（库选择 / 筛选 / 详情置入）+ 滚动区（只有瀑布流）」，
+         置入按钮永远在视野里，素材再多也不必滚回顶部。
+         ⚠️ 用绝对定位撑满 `.scroll`：父级 .screen 是高 auto 的 block，
+            `height:100%` 在那条链上解析不出高度（会退化成 auto）。 */
       .s-lib {
-        padding: 12px 14px 22px;
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        padding: 12px 14px 0;
+      }
+
+      /* 固定区：不参与伸缩，永远可见（`.lib-body` 才是唯一的滚动区） */
+      .lib-top,
+      .lib-meta,
+      .lib-metanote,
+      .lib-bar,
+      .lib-foot {
+        flex: 0 0 auto;
       }
 
       /* 库切换行：chips 左、刷新右。用 flex-wrap 而不是 gap 排布 */
@@ -1191,8 +1219,15 @@
         color: var(--vt-tx4);
       }
 
+      /* 唯一的滚动区（v0.3.3）：滚动条只出现在瀑布流这一块里。
+         `min-height:0` 是 flex 子项能真正滚起来的必要条件（否则会被内容撑高）。 */
       .lib-body {
         display: block;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-bottom: 22px;
       }
 
       /* 网格：负外边距 + 每格左右内边距 —— 这样两列之间与两端都对齐，

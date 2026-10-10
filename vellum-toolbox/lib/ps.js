@@ -1199,6 +1199,127 @@ async function setSelectionRect(rect) {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ★ v0.3.3：把置入进来的图层**精确做成一个目标矩形**（尺寸 + 位置一起校正）
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 🔴 为什么必须有这一步 —— 2026-10-11 真机事故（用户报「置入尺寸不对」）
+ *
+ *   现象：素材 1500×1500 px 置入到 1920×1080 画布后，**变成 360×360**。
+ *   证据（同一批日志）：
+ *     expect=210,-210,1710,1290（按素材 1500×1500 算的期望）
+ *     landed=693,360,1053,720  ⇒ 实际只有 **360×360**
+ *   归因（两条独立读数交叉验证）：
+ *     · 源图 `图一(1).jpg` 的 Exif `XResolution = 300`（本机解析）
+ *     · 比值 360 / 1500 = **0.24 = 72 / 300**
+ *   ⇒ **PS 的「置入嵌入对象」是按「物理尺寸」放的**：源图 5 英寸 × 72 ppi 画布
+ *     = 360 px。它**不是** 1:1 拷像素。
+ *
+ *   ⇒ 于是 `offset` 这套"像素级位移"的定位方式**建立在一个错的尺寸假设上**：
+ *     插件以为素材是 1500 px 宽、按 1500 算锚点，而画布上实际只有 360 px。
+ *     位置和尺寸一起错。
+ *
+ * 🔴 修法：**不猜 PPI，改成自校正**（置入 → 量实际 → 缩放 → 平移 → 再量）。
+ *   这样与"源图多少 ppi / 画布多少 ppi"完全无关，也不需要在契约里加字段。
+ *
+ * 用到的两个 API 是**官方文档化**的 DOM 方法（不是手拼的 batchPlay 描述符）——
+ *   `Layer.scale(widthPercent, heightPercent)`  Adobe ps_reference/classes/layer
+ *   `Layer.translate(horizontalPx, verticalPx)` 同上（论坛实例同为 scale + translate 组合）
+ * ⚠️ `scale()` 的**锚点未在文档里写明**，所以这里**不假设它**：
+ *   缩放后**重新读一次 bounds**，再按"中心对齐目标中心"算 translate 的差值。
+ *   ⇒ 锚点是什么都不影响结果（这也是不用 batchPlay `transform` 的原因：
+ *     那个描述符的 `_target` 形状我们没有真机证据，属于"禁止猜"的范围）。
+ */
+async function applyLayerRect(rect) {
+  const want = {
+    left: Number(rect && rect.left),
+    top: Number(rect && rect.top),
+    right: Number(rect && rect.right),
+    bottom: Number(rect && rect.bottom),
+  };
+  if (![want.left, want.top, want.right, want.bottom].every(isFinite)) {
+    return { ok: false, error: "目标矩形不合法（要四个数字）" };
+  }
+  const wantW = want.right - want.left;
+  const wantH = want.bottom - want.top;
+  if (!(wantW > 0) || !(wantH > 0)) {
+    return { ok: false, error: "目标矩形的宽高必须为正" };
+  }
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+
+  const b0 = readActiveLayerBounds();
+  if (!b0.ok) return { ok: false, error: "量不到置入后的图层：" + b0.error };
+  const w0 = b0.bounds.right - b0.bounds.left;
+  const h0 = b0.bounds.bottom - b0.bounds.top;
+  if (!(w0 > 0) || !(h0 > 0)) {
+    return { ok: false, error: "置入后的图层宽高为 0（可能整幅透明）", before: b0.bounds };
+  }
+
+  const steps = [];
+  const needScale = Math.abs(w0 - wantW) > 1 || Math.abs(h0 - wantH) > 1;
+  if (needScale) {
+    const pctW = (wantW / w0) * 100;
+    const pctH = (wantH / h0) * 100;
+    try {
+      await runModal(async () => {
+        const l = app.activeDocument.activeLayers[0];
+        if (!l || typeof l.scale !== "function") {
+          throw new Error("活动图层没有 scale()（该 UXP 版本未暴露）");
+        }
+        await l.scale(pctW, pctH);
+      }, "Vellum 工具箱：校正置入尺寸");
+      steps.push("scale=" + pctW.toFixed(2) + "%, " + pctH.toFixed(2) + "%");
+    } catch (e) {
+      return {
+        ok: false, scaled: false, before: b0.bounds, steps: steps,
+        error: "缩放失败：" + msg(e),
+      };
+    }
+  }
+
+  const b1 = readActiveLayerBounds();
+  if (!b1.ok) return { ok: false, error: "缩放后量不到 bounds：" + b1.error, steps: steps };
+  const dx = (want.left + want.right) / 2 - (b1.bounds.left + b1.bounds.right) / 2;
+  const dy = (want.top + want.bottom) / 2 - (b1.bounds.top + b1.bounds.bottom) / 2;
+
+  if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+    try {
+      await runModal(async () => {
+        const l = app.activeDocument.activeLayers[0];
+        if (!l || typeof l.translate !== "function") {
+          throw new Error("活动图层没有 translate()（该 UXP 版本未暴露）");
+        }
+        await l.translate(dx, dy);
+      }, "Vellum 工具箱：校正置入位置");
+      steps.push("translate=" + dx.toFixed(1) + ", " + dy.toFixed(1));
+    } catch (e) {
+      return {
+        ok: false, scaled: needScale, bounds: b1.bounds, steps: steps,
+        error: "位移失败：" + msg(e),
+      };
+    }
+  }
+
+  const b2 = readActiveLayerBounds();
+  if (!b2.ok) return { ok: false, error: "校正后量不到 bounds：" + b2.error, steps: steps };
+  const hit =
+    Math.abs(b2.bounds.left - want.left) <= 1 &&
+    Math.abs(b2.bounds.top - want.top) <= 1 &&
+    Math.abs(b2.bounds.right - want.right) <= 1 &&
+    Math.abs(b2.bounds.bottom - want.bottom) <= 1;
+
+  return {
+    ok: true,
+    hit: hit,
+    scaled: needScale,
+    steps: steps,
+    before: b0.bounds,
+    after: b2.bounds,
+    w: Math.round(b2.bounds.right - b2.bounds.left),
+    h: Math.round(b2.bounds.bottom - b2.bounds.top),
+    error: hit ? null : "校正后仍与目标差 >1px",
+  };
+}
+
 function placeDesc(pathOrToken, offset) {
   return {
     _obj: "placeEvent",
@@ -1294,8 +1415,14 @@ async function placeFile(source, opts) {
   const layersBefore = countLayers();
 
   // v0.3.0：「九宫格落点」—— opts.offset 给出相对"画布居中"的像素位移（见本文件「落点」一节）
+  // v0.3.3：`opts.targetRect` 一旦给出就**不再用 offset** ——
+  //   改成"先按默认落点置入，再 scale + translate 精确做成那个矩形"。
+  //   原因见 `applyLayerRect()` 顶部的真机事故：`offset` 的前提
+  //   （"素材在画布上就是它的像素宽高"）在**源图 ppi ≠ 画布 ppi** 时不成立
+  //   （实测 1500 px @300ppi 置入 72ppi 画布 → 只有 360 px）。
+  const wantRect = o.targetRect || null;
   const wantOffset =
-    o.offset && (isFinite(o.offset.x) || isFinite(o.offset.y))
+    !wantRect && o.offset && (isFinite(o.offset.x) || isFinite(o.offset.y))
       ? { x: Number(o.offset.x) || 0, y: Number(o.offset.y) || 0 }
       : null;
 
@@ -1314,12 +1441,20 @@ async function placeFile(source, opts) {
   const layersAfter = countLayers();
   const changed = layersBefore >= 0 && layersAfter >= 0 && layersAfter > layersBefore;
 
+  /* ---- v0.3.3：精确落点（尺寸 + 位置一次做准）----
+     ⚠️ 只在"图层真的多出来了"（changed）时才动它 —— 万一置入失败，
+        校正会把用户**原有的**图层缩放/挪走，那是不可逆的破坏。 */
+  let fix = null;
+  if (changed && wantRect) {
+    fix = await applyLayerRect(wantRect);
+  }
+
   // 落点校验：读回真实 bounds。**判据是"落在期望矩形上"**，不是"命令没报错"。
-  // （offset 只管位置不管尺寸 ⇒ 期望宽高就用素材自身宽高，不做缩放假设）
+  // v0.3.3：给了 targetRect 时以**校正后**的 bounds 为准。
   const rb = readActiveLayerBounds();
   let hitRect = null;
   if (rb.ok) {
-    const b = rb.bounds;
+    const b = fix && fix.ok && fix.after ? fix.after : rb.bounds;
     const actualW = Math.round(b.right - b.left);
     const actualH = Math.round(b.bottom - b.top);
     hitRect = {
@@ -1355,6 +1490,8 @@ async function placeFile(source, opts) {
     docW: after.docW,
     docH: after.docH,
     requestedOffset: wantOffset,
+    requestedRect: wantRect,
+    fix: fix,
     rect: hitRect,
   };
 }
@@ -1519,6 +1656,8 @@ module.exports = {
   readSelectionBounds,
   placeBaseCenter,
   setSelectionRect,
+  /* v0.3.3 新增：置入后精确校正（尺寸 + 位置一次做准） */
+  applyLayerRect,
   RASTER_KINDS,
   CONTENT_KINDS,
   KIND_CN,

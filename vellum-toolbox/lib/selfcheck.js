@@ -2526,12 +2526,102 @@ async function run(ctx, deps) {
     rec(S25, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S26: 置入尺寸校正（v0.3.3 新增）
+     🔴 为什么必须钉住它（2026-10-11 真机事故，用户报「置入尺寸不对」）：
+        真机日志 `expect=210,-210,1710,1290`（按素材 1500×1500 算）
+        而 `landed=693,360,1053,720` ⇒ 画布上实际只有 **360×360**。
+        两条独立读数交叉验证出根因：
+          · 源图 Exif `XResolution = 300`（本机解析出来的）
+          · 360 / 1500 = **0.24 = 72 / 300**
+        ⇒ **PS 的「置入」是按"物理尺寸"放的**（5 英寸 × 72ppi 画布 = 360 px），
+          它**不是** 1:1 拷像素。而插件一直拿"素材像素宽高"当画布上的尺寸基准
+          ⇒ 尺寸与位置**一起错**。
+        修法：置入 → 量实际 → `layer.scale()` → `layer.translate()` → 再量。
+        用到的两个 API 是**官方文档化**的 DOM 方法（ps_reference/classes/layer），
+        不是手拼的 batchPlay 描述符 —— 后者属于"禁止猜"的范围。
+
+     判据（三档都要看得见）：
+       ① **原始置入尺寸** —— 用来说明"ppi 换算确实存在"。它等于/不等于素材像素尺寸
+          **不作为判据**（测试图的 ppi 由镜像决定，不该由它决定成败）。
+       ② **校正后 bounds 必须命中目标矩形**（±1px）← 这才是本条要保的能力。
+       ③ 步骤留痕（scale / translate 各用了什么数）。
+     ⚠️ 只作用在自建临时文档上，跑完不保存关掉。 */
+  const S26 = "S26 置入尺寸校正 —— scale+translate 把图层精确做成目标矩形（与源图 ppi 无关）";
+  try {
+    const tf26 = await testThumbFile();
+    const e26 = tf26 ? await data.entryIn(tf26.dir, tf26.name) : null;
+    if (!e26) {
+      rec(S26, true, "【不适用】镜像里没有可用的测试图（" + ((tf26 && tf26.name) || "无") + "）");
+    } else {
+      const SIDE = 400;
+      /* 🔴 目标矩形**故意与画布、与"原始置入"都不同** ——
+         第一版拿 400×400（正好等于画布）当目标，而 PS 置入在"超出画布"时会
+         等比缩到刚好放下 ⇒ 原始置入恰好也是 400×400 ⇒ **即使 applyLayerRect
+         一行都没生效，判据也会通过**（"一个永远成立的样本验不出任何东西"）。
+         现在改成 200×200 @(50,60)：尺寸和位置**都有一个明确的位移量要凑**。 */
+      const target = { left: 50, top: 60, right: 250, bottom: 260 };
+      const sc26 = await ps.createScratchDoc({ size: SIDE, name: "Vellum 自检临时文档(校正)" });
+      if (!sc26 || !sc26.ok) {
+        rec(S26, false, "建临时文档失败：" + ((sc26 && sc26.error) || "未知"));
+      } else {
+        try {
+          const info0 = ps.docInfo() || {};
+          // ⚠️ 必须**同时**给 `expectRect` —— `placeFile` 只在收到它时才计算 `rect.hit`。
+          //    第一版漏了它，读数里出现 `hit=-`，等于把"没判"当成了"没命中"
+          //    （这一条本身就是"只有一种读数的失败 = 没测"的现场版）。
+          const p26 = await ps.placeFile(e26, {
+            verify: "change",
+            targetRect: target,
+            expectRect: target,
+          });
+          const fx = p26.fix || null;
+          const raw = fx && fx.before ? fx.before : null;
+          const rawWH = raw
+            ? Math.round(raw.right - raw.left) + "×" + Math.round(raw.bottom - raw.top)
+            : "?";
+          const fin = p26.rect || null;
+          const finWH = fin ? fin.w + "×" + fin.h : "?";
+          const hit = !!(fin && fin.hit === true);
+          const ppi = info0.resolution === null || info0.resolution === undefined
+            ? "?" : info0.resolution;
+
+          const tgtWH = (target.right - target.left) + "×" + (target.bottom - target.top);
+          rec(
+            S26,
+            hit,
+            "测试图=" + tf26.name + "（沙箱内，从镜像里挑）" +
+            "　临时文档=" + SIDE + "×" + SIDE + " @" + ppi + "ppi" +
+            "　原始置入=" + rawWH +
+            "　目标=" + tgtWH + "@" + target.left + "," + target.top +
+            "　校正后=" + finWH + "@" + (fin ? fin.left + "," + fin.top : "?") +
+            "　hit=" + (fin && fin.hit !== undefined ? fin.hit : "-") +
+            "　steps=[" + ((fx && fx.steps && fx.steps.join(" ")) || "无") + "]" +
+            (p26.error ? "　err=" + p26.error : "") +
+            (fx && fx.error ? "　fixErr=" + fx.error : "") +
+            "　⇒ " + (hit
+              ? "已把图层**精确做成目标矩形**（尺寸与位置都对），与源图 ppi 无关"
+              : "⚠️ 没落到目标矩形上 —— steps 为空 ⇒ 连 scale/translate 都没触发" +
+                "（targetRect 没传进去？）；只有 scale ⇒ translate 那段没生效")
+          );
+        } finally {
+          try {
+            await ps.closeDocument(sc26.id);
+          } catch {
+            /* 忽略 */
+          }
+        }
+      }
+    }
+  } catch (e) {
+    rec(S26, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.3.2",
+    version: "0.3.3",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

@@ -1678,6 +1678,83 @@ async function main() {
     );
   }
 
+  /* ---- 45. 素材库「固定区 + 单滚动区」结构（v0.3.3） ----
+     用户要求：「滚动条应当嵌入瀑布流中，不然会导致置入下面的图还要跑回顶部点击置入」。
+     做法：页面**绝对定位撑满** `.scroll`，拆成 flex 纵向的「固定区 + 滚动区」，
+     只有 `.lib-body`（瀑布流）滚 ⇒ 置入区永远在视野里。
+     ⚠️ 这是**结构守门**：以后谁把 `.lib-body` 的 overflow 或 `.s-lib` 的 flex 去掉，
+        界面会退化成"整页滚动"，而这种退化在离线看不出来。 */
+  {
+    const css = fs.readFileSync(path.join(PKG, "index.html"), "utf8");
+    const rule = (sel) => {
+      const i = css.indexOf(sel);
+      if (i < 0) return "";
+      const open = css.indexOf("{", i);
+      if (open < 0) return "";
+      const close = css.indexOf("}", open);
+      return close < 0 ? "" : css.slice(open, close);
+    };
+    const slib = rule(".s-lib {");
+    const body = rule(".lib-body {");
+    const scrollRule = rule(".scroll {");
+    const gi = css.indexOf(".lib-top,");
+    let group = "";
+    if (gi >= 0) {
+      const open = css.indexOf("{", gi);
+      const close = css.indexOf("}", open);
+      if (open >= 0 && close >= 0) group = css.slice(gi, close);
+    }
+
+    const slibOk =
+      slib.indexOf("position: absolute") >= 0 &&
+      slib.indexOf("display: flex") >= 0 &&
+      slib.indexOf("flex-direction: column") >= 0;
+    const bodyOk =
+      body.indexOf("flex: 1 1 auto") >= 0 &&
+      body.indexOf("overflow-y: auto") >= 0 &&
+      body.indexOf("min-height: 0") >= 0;
+    const groupOk = group.indexOf("flex: 0 0 auto") >= 0 && group.indexOf(".lib-foot") >= 0;
+    const scrollOk = scrollRule.indexOf("position: relative") >= 0;
+
+    check(
+      "45 素材库：固定区 + 单滚动区（滚动条只进瀑布流，置入区永在视野内）",
+      slibOk && bodyOk && groupOk && scrollOk,
+      ".s-lib 绝对定位撑满+flex 纵向=" + slibOk +
+        "　.lib-body 伸缩+overflow-y:auto+min-height:0=" + bodyOk +
+        "　固定区组（含 .lib-foot）flex:0 0 auto=" + groupOk +
+        "　.scroll 提供定位上下文=" + scrollOk
+    );
+  }
+
+  /* ---- 46. 置入「精确落点」：不再靠 offset，改 scale+translate 自校正（v0.3.3） ----
+     真机事故：PS 的置入**按物理尺寸**放（源图 300ppi → 72ppi 画布，1500px 只剩 360px），
+     而 offset 那套假定"素材在画布上就是它的像素宽高" ⇒ 尺寸与位置**一起错**。
+     ⚠️ 断言同时守住"**已经不再传 offset**" —— 否则新旧两条路并存，
+        旧路会静默覆盖新路的结果（两者都作用于同一个 placeEvent）。 */
+  {
+    const psSrc = fs.readFileSync(path.join(PKG, "lib", "ps.js"), "utf8");
+    const libSrc = fs.readFileSync(path.join(PKG, "tools", "library.js"), "utf8");
+
+    const hasFn = psSrc.indexOf("async function applyLayerRect(") >= 0;
+    const usesScale = psSrc.indexOf("l.scale(pctW, pctH)") >= 0;
+    const usesTranslate = psSrc.indexOf("l.translate(dx, dy)") >= 0;
+    const expIdx = psSrc.indexOf("module.exports");
+    const exported = expIdx >= 0 && /applyLayerRect\s*,/.test(psSrc.slice(expIdx));
+    const guardedByChanged = psSrc.indexOf("if (changed && wantRect)") >= 0;
+    const libPasses = libSrc.indexOf("targetRect: ai.ok ? ai.rect : null") >= 0;
+    const libDroppedOffset = libSrc.indexOf("offset: ai.ok ? { x: ai.off.offsetX") < 0;
+
+    check(
+      "46 置入精确落点：scale+translate 自校正，且已不再走 offset",
+      hasFn && usesScale && usesTranslate && exported && guardedByChanged &&
+        libPasses && libDroppedOffset,
+      "applyLayerRect=" + hasFn + "　scale 调用=" + usesScale +
+        "　translate 调用=" + usesTranslate + "　已导出=" + exported +
+        "　只在 changed 时校正=" + guardedByChanged +
+        "　library.js 传 targetRect=" + libPasses + "　已去掉 offset=" + libDroppedOffset
+    );
+  }
+
   /* ---- 生成浏览器预览（用的是同一份渲染代码产出的 DOM） ---- */
   let previewPath = null;
   if (WANT_PREVIEW) {
