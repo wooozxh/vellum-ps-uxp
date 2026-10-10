@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>Vellum 工具箱 · 方向 B 落地预览</title>
+<style>
+      /* =====================================================================
+         Vellum 工具箱 · 外壳与工具 UI
+         视觉依据：design-demos/B-native-pro.html（方向 B · Native Pro）
+         落地评审：docs/14-方向B落地评审.md
+
+         UXP 改写纪律（评审 P0/P1 项，见 docs/14 §2）
+           ❌ display:grid        → flex + 百分比宽度
+           ❌ place-items:center  → flex 居中
+           ❌ transition/animation→ 一律不做动效，状态直接切换
+           ❌ transform           → 浮层定位在 JS 里手算 left/top
+           ❌ position:sticky     → 本轮不涉及
+           ❌ box-shadow          → 用 outline / 真实描边元素替代
+           ❌ 伪元素 ::before/::after 承担结构 → 改用真实子元素（UXP 不稳）
+           ⚠️ linear-gradient     → 纯色替代（PS 2024 / UXP 8.1 以下不生效）
+           ⚠️ letter-spacing      → 保留（真机探针实测，见 lib/cssprobe.js）
+         ===================================================================== */
+
+      /* ------------------------------------------------ 设计令牌 · 深色（默认）
+         数值对齐设计稿，同时贴近 Photoshop 深色主题（面板 #323232）。
+         深色为兜底：即使主题探测失败，界面也是完整可读的一套。 */
+      :root {
+        --vt-sans: system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        --vt-mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+
+        --vt-panel: #323232;
+        --vt-bar: #2b2b2b;
+        --vt-surf: #3a3a3a;
+        --vt-surf2: #2e2e2e;
+        --vt-raised: #424242;
+        --vt-sink: #262626;
+        --vt-line: #4a4a4a;
+        --vt-line2: #3f3f3f;
+        --vt-edge: #1c1c1c;
+
+        --vt-tx: #e6e6e6;
+        --vt-tx2: #a2a2a2;
+        --vt-tx3: #7e7e7e;
+        --vt-tx4: #5f5f5f;
+
+        --vt-ac: #1473e6;
+        --vt-ac-hi: #2e8ff0;
+        --vt-ac-soft: rgba(20, 115, 230, 0.16);
+        --vt-ok: #4cd07e;
+        --vt-warn: #e8b65e;
+
+        --vt-hair: rgba(127, 127, 127, 0.16);
+      }
+
+      /* ------------------------------------------------ 设计令牌 · 浅色
+         同一套层级关系，只是明度反转（对照 Photoshop 浅色主题）。
+         两条路径都会命中：
+           ① 系统主题（媒体查询）—— 若 UXP 支持 prefers-color-scheme
+           ② JS 探测后给 <html> 挂 .vt-light —— 不依赖媒体查询，一定可靠 */
+      @media (prefers-color-scheme: light) {
+        :root:not(.vt-dark) {
+          --vt-panel: #f0f0f0;
+          --vt-bar: #e4e4e4;
+          --vt-surf: #ffffff;
+          --vt-surf2: #e8e8e8;
+          --vt-raised: #dcdcdc;
+          --vt-sink: #d6d6d6;
+          --vt-line: #c4c4c4;
+          --vt-line2: #d8d8d8;
+          --vt-edge: #ababab;
+
+          --vt-tx: #1a1a1a;
+          --vt-tx2: #4d4d4d;
+          --vt-tx3: #6e6e6e;
+          --vt-tx4: #8c8c8c;
+
+          --vt-ac: #1473e6;
+          --vt-ac-hi: #0d63d0;
+          --vt-ac-soft: rgba(20, 115, 230, 0.12);
+          --vt-ok: #1f9d55;
+          --vt-warn: #b07a1e;
+
+          --vt-hair: rgba(127, 127, 127, 0.22);
+        }
+      }
+
+      :root.vt-light {
+        --vt-panel: #f0f0f0;
+        --vt-bar: #e4e4e4;
+        --vt-surf: #ffffff;
+        --vt-surf2: #e8e8e8;
+        --vt-raised: #dcdcdc;
+        --vt-sink: #d6d6d6;
+        --vt-line: #c4c4c4;
+        --vt-line2: #d8d8d8;
+        --vt-edge: #ababab;
+
+        --vt-tx: #1a1a1a;
+        --vt-tx2: #4d4d4d;
+        --vt-tx3: #6e6e6e;
+        --vt-tx4: #8c8c8c;
+
+        --vt-ac: #1473e6;
+        --vt-ac-hi: #0d63d0;
+        --vt-ac-soft: rgba(20, 115, 230, 0.12);
+        --vt-ok: #1f9d55;
+        --vt-warn: #b07a1e;
+
+        --vt-hair: rgba(127, 127, 127, 0.22);
+      }
+
+      /* ------------------------------------------------------------ 基础 */
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+
+      body {
+        font-family: var(--vt-sans);
+        /* 字号比设计稿整体 +1px：设计稿 9.5–12px 承中文在 Windows 下会糊。
+           本版最小 11px，正文 13px。（用户明确要求「不接受糊」） */
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--vt-tx);
+        background: var(--vt-panel);
+      }
+
+      .mono {
+        font-family: var(--vt-mono);
+        font-size: 0.92em;
+      }
+
+      .grow {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .i {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+      }
+
+      .i svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      button {
+        font-family: inherit;
+        font-size: inherit;
+        color: inherit;
+        background: transparent;
+        border: 0;
+        padding: 0;
+      }
+
+      /* ---------------------------------------------------------- 外壳框架
+         三段式：定高顶栏 / 可滚动中段 / 定高状态条。
+         中段必须 min-height:0 —— flex 子项默认 min-height:auto，
+         内容超高时会被「撑开」而不是出现滚动条。 */
+      .app {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        overflow: hidden;
+        background: var(--vt-panel);
+      }
+
+      /* 顶部品牌条（设计稿是 2px 渐变；UXP 低版本不认 linear-gradient，
+         这里用纯色，视觉等价） */
+      .brandbar {
+        flex: none;
+        height: 2px;
+        background: var(--vt-ac);
+      }
+
+      .bar {
+        height: 31px;
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0 8px;
+        background: var(--vt-bar);
+        border-bottom: 1px solid var(--vt-edge);
+      }
+
+      .back,
+      .icon-btn {
+        width: 21px;
+        height: 19px;
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--vt-tx2);
+        background: transparent;
+        border: 1px solid transparent;
+        cursor: pointer;
+      }
+
+      .back:hover,
+      .icon-btn:hover {
+        background: var(--vt-raised);
+        border-color: var(--vt-line);
+        color: var(--vt-tx);
+      }
+
+      .back.is-off {
+        opacity: 0.3;
+        pointer-events: none;
+      }
+
+      .back .i,
+      .icon-btn .i {
+        width: 13px;
+        height: 13px;
+      }
+
+      .bar-title {
+        font-size: 13px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .bar-sub {
+        font-size: 12px;
+        color: var(--vt-tx3);
+        padding-left: 7px;
+        border-left: 1px solid var(--vt-line);
+        margin-left: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .bar-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        color: var(--vt-tx3);
+        flex: 0 0 auto;
+      }
+
+      .led {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        display: block;
+        flex: 0 0 auto;
+        background: var(--vt-tx4);
+      }
+
+      .led.ok {
+        background: var(--vt-ok);
+      }
+
+      .led.off {
+        background: var(--vt-tx4);
+      }
+
+      .scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        background: var(--vt-panel);
+        /* 滚动条走系统原生样式（UXP 不能自绘，设计稿那种细滚动条做不到） */
+      }
+
+      .screen {
+        display: none;
+      }
+
+      .screen.active {
+        display: block;
+      }
+
+      .statusbar {
+        flex: none;
+        max-height: 92px;
+        overflow-y: auto;
+        padding: 7px 12px;
+        background: var(--vt-bar);
+        border-top: 1px solid var(--vt-edge);
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--vt-tx2);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      /* ------------------------------------------------------- 首页 · 功能选择 */
+      .hero {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 9px;
+        padding: 30px 20px 18px;
+      }
+
+      .hero-mark {
+        width: 52px;
+        height: 52px;
+        color: var(--vt-tx2);
+      }
+
+      .hero-txt h1 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+
+      .hero-sub {
+        margin: 3px 0 0;
+        font-size: 11px;
+        color: var(--vt-tx4);
+      }
+
+      .navlist {
+        display: flex;
+        flex-direction: column;
+        border-top: 1px solid var(--vt-line2);
+      }
+
+      .navitem {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 9px 12px;
+        background: transparent;
+        border: 0;
+        border-bottom: 1px solid var(--vt-line2);
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .navitem:hover,
+      .navitem.is-hover {
+        background: var(--vt-raised);
+      }
+
+      .navitem.is-planned {
+        opacity: 0.45;
+        cursor: default;
+      }
+
+      .navitem.is-planned:hover {
+        background: transparent;
+      }
+
+      .ni-ico {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 4px;
+        background: var(--vt-surf);
+        border: 1px solid var(--vt-line);
+        color: var(--vt-tx2);
+        flex: 0 0 auto;
+      }
+
+      .ni-ico .i {
+        width: 15px;
+        height: 15px;
+      }
+
+      .ni-main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+
+      .ni-name {
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ni-desc {
+        font-size: 12px;
+        color: var(--vt-tx3);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ni-preview {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        flex: 0 0 auto;
+      }
+
+      .pv {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        display: block;
+        border: 1px solid var(--vt-edge);
+      }
+
+      .pv.led {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        border: 0;
+      }
+
+      .ni-arrow {
+        display: flex;
+        color: var(--vt-tx3);
+        flex: 0 0 auto;
+      }
+
+      .ni-arrow .i {
+        width: 13px;
+        height: 13px;
+      }
+
+      .tail {
+        margin: 14px 12px 24px;
+        padding: 10px 12px;
+        border: 1px solid var(--vt-line2);
+        border-radius: 4px;
+        background: var(--vt-surf2);
+      }
+
+      .tail-title {
+        margin: 0 0 7px;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        color: var(--vt-tx3);
+      }
+
+      .tail-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin: 0;
+        padding: 4px 0;
+        font-size: 12px;
+        color: var(--vt-tx2);
+        border-top: 1px solid var(--vt-hair);
+      }
+
+      /* ⚠️ 不用 :first-of-type —— 它的支持度不确定，改由 JS 给首行挂 .is-first */
+      .tail-item.is-first {
+        border-top: 0;
+      }
+
+      .tail-item .mono {
+        color: var(--vt-tx4);
+      }
+
+      /* ------------------------------------------------------------ 调色板 */
+      .s-palette {
+        padding: 12px 14px 22px;
+      }
+
+      .fgbg-card {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px 12px;
+        padding: 10px 12px;
+        border-radius: 3px;
+        background: var(--vt-surf2);
+        border: 1px solid var(--vt-line2);
+        margin-bottom: 14px;
+      }
+
+      .fgbg {
+        position: relative;
+        width: 42px;
+        height: 30px;
+        flex: 0 0 auto;
+      }
+
+      .sq {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 24px;
+        height: 24px;
+        border-radius: 2px;
+        border: 1px solid var(--vt-edge);
+      }
+
+      .sq.fg {
+        z-index: 2;
+      }
+
+      .sq.bg {
+        left: 16px;
+        top: 6px;
+      }
+
+      .ro {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .ro-hex {
+        margin: 0;
+        font-size: 12px;
+        color: var(--vt-tx2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ro-pair {
+        flex: 1 0 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 0;
+        padding-top: 9px;
+        border-top: 1px solid var(--vt-line2);
+      }
+
+      .ro-pair span {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 12px;
+        color: var(--vt-tx3);
+      }
+
+      .ro-pair b {
+        font-size: 12px;
+        color: var(--vt-tx);
+        font-weight: 400;
+      }
+
+      .sec {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 8px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--vt-line2);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        color: var(--vt-tx3);
+      }
+
+      .sec-actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .sec-note {
+        font-size: 11px;
+        letter-spacing: 0;
+        color: var(--vt-tx4);
+      }
+
+      .mini {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 3px;
+        background: var(--vt-surf);
+        border: 1px solid var(--vt-line);
+        color: var(--vt-tx2);
+        font-size: 11px;
+        letter-spacing: 0;
+        cursor: pointer;
+      }
+
+      .mini:hover {
+        border-color: var(--vt-tx4);
+        color: var(--vt-tx);
+      }
+
+      .mini .i {
+        width: 11px;
+        height: 11px;
+      }
+
+      .sw-wrap {
+        position: relative;
+        margin-bottom: 14px;
+      }
+
+      /* 设计稿是 CSS Grid 的 3 / 4 列；UXP 无 Grid → flex + 百分比宽度。
+         色块紧贴成网格（无 gap），靠各自的描边分格。 */
+      .sw-grid {
+        display: flex;
+        flex-wrap: wrap;
+      }
+
+      .sw {
+        position: relative;
+        cursor: pointer;
+        border: 1px solid var(--vt-edge);
+      }
+
+      .sw-grid.brand .sw {
+        width: 33.3333%;
+        height: 40px;
+      }
+
+      .sw-grid.mine .sw {
+        width: 25%;
+        height: 32px;
+      }
+
+      /* hover / 选中反馈。
+         ⚠️ 设计稿用的是 box-shadow: 0 0 0 1px #fff, 0 0 0 2px var(--ac)。
+         box-shadow 在本项目的最低版本（PS 2024 / UXP 7）拿不到，
+         所以改成**真实描边元素**向外扩 2px —— 视觉等价，且一定生效。 */
+      .sw-ring {
+        display: none;
+        position: absolute;
+        top: -2px;
+        left: -2px;
+        right: -2px;
+        bottom: -2px;
+        border: 2px solid var(--vt-ac);
+        pointer-events: none;
+      }
+
+      .sw:hover .sw-ring,
+      .sw.is-ho .sw-ring {
+        display: block;
+      }
+
+      .sw:hover,
+      .sw.is-ho {
+        z-index: 2;
+      }
+
+      .sw-del {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(18, 18, 18, 0.72);
+        color: #ffffff;
+        cursor: pointer;
+      }
+
+      .sw-del .i {
+        width: 10px;
+        height: 10px;
+      }
+
+      .tip {
+        display: none;
+        position: absolute;
+        z-index: 9;
+        padding: 3px 7px;
+        border-radius: 3px;
+        background: var(--vt-sink);
+        border: 1px solid var(--vt-line);
+        font-size: 11px;
+        color: var(--vt-tx);
+        white-space: nowrap;
+        pointer-events: none;
+      }
+
+      .tip.is-on {
+        display: block;
+      }
+
+      .empty {
+        padding: 24px 12px;
+        text-align: center;
+      }
+
+      .empty-t {
+        margin: 0 0 5px;
+        font-size: 12px;
+        color: var(--vt-tx2);
+      }
+
+      .empty-s {
+        margin: 0;
+        font-size: 11px;
+        color: var(--vt-tx3);
+      }
+
+      /* 间距走 flex gap，不用 :last-child —— 少依赖一个支持度不确定的伪类 */
+      .hints {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 2px;
+        padding: 9px 10px;
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+        background: var(--vt-surf2);
+      }
+
+      .hints p {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 12px;
+        color: var(--vt-tx2);
+      }
+
+      .kbd {
+        padding: 1px 6px;
+        border-radius: 2px;
+        background: var(--vt-raised);
+        border: 1px solid var(--vt-line);
+        color: var(--vt-tx);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+    </style>
+<style>
+  html, body { height: auto; }
+  body { margin:0; padding:26px; background:#1b1b1b; color:#e6e6e6;
+    font-family: system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+    display:flex; gap:22px; align-items:flex-start; }
+  .pv-slot { flex:0 0 auto; }
+  .pv-cap { margin:0 0 9px 3px; font-size:12px; color:#8a8a8a; }
+  .pv-panel { width:420px; height:680px; overflow:hidden;
+    border:1px solid #111; border-radius:6px; position:relative; }
+  .pv-foot { position:fixed; left:26px; bottom:18px; font-size:11px; color:#5f5f5f; }
+</style></head>
+<body>
+  <div class="pv-slot"><p class="pv-cap">① 外壳 · 功能选择</p><div class="pv-panel"><div id="vt-app"><div class="brandbar"></div><header class="bar" id="vt-bar"><button class="back is-off" id="vt-back"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M10 3.5 5.5 8 10 12.5"/></svg></i></button><span class="bar-title" id="vt-title"></span><span class="bar-sub" id="vt-sub" style="display:none"></span><span class="grow"></span><span class="bar-chip" id="vt-chip"><i class="led ok" id="vt-led"></i><span class="mono" id="vt-env"></span></span><button class="icon-btn" id="vt-more"><i class="i"><svg viewBox="0 0 16 16" fill="currentColor" stroke="none" preserveAspectRatio="xMidYMid meet"><circle cx="3.4" cy="8" r="1.15" fill="currentColor"/><circle cx="8" cy="8" r="1.15" fill="currentColor"/><circle cx="12.6" cy="8" r="1.15" fill="currentColor"/></svg></i></button></header><div class="scroll" id="vt-body"><section class="screen active" id="vt-home"><div class="hero"><i class="i hero-mark"><svg viewBox="0 0 52 52" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><rect x="1.5" y="1.5" width="49" height="49" rx="13"/><path d="M17 18.5 26 34.5 35 18.5"/></svg></i><div class="hero-txt"><h1>Vellum 工具箱</h1><p class="hero-sub mono">v0.2.0 · com.vellum.toolbox</p></div></div><div class="navlist"><button class="navitem" type="button" data-tool="palette" title="打开「调色板」"><i class="ni-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M8 2.2a5.8 5.8 0 0 0 0 11.6h1.05a1.5 1.5 0 0 0 1.05-2.56c-.3-.29-.5-.6-.5-1.02 0-.83.67-1.5 1.5-1.5h1.05A1.78 1.78 0 0 0 14 6.94C13.5 4.24 11.02 2.2 8 2.2Z"/><circle cx="5.7" cy="6.5" r="0.85"/><circle cx="8.4" cy="5.2" r="0.85"/><circle cx="10.9" cy="6.9" r="0.85"/></svg></i><span class="ni-main"><span class="ni-name">调色板</span><span class="ni-desc">品牌色 / 我的颜色</span></span><span class="ni-preview"><i class="pv" style="background-color:#E60012;"></i><i class="pv" style="background-color:#1A1A1A;"></i><i class="pv" style="background-color:#C8A063;"></i><i class="pv" style="background-color:#2B5BFF;"></i></span><i class="i ni-arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M6.2 3.8 10.4 8l-4.2 4.2"/></svg></i></button><button class="navitem is-planned" type="button" data-tool="assets" title="M2 开工。路线已定：VellumDesk 把镜像写进插件数据目录，插件只读自己的目录。"><i class="ni-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><rect x="2.2" y="3" width="11.6" height="10" rx="1.6"/><circle cx="5.8" cy="6.5" r="1.15"/><path d="M2.8 11.4 5.9 8.4l2.4 2.3 2.4-2.2 2.1 2"/></svg></i><span class="ni-main"><span class="ni-name">素材库</span><span class="ni-desc">与 VellumDesk 联动</span></span><span class="ni-preview"><i class="pv led"></i><i class="pv led"></i></span><span class="sec-note">M2</span><i class="i ni-arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M6.2 3.8 10.4 8l-4.2 4.2"/></svg></i></button><button class="navitem is-planned" type="button" data-tool="table" title="M3 开工。重绘形态已定：每格一个文字图层 + 矢量线条，插入后可继续编辑。"><i class="ni-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><rect x="2.2" y="3" width="11.6" height="10" rx="1.4"/><path d="M2.2 6.6h11.6M2.2 9.8h11.6M6.6 3v10"/></svg></i><span class="ni-main"><span class="ni-name">表格</span><span class="ni-desc">Excel → 画布</span></span><span class="ni-preview"><i class="pv led"></i><i class="pv led"></i><i class="pv led"></i></span><span class="sec-note">M3</span><i class="i ni-arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M6.2 3.8 10.4 8l-4.2 4.2"/></svg></i></button></div><div class="tail"><p class="tail-title">环境</p><p class="tail-item is-first"><span>Photoshop</span><span class="mono">26.1.0</span></p><p class="tail-item"><span>UXP</span><span class="mono">9.0.2</span></p><p class="tail-item"><span>插件版本</span><span class="mono">v0.2.0</span></p></div></section><section class="screen" id="vt-tool-view"></section></div><div class="statusbar" id="vt-status"></div></div></div></div>
+  <div class="pv-slot"><p class="pv-cap">② 调色板</p><div class="pv-panel"><div id="vt-app"><div class="brandbar"></div><header class="bar" id="vt-bar"><button class="back" id="vt-back"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M10 3.5 5.5 8 10 12.5"/></svg></i></button><span class="bar-title" id="vt-title"></span><span class="bar-sub" id="vt-sub" style="display:"></span><span class="grow"></span><span class="bar-chip" id="vt-chip"><i class="led ok" id="vt-led"></i><span class="mono" id="vt-env"></span></span><button class="icon-btn" id="vt-more"><i class="i"><svg viewBox="0 0 16 16" fill="currentColor" stroke="none" preserveAspectRatio="xMidYMid meet"><circle cx="3.4" cy="8" r="1.15" fill="currentColor"/><circle cx="8" cy="8" r="1.15" fill="currentColor"/><circle cx="12.6" cy="8" r="1.15" fill="currentColor"/></svg></i></button></header><div class="scroll" id="vt-body"><section class="screen" id="vt-home"><div class="hero"><i class="i hero-mark"><svg viewBox="0 0 52 52" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><rect x="1.5" y="1.5" width="49" height="49" rx="13"/><path d="M17 18.5 26 34.5 35 18.5"/></svg></i><div class="hero-txt"><h1>Vellum 工具箱</h1><p class="hero-sub mono">v0.2.0 · com.vellum.toolbox</p></div></div><div class="navlist"><button class="navitem" type="button" data-tool="palette" title="打开「调色板」"><i class="ni-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M8 2.2a5.8 5.8 0 0 0 0 11.6h1.05a1.5 1.5 0 0 0 1.05-2.56c-.3-.29-.5-.6-.5-1.02 0-.83.67-1.5 1.5-1.5h1.05A1.78 1.78 0 0 0 14 6.94C13.5 4.24 11.02 2.2 8 2.2Z"/><circle cx="5.7" cy="6.5" r="0.85"/><circle cx="8.4" cy="5.2" r="0.85"/><circle cx="10.9" cy="6.9" r="0.85"/></svg></i><span class="ni-main"><span class="ni-name">调色板</span><span class="ni-desc">品牌色 / 我的颜色</span></span><span class="ni-preview"><i class="pv" style="background-color:#E60012;"></i><i class="pv" style="background-color:#1A1A1A;"></i><i class="pv" style="background-color:#C8A063;"></i><i class="pv" style="background-color:#2B5BFF;"></i></span><i class="i ni-arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M6.2 3.8 10.4 8l-4.2 4.2"/></svg></i></button><button class="navitem is-planned" type="button" data-tool="assets" title="M2 开工。路线已定：VellumDesk 把镜像写进插件数据目录，插件只读自己的目录。"><i class="ni-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><rect x="2.2" y="3" width="11.6" height="10" rx="1.6"/><circle cx="5.8" cy="6.5" r="1.15"/><path d="M2.8 11.4 5.9 8.4l2.4 2.3 2.4-2.2 2.1 2"/></svg></i><span class="ni-main"><span class="ni-name">素材库</span><span class="ni-desc">与 VellumDesk 联动</span></span><span class="ni-preview"><i class="pv led"></i><i class="pv led"></i></span><span class="sec-note">M2</span><i class="i ni-arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M6.2 3.8 10.4 8l-4.2 4.2"/></svg></i></button><button class="navitem is-planned" type="button" data-tool="table" title="M3 开工。重绘形态已定：每格一个文字图层 + 矢量线条，插入后可继续编辑。"><i class="ni-ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><rect x="2.2" y="3" width="11.6" height="10" rx="1.4"/><path d="M2.2 6.6h11.6M2.2 9.8h11.6M6.6 3v10"/></svg></i><span class="ni-main"><span class="ni-name">表格</span><span class="ni-desc">Excel → 画布</span></span><span class="ni-preview"><i class="pv led"></i><i class="pv led"></i><i class="pv led"></i></span><span class="sec-note">M3</span><i class="i ni-arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M6.2 3.8 10.4 8l-4.2 4.2"/></svg></i></button></div><div class="tail"><p class="tail-title">环境</p><p class="tail-item is-first"><span>Photoshop</span><span class="mono">26.1.0</span></p><p class="tail-item"><span>UXP</span><span class="mono">9.0.2</span></p><p class="tail-item"><span>插件版本</span><span class="mono">v0.2.0</span></p></div></section><section class="screen active" id="vt-tool-view"><div class="s-palette"><div class="fgbg-card"><div class="fgbg"><span class="sq fg" style="background-color:#E60012"></span><span class="sq bg" style="background-color:#FFFFFF"></span></div><div class="ro"><p class="ro-hex mono">悬停色块查看 HEX</p></div><div class="ro-pair"><span><span>前景色</span><b class="mono"></b></span><span><span>背景色</span><b class="mono"></b></span></div></div><p class="sec"><span>品牌色</span><i class="sec-note mono">锁定 · 待定 HEX</i></p><div class="sw-wrap"><div class="sw-grid brand" id="vt-brand-grid"><div class="sw" style="background-color:#E60012;" data-kind="brand" data-hex="#E60012" data-id="brand-1" data-name="品牌主色（占位）" title="品牌主色（占位）
+#E60012
+左键=前景色　Shift+左键=背景色"><span class="sw-ring"></span></div><div class="sw" style="background-color:#1A1A1A;" data-kind="brand" data-hex="#1A1A1A" data-id="brand-2" data-name="墨黑（占位）" title="墨黑（占位）
+#1A1A1A
+左键=前景色　Shift+左键=背景色"><span class="sw-ring"></span></div><div class="sw" style="background-color:#C8A063;" data-kind="brand" data-hex="#C8A063" data-id="brand-3" data-name="香槟金（占位）" title="香槟金（占位）
+#C8A063
+左键=前景色　Shift+左键=背景色"><span class="sw-ring"></span></div><div class="sw" style="background-color:#2B5BFF;" data-kind="brand" data-hex="#2B5BFF" data-id="brand-4" data-name="科技蓝（占位）" title="科技蓝（占位）
+#2B5BFF
+左键=前景色　Shift+左键=背景色"><span class="sw-ring"></span></div><div class="sw" style="background-color:#F2F2F2;" data-kind="brand" data-hex="#F2F2F2" data-id="brand-5" data-name="浅灰（占位）" title="浅灰（占位）
+#F2F2F2
+左键=前景色　Shift+左键=背景色"><span class="sw-ring"></span></div><div class="sw" style="background-color:#FFFFFF;" data-kind="brand" data-hex="#FFFFFF" data-id="brand-6" data-name="纯白（占位）" title="纯白（占位）
+#FFFFFF
+左键=前景色　Shift+左键=背景色"><span class="sw-ring"></span></div></div><div class="tip mono"></div></div><p class="sec"><span>我的颜色</span><span class="sec-actions"><i class="sec-note mono"></i><button class="mini" id="vt-save-current" type="button"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M8 3.2v9.6M3.2 8h9.6"/></svg></i><span>存当前色</span></button></span></p><div class="sw-wrap"><div class="sw-grid mine" id="vt-custom-grid"><div class="sw" style="background-color:#E4572E;" data-kind="custom" data-hex="#E4572E" data-id="c0" data-name="#E4572E" title="#E4572E
+#E4572E
+左键=前景色　Shift+左键=背景色　右键=删除"><span class="sw-ring"></span><span class="sw-del" data-del="c0" title="删除这个颜色"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8"/></svg></i></span></div><div class="sw" style="background-color:#F2B134;" data-kind="custom" data-hex="#F2B134" data-id="c1" data-name="#F2B134" title="#F2B134
+#F2B134
+左键=前景色　Shift+左键=背景色　右键=删除"><span class="sw-ring"></span><span class="sw-del" data-del="c1" title="删除这个颜色"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8"/></svg></i></span></div><div class="sw" style="background-color:#7FB069;" data-kind="custom" data-hex="#7FB069" data-id="c2" data-name="#7FB069" title="#7FB069
+#7FB069
+左键=前景色　Shift+左键=背景色　右键=删除"><span class="sw-ring"></span><span class="sw-del" data-del="c2" title="删除这个颜色"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8"/></svg></i></span></div><div class="sw" style="background-color:#1B998B;" data-kind="custom" data-hex="#1B998B" data-id="c3" data-name="#1B998B" title="#1B998B
+#1B998B
+左键=前景色　Shift+左键=背景色　右键=删除"><span class="sw-ring"></span><span class="sw-del" data-del="c3" title="删除这个颜色"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8"/></svg></i></span></div><div class="sw" style="background-color:#4A6FA5;" data-kind="custom" data-hex="#4A6FA5" data-id="c4" data-name="#4A6FA5" title="#4A6FA5
+#4A6FA5
+左键=前景色　Shift+左键=背景色　右键=删除"><span class="sw-ring"></span><span class="sw-del" data-del="c4" title="删除这个颜色"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8"/></svg></i></span></div><div class="sw" style="background-color:#8E6C88;" data-kind="custom" data-hex="#8E6C88" data-id="c5" data-name="#8E6C88" title="#8E6C88
+#8E6C88
+左键=前景色　Shift+左键=背景色　右键=删除"><span class="sw-ring"></span><span class="sw-del" data-del="c5" title="删除这个颜色"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8"/></svg></i></span></div><div class="sw" style="background-color:#EFE3D6;" data-kind="custom" data-hex="#EFE3D6" data-id="c6" data-name="#EFE3D6" title="#EFE3D6
+#EFE3D6
+左键=前景色　Shift+左键=背景色　右键=删除"><span class="sw-ring"></span><span class="sw-del" data-del="c6" title="删除这个颜色"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8"/></svg></i></span></div><div class="sw" style="background-color:#2B2B2B;" data-kind="custom" data-hex="#2B2B2B" data-id="c7" data-name="#2B2B2B" title="#2B2B2B
+#2B2B2B
+左键=前景色　Shift+左键=背景色　右键=删除"><span class="sw-ring"></span><span class="sw-del" data-del="c7" title="删除这个颜色"><i class="i"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet"><path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8"/></svg></i></span></div></div><div class="tip mono"></div></div><div class="empty" id="vt-custom-empty" style="display:none"><p class="empty-t">还没有常用色</p><p class="empty-s">在 PS 里选好颜色，点上方「存当前色」</p></div><div class="hints"><p><span class="kbd">左键</span><span>设置为前景色</span></p><p><span class="kbd">Shift+左键</span><span>设置为背景色</span></p><p><span class="kbd">右键 / ✕</span><span>删除颜色（仅「我的颜色」）</span></p></div></div></section></div><div class="statusbar" id="vt-status"></div></div></div></div>
+  <div class="pv-foot">方向 B · Native Pro 落地预览 —— 由 tools/offline-smoke.cjs 用同一份渲染代码生成（深色主题）。真机表现以 Photoshop 内为准。</div>
+</body></html>

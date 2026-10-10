@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    /* ⚠️ 本院刻意**不用 sp-* 内置组件**：这个插件的使命之一就是探测
+       "sp-* 各控件在旧版 PS 上到底可不可用"。若外壳自己依赖它，
+       在不支持的老版本上会连界面都出不来。所以外壳一律用原生 HTML + CSS。 */
+    body {
+      margin: 0;
+      padding: 12px;
+      font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+      font-size: 12px;
+      color: #e8ebf0;
+      background: #232323;
+    }
+    h1 { font-size: 14px; margin: 0 0 4px; font-weight: 600; }
+    p.hint { margin: 0 0 10px; font-size: 11px; opacity: .65; line-height: 1.55; }
+    .btns { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    button.plain {
+      padding: 6px 12px; font-size: 12px; border-radius: 5px; cursor: pointer;
+      border: 1px solid rgba(150,150,150,.45); background: #3a3a3a; color: #e8ebf0;
+    }
+    button.plain:hover { background: #454545; }
+    button.plain.primary { background: #2673d9; border-color: #2673d9; }
+    button.plain.primary:hover { background: #2f82ee; }
+    #sum { margin: 6px 0 8px; font-weight: 600; }
+    .grp { margin: 12px 0 3px; font-size: 10.5px; opacity: .55; letter-spacing: .5px; }
+    .item { border-left: 3px solid #666; padding: 4px 8px; margin: 4px 0; border-radius: 3px; background: rgba(255,255,255,.03); }
+    .item.ok { border-left-color: #3fae5a; }
+    .item.no { border-left-color: #d9534f; }
+    .item .n { font-weight: 600; }
+    .item .d { opacity: .82; font-family: Consolas, "SFMono-Regular", monospace; font-size: 10.5px; white-space: pre-wrap; word-break: break-all; margin-top: 2px; }
+    #raw {
+      margin-top: 12px; padding: 8px; border: 1px solid rgba(128,128,128,.3); border-radius: 6px;
+      font-family: Consolas, "SFMono-Regular", monospace; font-size: 10.5px; line-height: 1.55;
+      white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow: auto;
+    }
+  </style>
+  <script src="index.js"></script>
+</head>
+<body>
+  <h1>Vellum 环境体检</h1>
+  <p class="hint">
+    探测本机 UXP / API 的真实能力，把结果写成 <code>report.json</code>。<br />
+    用途：在**无法开发**的机器（同事的 PS 2024 / 2025）上采集真实行为。<br />
+    打开面板即自动跑一遍；跑完可「另存报告…」存到桌面再回传。
+  </p>
+
+  <div class="btns">
+    <button class="plain primary" id="btnRun">重新体检</button>
+    <button class="plain" id="btnSave">另存报告…</button>
+  </div>
+
+  <div id="sum">等待运行…</div>
+  <div id="list"></div>
+  <div id="raw"></div>
+</body>
+</html>

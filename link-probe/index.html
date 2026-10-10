@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="index.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        padding: 12px 14px;
+        font-family: system-ui, "Segoe UI", sans-serif;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--uxp-host-text-color, #d5d5d5);
+      }
+      h3 {
+        margin: 0 0 4px;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .sub {
+        margin: 0 0 10px;
+        font-size: 11px;
+        opacity: 0.6;
+      }
+      #summary {
+        margin: 10px 0 2px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 9px;
+      }
+      .badge {
+        font-size: 11px;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+      .badge.ok {
+        background: #0f6e56;
+        color: #e1f5ee;
+      }
+      .badge.no {
+        background: #791f1f;
+        color: #fcebeb;
+      }
+      .det {
+        font-size: 11px;
+        opacity: 0.62;
+        margin: 1px 0 0 2px;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h3>Link Probe</h3>
+    <p class="sub">UXP ↔ 本地服务能力探针：HTTP / WebSocket / 图片显示</p>
+
+    <sp-button id="btnRun" variant="cta">重新运行探针</sp-button>
+
+    <div id="summary">—</div>
+    <div id="results"></div>
+
+    <div id="sink"></div>
+  </body>
+</html>
