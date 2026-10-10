@@ -108,6 +108,24 @@
  *       ⚠️ 诚实边界：合成事件只能证明"处理器可达 + API 存在"，
  *          **证明不了"真鼠标拖拽会产生这些事件"**；`<select>` 的下拉弹层也要真点击才能验。
  *
+ *   v0.3.0 新增（两个界面需求落地）：
+ *   S20c 改版：二层筛选从"一排按钮"改成**自绘下拉** ⇒ 判据改成
+ *       "未选父组时**不许有平铺的子组按钮**、也不该有触发条" + "选了父组才出现触发条" +
+ *       "点开浮层后子组选项才在" + **浮层矩形必须完全落在滚动容器内**（越界会被裁掉）+
+ *       "选完自动收起"。**全程平铺按钮数必须为 0**。
+ *   S24 选区落点探针（**诊断项**）：问"能不能建选区 / 有选区时 place 落在哪"。
+ *       为什么单独立项：用户想要"框哪儿放哪儿"，而 MCP（**ExtendScript**）通道上带区域的
+ *       `select()` 五种写法全失败、`deselect()` 也失败，**但基准 `selectAll()` 成功**
+ *       ⇒ 只能说"那几种写法不行"，**不能说选区不可用**；且那是 legacy DOM，
+ *       **插件走 UXP/AM 是另一条路**。本条负责在**插件自己的通道**上问清楚。
+ *       🔴 真机 2026-10-11 结果：插件侧 **`setd`+`Chnl/fsel`+`Rctn` 能建选区**（DOM 写法全失败，
+ *          与 ExtendScript 恰好**相反**）；而**有选区时默认落点 = 选区中心**（实测 60,100
+ *          = 素材居中于选区 120,140,320,300）⇒ 统一规则是"默认落点 = 选区中心 / 无选区则画布中心"。
+ *   S25 落点组合（**回归项**）：有了 S24 那条发现就必须钉住 ——
+ *       `offset` 是**相对默认落点**的位移，所以**有选区时基准必须取选区中心**；
+ *       四条判据：无选区·左上→0,0 ／ 基准报 selection 且中心 220,220 ／
+ *       有选区·居中→仍居中于画布 ／ **有选区·左上→0,0**（最后这条才证明叠加语义对）。
+ *
  *   版本状态（v0.2.4）：S17 建的「纯色填充图层」改色**仍未解决**（已知限制，非回归），
  *   而**形状图层改色正常**（用户 2026-10-10 真机确认，日志 via=contentColorA）。
  *
@@ -369,6 +387,148 @@ async function run(ctx, deps) {
     const c = libChip("");
     if (c) syntheticClick(c, false);
     return !!c;
+  }
+  /* ---- 二层下拉（v0.3.0）：触发条 / 展开态 / 选项 ---- */
+  function libSelWrap() {
+    return document.getElementById("vt-lib-subwrap");
+  }
+  function libSelTrigger() {
+    return document.getElementById("vt-lib-subsel");
+  }
+  function libSelOpen() {
+    const w = libSelWrap();
+    return !!(w && String((w.getAttribute && w.getAttribute("class")) || "").indexOf("is-open") >= 0);
+  }
+  /** 下拉里的选项（用 `data-opt` 找，与筛选 chip 的 `data-key` 分开，免得有歧义）。 */
+  function libOpt(key) {
+    const pop = document.getElementById("vt-lib-subpop");
+    if (!pop) return null;
+    const walk = (n) => {
+      for (let i = 0; i < n.children.length; i++) {
+        const c = n.children[i];
+        const k = c.getAttribute ? c.getAttribute("data-opt") : null;
+        if (k !== null && k === key) return c;
+        const d = walk(c);
+        if (d) return d;
+      }
+      return null;
+    };
+    return walk(pop);
+  }
+  /** 筛选区里**平铺的子组按钮**个数（改下拉之前是一排，现在必须是 0）。 */
+  function libFlatSubChips() {
+    const bar = document.getElementById("vt-lib-bar");
+    if (!bar) return -1;
+    let n = 0;
+    const walk = (x) => {
+      for (let i = 0; i < x.children.length; i++) {
+        const c = x.children[i];
+        const cls = String((c.getAttribute && c.getAttribute("class")) || "");
+        if (cls.indexOf("fchip") >= 0 && cls.indexOf("sub") >= 0) n++;
+        walk(c);
+      }
+    };
+    walk(bar);
+    return n;
+  }
+  /**
+   * 展开的浮层是否**完全落在滚动容器内**。
+   * 为什么是硬判据：`.scroll` 有 `overflow-y:auto`，越界部分**会被裁掉**，
+   * 而用户只会看到"下拉点开了但内容是空的" —— 这类错在真机上极难归因。
+   * ⚠️ 几何要**轮询到非零**再量（布局是异步的）。
+   */
+  async function libPopInsideScroll() {
+    const pop = document.getElementById("vt-lib-subpop");
+    if (!pop) return { ok: false, note: "浮层元素不存在（整行没渲染？签名见下）" };
+    const r = await waitFor(() => {
+      const b = pop.getBoundingClientRect ? pop.getBoundingClientRect() : null;
+      return b && b.width > 0 && b.height > 0 ? b : null;
+    }, 3000, 120);
+    if (!r) {
+      // ⚠️ 同样是"几何为 0"，原因可能完全不同，必须分开报 —— 否则这条读数没法用：
+      //    · 展开态没了（被关掉 / 被重渲染成关闭）→ **状态问题**
+      //    · 展开态还在但没有几何 → **布局问题**
+      //    （上一次 FAIL 就是只报了"几何为 0"，分不清是哪种，等于没测。）
+      const w = libSelWrap();
+      const openNow = libSelOpen();
+      let disp = "?";
+      try {
+        disp = String(getComputedStyle(pop).display);
+      } catch {
+        disp = "取不到";
+      }
+      return {
+        ok: false,
+        note:
+          "浮层几何始终为 0　→ 展开态现在=" + openNow +
+          "（wrap class=" + JSON.stringify(w ? String(w.getAttribute("class")) : null) + "）" +
+          "　computed display=" + disp +
+          "　⇒ " + (openNow ? "**状态还在、是没进布局**" : "**展开态没了**（被关掉或重渲染掉了）"),
+      };
+    }
+    let sc = null;
+    let n = pop.parentNode;
+    while (n) {
+      const cls = String((n.getAttribute && n.getAttribute("class")) || "");
+      if (cls.indexOf("scroll") >= 0) {
+        sc = n;
+        break;
+      }
+      n = n.parentNode;
+    }
+    if (!sc) return { ok: false, note: "找不到滚动容器祖先" };
+    const sb = sc.getBoundingClientRect();
+    const f = (v) => Math.round(v);
+    const inside =
+      r.top >= sb.top - 1 && r.bottom <= sb.bottom + 1 &&
+      r.left >= sb.left - 1 && r.right <= sb.right + 1;
+    return {
+      ok: true,
+      inside: inside,
+      note:
+        "浮层 " + f(r.left) + "," + f(r.top) + "," + f(r.right) + "," + f(r.bottom) +
+        "　滚动容器 " + f(sb.left) + "," + f(sb.top) + "," + f(sb.right) + "," + f(sb.bottom) +
+        "　完全在容器内=" + inside,
+    };
+  }
+  /** 收下拉（点触发条一次即可；幂等）。 */
+  function libCloseSel() {
+    if (libSelOpen()) {
+      const t = libSelTrigger();
+      if (t) syntheticClick(t, false);
+    }
+    return !libSelOpen();
+  }
+  /**
+   * 筛选区的**结构签名** —— 失败时用它"自己解释自己"。
+   * 起因：S20c 有一次 FAIL 报「浮层几何始终为 0」且连选项都找不到，
+   * 那条读数**分不清**是"没渲染"、"渲染了但没展开"、还是"被重渲染掉了"。
+   * 猜没用，把这三种情形区分开只需要一个签名。
+   */
+  function libBarSig() {
+    const bar = document.getElementById("vt-lib-bar");
+    if (!bar) return "no-bar";
+    const out = [];
+    for (let i = 0; i < bar.children.length; i++) {
+      const r = bar.children[i];
+      const rc = String((r.getAttribute && r.getAttribute("class")) || "");
+      const bits = [];
+      const walk = (n) => {
+        for (let j = 0; j < n.children.length; j++) {
+          const c = n.children[j];
+          const cls = String((c.getAttribute && c.getAttribute("class")) || "");
+          if (cls.indexOf("fchip") >= 0) bits.push("chip:" + JSON.stringify(c.getAttribute("data-key")));
+          else if (cls.indexOf("fopt") >= 0) bits.push("opt:" + JSON.stringify(c.getAttribute("data-opt")));
+          else if (cls.indexOf("fsel-pop") >= 0) bits.push("pop");
+          else if (cls.indexOf("fsel-wrap") >= 0) bits.push("wrap{open=" + (cls.indexOf("is-open") >= 0) + "}");
+          else if (cls.indexOf("fsel") >= 0) bits.push("trig");
+          walk(c);
+        }
+      };
+      walk(r);
+      out.push(rc.replace(/\s+/g, ".") + "{" + bits.join(",") + "}");
+    }
+    return out.join(" | ") || "bar-empty";
   }
 
   await log.appendLog("selfcheck START  plugin=com.vellum.toolbox");
@@ -1429,7 +1589,7 @@ async function run(ctx, deps) {
 
   /* S20c 两级分组筛选 */
   try {
-    const S20C = "S20c 两级分组筛选 —— 点父组含子组素材、点子组收窄（契约 §5.3 parentId）";
+    const S20C = "S20c 两级分组筛选 —— 点父组含子组素材、点下拉里的子组收窄（契约 §5.3 parentId）";
     if (!twoLevel) {
       rec(S20C, false, "镜像里没有「两层分组」样本（需要一个既有直接素材、又有子组的父组）—— 本条不作数");
     } else {
@@ -1438,8 +1598,11 @@ async function run(ctx, deps) {
       const okSwitch = await libSwitchTo("brand");
       libResetFilter();
 
-      // 关键语义：**顶层不该出现子组 chip**（旧版平铺时会），点了父组之后才出现
-      const kidBefore = !!libChip(kName);
+      // 关键语义①：未选父组时**不该有平铺的子组按钮**，也不该有下拉触发条
+      //   （旧版把父组与子组平铺成同级 chip —— 那正是被判定"错的 UI"的那一版）
+      const flatBefore = libFlatSubChips();
+      const trigBefore = !!libSelTrigger();
+
       const pChip = libChip(pName);
       const nTxt = pChip && pChip.children[1] ? String(pChip.children[1].textContent || "") : "";
 
@@ -1449,26 +1612,44 @@ async function run(ctx, deps) {
         const g1 = await libWaitCards(twoLevel.expParent, 5000, "brand");
         cardsParent = g1 ? g1.children.length : -1;
       }
-      const kidAfter = !!libChip(kName);
 
-      const kChip = libChip(kName);
+      // 关键语义②：选了父组才出现**下拉触发条**；点开之后浮层里才有子组选项
+      const trig = libSelTrigger();
+      let opened = false;
+      let bounds = { ok: false, note: "未展开" };
+      if (trig) {
+        syntheticClick(trig, false);
+        const o = await waitFor(() => (libSelOpen() ? true : null), 2500, 120);
+        opened = !!o;
+        if (opened) bounds = await libPopInsideScroll();
+      }
+      const flatAfter = libFlatSubChips();
+
+      const kOpt = libOpt(kName);
       let cardsKid = -1;
-      if (kChip) {
-        syntheticClick(kChip, false);
+      if (kOpt) {
+        syntheticClick(kOpt, false);
         const g2 = await libWaitCards(twoLevel.expKid, 5000, "brand");
         cardsKid = g2 ? g2.children.length : -1;
       }
+      const closedAfterPick = !libSelOpen();
 
       rec(
         S20C,
-        okSwitch && !kidBefore && kidAfter && !!pChip &&
-          cardsParent === twoLevel.expParent && !!kChip && cardsKid === twoLevel.expKid,
+        okSwitch && flatBefore === 0 && !trigBefore && !!pChip &&
+          cardsParent === twoLevel.expParent && !!trig && opened &&
+          bounds.ok === true && bounds.inside === true &&
+          flatAfter === 0 && !!kOpt && cardsKid === twoLevel.expKid && closedAfterPick,
         "库=brand（切换=" + okSwitch + "）" +
-        "　顶层就出现子组 chip？" + kidBefore + "（须 false —— 平铺就是这个症状）" +
+        "　顶层平铺的子组按钮=" + flatBefore + "（须 0）·触发条存在？" + trigBefore + "（须 false）" +
         "　父组「" + pName + "」count 标签=" + JSON.stringify(nTxt) +
         " → 卡片=" + cardsParent + "（自数期望 " + twoLevel.expParent + "）" +
-        "　点父组后子组 chip 出现=" + kidAfter +
-        "　子组「" + kName + "」→ 卡片=" + cardsKid + "（自数期望 " + twoLevel.expKid + "）"
+        "　触发条出现=" + !!trig + "·点开=" + opened +
+        "　浮层不越界：" + bounds.note +
+        "　子组选项「" + kName + "」=" + !!kOpt + " → 卡片=" + cardsKid + "（自数期望 " + twoLevel.expKid + "）" +
+        "　选完自动收起=" + closedAfterPick +
+        "　全程平铺按钮仍为 " + flatAfter +
+        "　‖ 失败时看这里·筛选区签名=" + libBarSig()
       );
       libResetFilter();
     }
@@ -1810,12 +1991,264 @@ async function run(ctx, deps) {
     if (s23Holder && s23Holder.parentNode) s23Holder.parentNode.removeChild(s23Holder);
   }
 
+  /* ---------- S24: 选区能不能当落点（v0.3.0 新增，**诊断项**） ----------
+     背景：用户要"把素材放到画布指定位置"。`offset` 已验像素级精确（docs/25 §2.2），
+     但"**先在画布上框一块、插件就放在那儿**"更贴近直觉，它取决于两件事：
+       ① 插件能不能**建/读选区**；② 有选区时 `placeEvent` 会不会把素材放进选区。
+     2026-10-11 在 MCP（**ExtendScript** 通道）上试过：带区域的 `select()` 五种写法全失败、
+       `deselect()` 也失败，**但基准 `selectAll()` 成功** ⇒ 只能说"那几种写法不行"，
+       **不能说选区不可用**；而且那是 **legacy DOM**，**插件走 UXP/AM 是另一条路**。
+     ⇒ 本条就是来在**插件自己的通道**上把这件事问清楚。
+     ⚠️ 结论分三档（纪律：**没有基准的失败实验 = 没做实验**）：基准失败 = **无结论**。
+     ⚠️ 全程在自建临时文档上，跑完不保存关掉。 */
+  const S24 = "S24 选区落点探针 —— 能否建选区 / 有选区时 place 落在哪（诊断项）";
+  try {
+    const readSel = () => {
+      try {
+        const d = ps.app.activeDocument;
+        const s = d && d.selection;
+        if (!s) return null;
+        const b = s.bounds;
+        if (!b) return null;
+        const n = (v) => (v && typeof v === "object" && "_value" in v ? v._value : v);
+        const o = {
+          left: Number(n(b.left)), top: Number(n(b.top)),
+          right: Number(n(b.right)), bottom: Number(n(b.bottom)),
+        };
+        return [o.left, o.top, o.right, o.bottom].every(isFinite) ? o : null;
+      } catch {
+        return null;
+      }
+    };
+    const fmtR = (r) =>
+      r ? r.left + "," + r.top + "," + r.right + "," + r.bottom : "（读不到）";
+
+    const entry = await data.entryIn(["library", "thumb"], "t401.png");
+    const scratch = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(选区)" });
+    if (!scratch.ok) {
+      rec(S24, true, "【诊断项】建临时文档失败：" + scratch.error + " —— 本条不作数");
+    } else if (!entry) {
+      rec(S24, true, "【诊断项】拿不到测试图 Entry（镜像缺失）—— 先跑 tools/fake-vellumdesk.cjs；本条不作数");
+    } else {
+      let line = "";
+      try {
+        const info = ps.docInfo() || {};
+        line += "临时文档 id=" + scratch.id + " 画布=" + (info.docW || "?") + "×" + (info.docH || "?");
+
+        /* ① 基准：**没有任何选区**时置入落在哪（后面所有"有选区"的读数都跟它比） */
+        const base = await ps.placeFile(entry, { verify: "change" });
+        const baseRect = base.rect
+          ? base.rect.left + "," + base.rect.top + " " + base.rect.w + "×" + base.rect.h
+          : "✗ " + base.error;
+        line += "　【基准·无选区】置入=" + baseRect;
+
+        /* ② 建选区的几种候选：区域写法在前，`selectAll` 放最后当"API 是否可用"的对照基准 */
+        const RECT = [120, 140, 320, 300];
+        const cands = [
+          {
+            name: "DOM.select(2×2 数字)",
+            run: () => ps.app.activeDocument.selection.select([[RECT[0], RECT[1]], [RECT[2], RECT[3]]]),
+          },
+          {
+            name: "DOM.select(扁平 4 数字)",
+            run: () => ps.app.activeDocument.selection.select([RECT[0], RECT[1], RECT[2], RECT[3]]),
+          },
+          {
+            name: "AM.setd(Chnl/fsel + Rctn)",
+            run: async () => {
+              await ps.runModal(async () => {
+                await ps.batchPlay([
+                  {
+                    _obj: "set",
+                    _target: [{ _property: "selection", _ref: "channel" }],
+                    to: {
+                      _obj: "rectangle",
+                      top: { _unit: "pixelsUnit", _value: RECT[1] },
+                      left: { _unit: "pixelsUnit", _value: RECT[0] },
+                      bottom: { _unit: "pixelsUnit", _value: RECT[3] },
+                      right: { _unit: "pixelsUnit", _value: RECT[2] },
+                    },
+                    _options: { dialogOptions: "dontDisplay" },
+                  },
+                ], {});
+              }, "Vellum 自检：建选区");
+            },
+          },
+          { name: "DOM.selectAll（基准）", run: () => ps.app.activeDocument.selection.selectAll() },
+        ];
+
+        const parts = [];
+        let anySel = null;
+        for (const c of cands) {
+          let err = null;
+          try {
+            await c.run();
+          } catch (e) {
+            err = String((e && e.message) || e);
+          }
+          const sel = readSel();
+          let seg = c.name + "=" + (err ? "✗" + err.slice(0, 40) : sel ? "✓" + fmtR(sel) : "×无选区");
+          if (sel) {
+            if (!anySel) anySel = { name: c.name, rect: sel };
+            // 有选区了 → **立刻量一次置入落哪**（这才是关键问题：PS 会不会自己放进选区）
+            const pl = await ps.placeFile(entry, { verify: "change" });
+            seg += " ⇒ 置入=" + (pl.rect
+              ? pl.rect.left + "," + pl.rect.top + " " + pl.rect.w + "×" + pl.rect.h +
+                (pl.rect.left === base.rect.left && pl.rect.top === base.rect.top ? "（与基准相同：选区不影响落点）" : "（**与基准不同**）")
+              : "✗ " + pl.error);
+          }
+          parts.push(seg);
+        }
+
+        const conclusion = anySel
+          ? "⇒ 选区**建得出**（" + anySel.name + "，rect " + fmtR(anySel.rect) + "）；" +
+            "置入落点见上面每段的 ⇒ —— 若与基准相同，说明 **placeEvent 不看选区**，" +
+            "'框哪儿放哪儿'要靠 offset 自己算"
+          : "⚠️ **本实验无结论**：连 `selectAll` 基准都没建出选区 ⇒ 分不清是权限/版本限制还是写法问题。" +
+            "（⚠️ 不许据此下「选区不可用」的结论 —— 纪律：没有基准的失败实验 = 没做实验。）";
+
+        rec(S24, true, "【诊断项】" + line + "　‖ " + parts.join("　｜　") + "　" + conclusion);
+      } finally {
+        try {
+          await ps.closeDocument(scratch.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S24, true, "【诊断项】探针自身抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S25: 落点组合 —— 有选区时 offset 必须叠在**选区中心**上（v0.3.0，回归项） ----------
+     为什么必须有这一条：S24 刚测出「有选区时 `placeEvent` 默认落在**选区中心**」，
+     而我们的 `offset` 是**相对默认落点**的位移 ⇒ 一旦基准取错（用画布中心去算），
+     用户在有选区时选「左上」，素材就会**整体偏掉** —— 而画面不报错，只是位置不对。
+
+     判据（三步，每步都读回真实图层 bounds 与期望矩形**逐边比对**）：
+       ① 无选区 + 锚点「左上」 → 期望 **(0, 0, w, h)**（贴画布左上）
+       ② 建选区 R → `placeBaseCenter()` 必须报 `from="selection"` 且中心 = R 的中心
+       ③ 有选区 + 锚点「居中」 → 期望 **(40, 80, …)**（素材仍居中于**画布**，
+          即 offset 把"居中于选区"推回了"居中于画布"）
+       ④ 有选区 + 锚点「左上」 → 期望 **(0, 0, …)** —— **这一步才是关键**：
+          只有 offset 确实叠在选区中心上，结果才会是 0,0
+     ⚠️ 只作用在自建临时文档上，跑完不保存关掉。 */
+  const S25 = "S25 落点组合：有选区时 offset 必须叠在选区中心上（否则位置会整体偏）";
+  try {
+    const fmtB = (r) => (r ? r.left + "," + r.top + "," + r.right + "," + r.bottom : "✗");
+    const entry25 = await data.entryIn(["library", "thumb"], "t401.png");
+    const sc25 = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(落点)" });
+    if (!sc25.ok) {
+      rec(S25, false, "建临时文档失败：" + sc25.error + " —— 本条不作数");
+    } else if (!entry25) {
+      rec(S25, false, "拿不到测试图 Entry（镜像缺失）—— 先跑 tools/fake-vellumdesk.cjs；本条不作数");
+    } else {
+      let line = "";
+      let allOk = true;
+      /** 选区的当前存活情况（置入**之后**它还在不在，是这条探针要弄清的事实之一）。 */
+      const selNow = () => {
+        const s = ps.readSelectionBounds();
+        return s
+          ? "有(" + Math.round(s.left) + "," + Math.round(s.top) + "," +
+            Math.round(s.right) + "," + Math.round(s.bottom) + ")"
+          : "无";
+      };
+      try {
+        const info = ps.docInfo() || {};
+        const dW = info.docW, dH = info.docH;
+        // 素材尺寸：直接从第一次置入的真实 bounds 上读（**不猜**，也不依赖桩写死的数）
+        const first = await ps.placeFile(entry25, { verify: "change" });
+        const iW = first.rect ? first.rect.w : 0;
+        const iH = first.rect ? first.rect.h : 0;
+        line += "画布=" + dW + "×" + dH + "　实测素材=" + iW + "×" + iH;
+        if (!(iW > 0) || !(iH > 0)) {
+          rec(S25, false, "拿不到素材尺寸（第一次置入的 bounds 读不出来）：" + (first.error || "-"));
+        } else {
+          // ① 无选区 + 左上
+          const a1 = ps.anchorOffset("tl", dW, dH, iW, iH, null);
+          const p1 = await ps.placeFile(entry25, {
+            verify: "change",
+            offset: { x: a1.offsetX, y: a1.offsetY },
+            expectRect: { left: 0, top: 0, right: iW, bottom: iH },
+          });
+          const hit1 = !!(p1.rect && p1.rect.hit === true);
+          allOk = allOk && hit1;
+          line += "　①无选区·左上 offset=" + a1.offsetX + "," + a1.offsetY +
+            " → " + (p1.rect ? p1.rect.left + "," + p1.rect.top : "✗") + "（期望 0,0 hit=" + hit1 + "）";
+
+          // ② 建选区，并检查默认落点的基准
+          const R = { left: 120, top: 140, right: 320, bottom: 300 };
+          const mk = await ps.setSelectionRect(R);
+          const base = ps.placeBaseCenter();
+          const baseOk = !!(mk.ok && base.ok && base.from === "selection" &&
+            Math.round(base.cx) === 220 && Math.round(base.cy) === 220);
+          allOk = allOk && baseOk;
+          line += "　②建选区=" + (mk.ok ? fmtB(mk.sel) : "✗ " + mk.error) +
+            "　基准=" + (base.ok ? base.from + "(" + Math.round(base.cx) + "," + Math.round(base.cy) + ")" : "✗") +
+            "（须 selection/220,220 → " + baseOk + "）";
+
+          // ③ 有选区 + 居中 → 素材仍应居中于**画布**
+          const a3 = ps.anchorOffset("mc", dW, dH, iW, iH, base.ok ? base : null);
+          const cx = Math.round((dW - iW) / 2), cy = Math.round((dH - iH) / 2);
+          const p3 = await ps.placeFile(entry25, {
+            verify: "change",
+            offset: { x: a3.offsetX, y: a3.offsetY },
+            expectRect: { left: cx, top: cy, right: cx + iW, bottom: cy + iH },
+          });
+          const hit3 = !!(p3.rect && p3.rect.hit === true);
+          allOk = allOk && hit3;
+          line += "　③有选区·居中 offset=" + a3.offsetX + "," + a3.offsetY +
+            " → " + (p3.rect ? p3.rect.left + "," + p3.rect.top : "✗") +
+            "（期望 " + cx + "," + cy + " hit=" + hit3 + "）" +
+            "　【置入后选区=" + selNow() + "】";
+
+          // ④ 有选区 + 左上 → **关键一步**
+          //    ⚠️ 这里**重新建一次选区**：上一轮观测到"③ 之后基准像是变回了画布中心"，
+          //       原因只能是**选区在置入之后没了**。先把它重建回去（这是本步的必要前置条件），
+          //       同时在读数里把这件事显式记下来 —— 而不是改判据去迁就它。
+          const mk2 = await ps.setSelectionRect(R);
+          const base2 = ps.placeBaseCenter();
+          line += "　【④前置：重建选区=" + (mk2.ok ? "✓" : "✗" + mk2.error) +
+            "　基准=" + (base2.ok ? base2.from + "(" + Math.round(base2.cx) + "," + Math.round(base2.cy) + ")" : "✗") + "】";
+          const a4 = ps.anchorOffset("tl", dW, dH, iW, iH, base2.ok ? base2 : null);
+          const p4 = await ps.placeFile(entry25, {
+            verify: "change",
+            offset: { x: a4.offsetX, y: a4.offsetY },
+            expectRect: { left: 0, top: 0, right: iW, bottom: iH },
+          });
+          const hit4 = !!(p4.rect && p4.rect.hit === true);
+          allOk = allOk && hit4;
+          line += "　④有选区·左上 offset=" + a4.offsetX + "," + a4.offsetY +
+            " → " + (p4.rect ? p4.rect.left + "," + p4.rect.top : "✗") +
+            "（期望 0,0 hit=" + hit4 + " ← 关键：只有 offset 叠在选区中心上才会是 0,0）" +
+            "　【置入后选区=" + selNow() + "】";
+
+          rec(
+            S25,
+            allOk,
+            line + "　⇒ " + (allOk
+              ? "offset 与选区默认落点**正确叠加**，九宫格在两种情形下都落准"
+              : "⚠️ 有一步没命中：先看是哪一步，再决定是锚点算错还是 offset 的叠加语义不同")
+          );
+        }
+      } finally {
+        try {
+          await ps.closeDocument(sc25.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S25, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.2.9",
+    version: "0.3.0",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

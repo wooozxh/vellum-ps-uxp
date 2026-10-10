@@ -501,10 +501,22 @@ function docInfo() {
     if (!app.documents || !app.documents.length) return null;
     const d = app.activeDocument;
     const l = d.activeLayers && d.activeLayers[0];
+    // v0.3.0：补**画布宽高** —— 「九宫格落点」算 offset 要用它（见本文件「落点」一节）。
+    // ⚠️ 取的是 UXP DOM 的 `document.width/height`（像素文档里就是 px）。
+    //    真机上由自检 S24/S25 把它和实际 bounds 对照，取不到就是 null（不猜、不默认 1）。
+    const num = (v) => {
+      if (v === null || v === undefined) return null;
+      if (typeof v === "object" && "_value" in v) v = v._value;
+      const n = Number(v);
+      return isFinite(n) ? n : null;
+    };
     return {
       docId: d.id,
       docName: d.name,
       mode: d.mode,
+      docW: num(d.width),
+      docH: num(d.height),
+      resolution: num(d.resolution),
       layer: l ? { id: l.id, name: l.name, kind: l.kind } : null,
     };
   } catch (e) {
@@ -985,15 +997,217 @@ async function fillLayer(hexOrRgb, opts) {
  * 唯一改动：把 `_path` 的值从路径换成**令牌**。
  */
 
-function placeDesc(pathOrToken) {
+/* ------------------------------------------------- 落点（v0.3.0 新增） */
+
+/*
+ * ════════════════════════════════════════════════════════════════════════
+ * ★ `placeEvent` 的落点规律 —— 2026-10-11 真机实测（MCP，临时文档 400×400、素材 320×240）
+ * ════════════════════════════════════════════════════════════════════════
+ *   默认（offset 0,0）  → 图层 bounds = 40, 80, 360, 320   ⇒ **画布居中、且不缩放**
+ *   offset (64, 48)     → 图层 bounds = 104, 128, 424, 368 ⇒ Δ **正好 +64 / +48**
+ *
+ * ⇒ 两条结论：
+ *   ① 默认落点是"**画布居中**"（不是左上、不是视图中心）；
+ *   ② `offset` 与图层位移 **1:1 精确**，是像素级的定位参数。
+ *
+ * 于是"把素材放到画布上的 (x, y)"就是一道简单算术：
+ *     offset = (x − (画布宽 − 素材宽) / 2,  y − (画布高 − 素材高) / 2)
+ * 而这两个尺寸插件都有：画布来自 `docInfo()`，素材宽高来自镜像的
+ * `asset.width / asset.height`（契约 §5.4 必填）—— **零新能力**。
+ *
+ * ⚠️ 它**只管位置、不管尺寸**（素材不会被缩放）。"置入后按矩形缩放"未验，不许当成已有。
+ */
+
+/*
+ * ════════════════════════════════════════════════════════════════════════
+ * ★ 默认落点的完整规律 —— 2026-10-11 插件侧自检 S24 真机实测（补齐）
+ * ════════════════════════════════════════════════════════════════════════
+ * S24 在临时文档（400×400）上量到：
+ *   ① **没有选区**：置入 bounds = `40, 80, 360, 320` ⇒ 素材**居中于画布**
+ *   ② **有选区** `120,140,320,300`（中心 220,220）：置入 bounds = `60, 100, 380, 340`
+ *      ⇒ 素材中心正好在 (220,220) ⇒ **居中于选区**（仍然不缩放）
+ *
+ * ⇒ 统一规则：**默认落点 = "当前选区的中心"；没有选区时 = "画布中心"**。
+ *
+ * ⚠️ 这条规则有一个**必须处理的连带后果**：
+ *    我们的 `offset` 是**相对默认落点**的位移 ⇒ 有选区时它是叠在**选区中心**上的。
+ *    所以"九宫格锚点"绝不能拿画布中心当基准去算 offset，否则用户在有选区时选「左上」，
+ *    素材会跑偏 —— 必须在**同一个基准**上做减法（见 `anchorOffset()` 的 `base` 参数）。
+ */
+
+/** 当前选区的 bounds（UXP DOM）。没有选区 / 读不到 → `null`（**不当作 0,0**）。 */
+function readSelectionBounds() {
+  try {
+    const d = app.activeDocument;
+    if (!d || !d.selection) return null;
+    const b = d.selection.bounds;
+    if (!b) return null;
+    const n = (v) => (v && typeof v === "object" && "_value" in v ? v._value : v);
+    const o = {
+      left: Number(n(b.left)), top: Number(n(b.top)),
+      right: Number(n(b.right)), bottom: Number(n(b.bottom)),
+    };
+    return [o.left, o.top, o.right, o.bottom].every(isFinite) ? o : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 置入的**默认落点中心** —— 有选区就是选区中心，没选区就是画布中心（见上面实测）。
+ * @returns {{ok:true, cx:number, cy:number, from:"selection"|"canvas", sel?:object}
+ *          |{ok:false, error:string}}
+ */
+function placeBaseCenter() {
+  const info = docInfo() || {};
+  const dW = info.docW;
+  const dH = info.docH;
+  if (!(dW > 0) || !(dH > 0)) return { ok: false, error: "读不到画布尺寸（docW/docH）" };
+  const sel = readSelectionBounds();
+  if (sel) {
+    return {
+      ok: true,
+      cx: (sel.left + sel.right) / 2,
+      cy: (sel.top + sel.bottom) / 2,
+      from: "selection",
+      sel: sel,
+    };
+  }
+  return { ok: true, cx: dW / 2, cy: dH / 2, from: "canvas" };
+}
+
+/** 九宫格锚点（左上→右下）。UI 与自检都按这个顺序排。 */
+const ANCHORS = ["tl", "tc", "tr", "ml", "mc", "mr", "bl", "bc", "br"];
+const ANCHOR_LABELS = {
+  tl: "左上", tc: "上中", tr: "右上",
+  ml: "左中", mc: "居中", mr: "右中",
+  bl: "左下", bc: "下中", br: "右下",
+};
+
+/** 锚点的中文名（未收录的值原样返回，不猜）。 */
+function anchorLabel(a) {
+  return a ? ANCHOR_LABELS[a] || String(a) : "";
+}
+
+/**
+ * 锚点 → `placeEvent` 的 offset。**纯函数**（可离线断言，不碰 PS）。
+ *
+ * @param {string} anchor 九宫格锚点，见 ANCHORS
+ * @param {number} docW 画布宽（px）  @param {number} docH 画布高（px）
+ * @param {number} imgW 素材宽（px）  @param {number} imgH 素材高（px）
+ * @param {{cx:number,cy:number}} [base] **默认落点中心**（`placeBaseCenter()` 的结果）。
+ *   省略 = 画布中心。⚠️ 有选区时**必须传**，否则 offset 会算歪（见本节顶部实测说明）。
+ * @returns {{ok:true, x:number, y:number, offsetX:number, offsetY:number, base:object}
+ *          |{ok:false, error:string}}
+ *   `x`/`y` 是这个锚点想让**素材左上角**落在的文档坐标；offset 是相对"默认落点"的位移。
+ */
+function anchorOffset(anchor, docW, docH, imgW, imgH, base) {
+  const dW = Number(docW), dH = Number(docH), iW = Number(imgW), iH = Number(imgH);
+  if (![dW, dH, iW, iH].every((n) => isFinite(n) && n > 0)) {
+    return { ok: false, error: "尺寸不合法（画布宽高与素材宽高都要是正数）" };
+  }
+  const key = String(anchor || "mc");
+  if (ANCHORS.indexOf(key) < 0) {
+    return { ok: false, error: "未知锚点：" + key };
+  }
+  const bcx = base && isFinite(base.cx) ? Number(base.cx) : dW / 2;
+  const bcy = base && isFinite(base.cy) ? Number(base.cy) : dH / 2;
+  // 以默认落点为准，素材左上角现在落在哪
+  const baseLeft = bcx - iW / 2;
+  const baseTop = bcy - iH / 2;
+  // 素材左上角的三条候选位置：贴左 / 居中 / 贴右（上下同理）
+  const cols = { l: 0, c: (dW - iW) / 2, r: dW - iW };
+  const rows = { t: 0, m: (dH - iH) / 2, b: dH - iH };
+  const x = cols[key[1]];
+  const y = rows[key[0]];
+  // 素材比画布大时，上面三条候选会得到负值 —— 那是**正常**的（居中就该两边都溢出），
+  // 不做特判：公式本身在这个情形下依然是对的意思（贴左就是把左边缘对齐画布左边缘）。
+  return {
+    ok: true,
+    x: Math.round(x),
+    y: Math.round(y),
+    offsetX: Math.round(x - baseLeft),
+    offsetY: Math.round(y - baseTop),
+    base: {
+      cx: Math.round(bcx),
+      cy: Math.round(bcy),
+      left: Math.round(baseLeft),
+      top: Math.round(baseTop),
+    },
+  };
+}
+
+/**
+ * 建一个**矩形选区**（v0.3.0）。
+ * ⚠️ 写法是**真机试出来的**：2026-10-11 自检 S24 在同一台机器上试了四种：
+ *     · `DOM.selection.select([[x1,y1],[x2,y2]])`   ✗ 失败
+ *     · `DOM.selection.select([x1,y1,x2,y2])`       ✗ 失败
+ *     · `DOM.selection.selectAll()`                 ✗ 失败（saveDocumentSelection may modify…）
+ *     · **`setd` + `Chnl/fsel` + `Rctn` 描述符**     ✅ **成功**（S24 建出 120,140,320,300）
+ *   同一件事在 **ExtendScript** 上是**反过来的**（`selectAll` 行、区域写法全不行）——
+ *   两条 DOM 的可用性不能互相推断，这也是当时坚持要单独测一遍的原因。
+ * @param {{left:number,top:number,right:number,bottom:number}} rect
+ */
+async function setSelectionRect(rect) {
+  if (!rect || ![rect.left, rect.top, rect.right, rect.bottom].every((n) => isFinite(Number(n)))) {
+    return { ok: false, error: "rect 不合法（要四个数字）" };
+  }
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+  try {
+    await runModal(async () => {
+      await batchPlay([
+        {
+          _obj: "set",
+          _target: [{ _property: "selection", _ref: "channel" }],
+          to: {
+            _obj: "rectangle",
+            top: { _unit: "pixelsUnit", _value: Number(rect.top) },
+            left: { _unit: "pixelsUnit", _value: Number(rect.left) },
+            bottom: { _unit: "pixelsUnit", _value: Number(rect.bottom) },
+            right: { _unit: "pixelsUnit", _value: Number(rect.right) },
+          },
+          _options: { dialogOptions: "dontDisplay" },
+        },
+      ], {});
+    }, "Vellum 工具箱：建立选区");
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+  const got = readSelectionBounds();
+  return { ok: !!got, sel: got, error: got ? null : "命令执行了但读不回选区 bounds" };
+}
+
+/** 置入后读回活动图层的 bounds（用来**校验落点真的生效了**，不是"命令没报错"）。 */function readActiveLayerBounds() {
+  try {
+    const d = app.activeDocument;
+    const l = d && d.activeLayers && d.activeLayers[0];
+    if (!l || !l.bounds) return { ok: false, error: "拿不到活动图层的 bounds" };
+    const b = l.bounds;
+    const num = (v) => (v && typeof v === "object" && "_value" in v ? v._value : v);
+    const out = {
+      left: Number(num(b.left)),
+      top: Number(num(b.top)),
+      right: Number(num(b.right)),
+      bottom: Number(num(b.bottom)),
+    };
+    if (![out.left, out.top, out.right, out.bottom].every((n) => isFinite(n))) {
+      return { ok: false, error: "bounds 不是四个数字：" + JSON.stringify(b) };
+    }
+    return { ok: true, bounds: out, layer: { id: l.id, name: l.name } };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
+function placeDesc(pathOrToken, offset) {
   return {
     _obj: "placeEvent",
     null: { _path: String(pathOrToken), _kind: "local" },
     freeTransformCenterState: { _enum: "quadCenterState", _value: "QCSAverage" },
     offset: {
       _obj: "offset",
-      horizontal: { _unit: "pixelsUnit", _value: 0 },
-      vertical: { _unit: "pixelsUnit", _value: 0 },
+      horizontal: { _unit: "pixelsUnit", _value: offset && isFinite(offset.x) ? Number(offset.x) : 0 },
+      vertical: { _unit: "pixelsUnit", _value: offset && isFinite(offset.y) ? Number(offset.y) : 0 },
     },
     _options: { dialogOptions: "dontDisplay" },
   };
@@ -1079,9 +1293,15 @@ async function placeFile(source, opts) {
   const before = docInfo() || {};
   const layersBefore = countLayers();
 
+  // v0.3.0：「九宫格落点」—— opts.offset 给出相对"画布居中"的像素位移（见本文件「落点」一节）
+  const wantOffset =
+    o.offset && (isFinite(o.offset.x) || isFinite(o.offset.y))
+      ? { x: Number(o.offset.x) || 0, y: Number(o.offset.y) || 0 }
+      : null;
+
   try {
     await runModal(async () => {
-      await batchPlay([placeDesc(tok.token)], {});
+      await batchPlay([placeDesc(tok.token, wantOffset)], {});
     }, "Vellum 工具箱：置入素材");
   } catch (e) {
     return {
@@ -1094,6 +1314,33 @@ async function placeFile(source, opts) {
   const layersAfter = countLayers();
   const changed = layersBefore >= 0 && layersAfter >= 0 && layersAfter > layersBefore;
 
+  // 落点校验：读回真实 bounds。**判据是"落在期望矩形上"**，不是"命令没报错"。
+  // （offset 只管位置不管尺寸 ⇒ 期望宽高就用素材自身宽高，不做缩放假设）
+  const rb = readActiveLayerBounds();
+  let hitRect = null;
+  if (rb.ok) {
+    const b = rb.bounds;
+    const actualW = Math.round(b.right - b.left);
+    const actualH = Math.round(b.bottom - b.top);
+    hitRect = {
+      bounds: b,
+      w: actualW,
+      h: actualH,
+      left: Math.round(b.left),
+      top: Math.round(b.top),
+    };
+    if (o.expectRect) {
+      const e = o.expectRect;
+      // 允许 1px 的抗锯齿/取整误差
+      hitRect.hit =
+        Math.abs(b.left - e.left) <= 1 &&
+        Math.abs(b.top - e.top) <= 1 &&
+        Math.abs(b.right - e.right) <= 1 &&
+        Math.abs(b.bottom - e.bottom) <= 1;
+      hitRect.expectRect = e;
+    }
+  }
+
   return {
     ok: mode === "none" ? true : changed || layersAfter < 0, // 读不到图层数时不判死
     file: label,
@@ -1105,6 +1352,10 @@ async function placeFile(source, opts) {
     token: tok.token.slice(0, 18) + "…",
     layer: after.layer || null,
     docName: after.docName || null,
+    docW: after.docW,
+    docH: after.docH,
+    requestedOffset: wantOffset,
+    rect: hitRect,
   };
 }
 
@@ -1259,6 +1510,15 @@ module.exports = {
   sessionTokenFor,
   canEntryFromUrl,
   countLayers,
+  /* v0.3.0 新增：九宫格落点 + 落点校验 */
+  ANCHORS,
+  ANCHOR_LABELS,
+  anchorLabel,
+  anchorOffset,
+  readActiveLayerBounds,
+  readSelectionBounds,
+  placeBaseCenter,
+  setSelectionRect,
   RASTER_KINDS,
   CONTENT_KINDS,
   KIND_CN,

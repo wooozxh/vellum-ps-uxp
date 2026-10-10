@@ -43,6 +43,12 @@
  *          缩略图命名空间 `t<b>` → 对插件透明，但**它暴露了本项目一个真实缺陷**：
  *          缩略图缓存键原来用 `asset.id`，而两库 id 各自从 1 起 ⇒ 切库可能串图
  *          —— 已改为按 `asset.thumb` 做键（离线断言 32 钉死）。
+ *   v0.3.0 两个界面需求落地（评估见 docs/25）：
+ *          ① **二层筛选改自绘下拉** —— 原生 `<select>` 外观改不动、Spectrum `sp-picker`
+ *             真机实测未注册 ⇒ 只能自绘；浮层必须落在滚动容器内（S20c 是可测不变量）。
+ *          ② **九宫格落点** —— `placeEvent` 默认落在画布居中，而 `offset` 与位移 **1:1 精确**
+ *             ⇒ 选一个锚点就能把素材贴到画布对应位置，**零新能力**（画布尺寸来自 `docInfo()`、
+ *             素材宽高来自镜像）。⚠️ 它只管位置、不管尺寸。
  *
  * ⚠️ 两条真机硬纪律（改 UI 前必读 index.html 头部注释）
  *   ① SVG 每个子元素都要显式写 fill/stroke（UXP 不做继承）→ 见 lib/icons.js
@@ -72,7 +78,7 @@ const selfcheck = require("./lib/selfcheck.js");
 
 /** ⚠️ 必须与 manifest.json 的 version 一致 —— 两者任一改动都要同步另一处。 */
 const PLUGIN_ID = "com.vellum.toolbox";
-const VERSION = "0.2.9";
+const VERSION = "0.3.0";
 
 let ui = null;
 let homeBinder = null;

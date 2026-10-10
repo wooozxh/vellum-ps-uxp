@@ -1161,6 +1161,90 @@ async function main() {
     mirror.clearThumbs();
   }
 
+  /* ---- 33~36：v0.3.0 的两个界面需求（九宫格落点 + 自绘下拉） ----
+     需求来源：用户要「二级筛选改成下拉控件」+「素材放到画布指定位置」。
+     能力结论见 docs/25（S23 真机实测）；这几条只钉**逻辑与结构**，真机行为由 S20c/S24 负责。 */
+  {
+    const psm = require(path.join(PKG, "lib", "ps.js"));
+
+    /* 33. anchorOffset：九宫格 → placeEvent 的 offset（依据：默认落点=画布居中、offset 与位移 1:1） */
+    const A = {};
+    for (const a of psm.ANCHORS) A[a] = psm.anchorOffset(a, 400, 400, 320, 240);
+    const ok33 =
+      psm.ANCHORS.length === 9 &&
+      A.mc.ok && A.mc.x === 40 && A.mc.y === 80 && A.mc.offsetX === 0 && A.mc.offsetY === 0 &&
+      A.tl.x === 0 && A.tl.y === 0 && A.tl.offsetX === -40 && A.tl.offsetY === -80 &&
+      A.br.x === 80 && A.br.y === 160 && A.br.offsetX === 40 && A.br.offsetY === 80 &&
+      A.tc.offsetX === 0 && A.tc.offsetY === -80 &&
+      A.ml.offsetX === -40 && A.ml.offsetY === 0;
+    check(
+      "33 anchorOffset：九宫格换算（居中=0,0；右上/左下都对；offset 与 bounds 同向）",
+      ok33,
+      "mc=" + A.mc.offsetX + "," + A.mc.offsetY + "（左上角 " + A.mc.x + "," + A.mc.y + "）" +
+        "　tl=" + A.tl.offsetX + "," + A.tl.offsetY +
+        "　br=" + A.br.offsetX + "," + A.br.offsetY +
+        "　tc=" + A.tc.offsetX + "," + A.tc.offsetY +
+        "　ml=" + A.ml.offsetX + "," + A.ml.offsetY
+    );
+
+    /* 34. anchorOffset 的边界：素材比画布大 / 非法输入 —— 不许崩、不许瞎给数 */
+    const big = {};
+    for (const a of ["tl", "mc", "br"]) big[a] = psm.anchorOffset(a, 200, 200, 320, 240);
+    const bad1 = psm.anchorOffset("zz", 400, 400, 320, 240);
+    const bad2 = psm.anchorOffset("mc", 0, 400, 320, 240);
+    const bad3 = psm.anchorOffset("mc", null, 400, 320, 240);
+    check(
+      "34 anchorOffset 边界：素材比画布大时不特判（贴左就是对齐左缘）、非法输入返回 ok:false",
+      big.tl.x === 0 && big.tl.y === 0 && big.tl.offsetX === 60 && big.tl.offsetY === 20 &&
+        big.mc.x === -60 && big.mc.y === -20 && big.mc.offsetX === 0 && big.mc.offsetY === 0 &&
+        big.br.offsetX === -60 && big.br.offsetY === -20 &&
+        bad1.ok === false && bad2.ok === false && bad3.ok === false,
+      "素材>画布：tl x=" + big.tl.x + " offset=" + big.tl.offsetX + "," + big.tl.offsetY +
+        "　mc x=" + big.mc.x + " offset=" + big.mc.offsetX + "," + big.mc.offsetY +
+        "　未知锚点=" + JSON.stringify(bad1.error) +
+        "　零尺寸=" + JSON.stringify(bad2.error)
+    );
+
+    /* 35. placeDesc 的 offset 形状（真机实测过：offset 与位移 1:1 精确） */
+    const d0 = psm.placeDesc("tok");
+    const d1 = psm.placeDesc("tok", { x: 64, y: 48 });
+    const d2 = psm.placeDesc("tok", { x: 10 });
+    check(
+      "35 placeDesc 的 offset：给了就写进去、没给就是 0、半残的也要补成合法描述符",
+      d0.offset.horizontal._value === 0 && d0.offset.vertical._value === 0 &&
+        d1.offset.horizontal._value === 64 && d1.offset.vertical._value === 48 &&
+        d1.offset.horizontal._unit === "pixelsUnit" &&
+        d2.offset.horizontal._value === 10 && d2.offset.vertical._value === 0,
+      "无 offset=" + JSON.stringify(d0.offset) +
+        "　(64,48)=" + JSON.stringify(d1.offset) +
+        "　半残=" + JSON.stringify(d2.offset)
+    );
+  }
+
+  /* ---- 36. 二层筛选是自绘下拉，不许写回原生 <select> / Spectrum（源码级守门） ----
+     依据 docs/25：`<select>` 外观改不动且设值只能走 option.selected；`sp-picker` 真机未注册。
+     这条断言的作用是**防止以后有人"顺手换回原生控件"**（那会同时丢掉可换肤能力与可用性）。 */
+  {
+    const lib = fs.readFileSync(path.join(PKG, "tools", "library.js"), "utf8");
+    const css = fs.readFileSync(path.join(PKG, "index.html"), "utf8");
+    const usesSelect = /createElement\(\s*["']select["']\s*\)/.test(lib);
+    const usesSp = /createElement\(\s*["']sp-/.test(lib);
+    const popBlock = (/\.fsel-pop\s*\{[^}]*\}/.exec(css) || [""])[0];
+    const wrapBlock = (/\.fsel-wrap\s*\{[^}]*\}/.exec(css) || [""])[0];
+    check(
+      "36 二层筛选：自绘下拉（不碰原生 select / Spectrum），且浮层带 max-height+overflow 与 relative 定位",
+      !usesSelect && !usesSp &&
+        popBlock.indexOf("max-height") >= 0 &&
+        popBlock.indexOf("overflow-y") >= 0 &&
+        popBlock.indexOf("position: absolute") >= 0 &&
+        wrapBlock.indexOf("position: relative") >= 0,
+      "用原生 select=" + usesSelect + "　用 sp-*=" + usesSp +
+        "　.fsel-pop 有 max-height+overflow=" +
+        (popBlock.indexOf("max-height") >= 0 && popBlock.indexOf("overflow-y") >= 0) +
+        "　.fsel-wrap relative=" + (wrapBlock.indexOf("position: relative") >= 0)
+    );
+  }
+
   /* ---- 生成浏览器预览（用的是同一份渲染代码产出的 DOM） ---- */
   let previewPath = null;
   if (WANT_PREVIEW) {

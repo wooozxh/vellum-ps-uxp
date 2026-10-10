@@ -959,6 +959,149 @@
         font-size: 10px;
       }
 
+      /* ── 二层筛选：自绘下拉（v0.3.0）
+         为什么自绘：原生 <select> 外观改不动（与"样式沿用现有风格"冲突），
+         而 Spectrum sp-picker 真机实测未注册 ⇒ 不可用。见 docs/25。 */
+      .fsel-wrap {
+        position: relative;
+        display: inline-block;
+        margin: 0 6px 4px 0;
+      }
+
+      .fsel {
+        display: inline-block;
+        height: 22px;
+        line-height: 20px;
+        padding: 0 6px 0 8px;
+        border-radius: 3px;
+        border: 1px solid var(--vt-line);
+        background: var(--vt-surf);
+        color: var(--vt-tx);
+        font-size: 11px;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      .fsel:hover {
+        border-color: var(--vt-tx4);
+      }
+
+      .fsel.is-on {
+        border-color: var(--vt-ac);
+      }
+
+      .fsel .fs-n {
+        margin-left: 5px;
+        opacity: 0.7;
+      }
+
+      .fsel .fs-cv {
+        margin-left: 6px;
+        font-size: 10px;
+        color: var(--vt-tx3);
+      }
+
+      /* 展开的列表。
+         ⚠️ 两条硬约束：
+           ① 与触发条之间留 6px 间隙、且**不覆盖触发条本身**（覆盖会让指针一进入浮层，
+              触发条就"失焦"，若隐藏逻辑再绑 hover 就是振荡回路 —— 调色板那次的教训）；
+           ② **必须落在滚动容器 `.scroll` 之内** —— 它有 overflow-y:auto，越界会被裁掉。
+              这条在自检 S20c 里是**可测不变量**。 */
+      .fsel-pop {
+        display: none;
+        position: absolute;
+        left: 0;
+        top: 100%;
+        margin-top: 6px;
+        min-width: 100%;
+        max-height: 168px;
+        overflow-y: auto;
+        z-index: 30;
+        padding: 3px;
+        border: 1px solid var(--vt-line);
+        border-radius: 3px;
+        background: var(--vt-surf);
+      }
+
+      .fsel-wrap.is-open .fsel-pop {
+        display: block;
+      }
+
+      .fopt {
+        display: flex;
+        align-items: center;
+        padding: 3px 7px;
+        border-radius: 2px;
+        font-size: 11px;
+        color: var(--vt-tx2);
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      .fopt:hover {
+        background: var(--vt-surf2);
+        color: var(--vt-tx);
+      }
+
+      .fopt.is-on {
+        color: var(--vt-tx);
+      }
+
+      .fopt .fo-t {
+        flex: 1 1 auto;
+      }
+
+      .fopt .fo-n {
+        flex: 0 0 auto;
+        margin-left: 12px;
+        font-size: 10px;
+        opacity: 0.65;
+      }
+
+      /* ── 落点：九宫格（v0.3.0）—— 3×3 用 flex-wrap + 百分比（不用 Grid、不用 gap） */
+      .anchor-wrap {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-left: 10px;
+      }
+
+      .anchors {
+        display: flex;
+        flex-wrap: wrap;
+        width: 96px;
+        margin-right: 8px;
+      }
+
+      .anchor-cell {
+        width: 33.3333%;
+        height: 22px;
+        padding: 3px;
+        cursor: pointer;
+      }
+
+      .anchor-dot {
+        display: block;
+        width: 100%;
+        height: 100%;
+        border-radius: 2px;
+        border: 1px solid var(--vt-line2);
+        background: transparent;
+      }
+
+      .anchor-cell:hover .anchor-dot {
+        border-color: var(--vt-tx4);
+      }
+
+      .anchor-cell.is-on .anchor-dot {
+        background: var(--vt-ac);
+        border-color: var(--vt-ac);
+      }
+
+      .anchor-wrap .lf-note {
+        margin-left: 0;
+      }
+
       .fchip:hover {
         border-color: var(--vt-tx4);
         color: var(--vt-tx);

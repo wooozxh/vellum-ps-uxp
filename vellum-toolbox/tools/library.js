@@ -109,6 +109,70 @@ function fmtTime(s) {
   return m ? m[1] + " " + m[2] : t || "-";
 }
 
+/** node 是否在 el 之内（走 parentNode，不用 `contains` —— UXP 上更稳）。 */
+function insideNode(node, el) {
+  let n = node;
+  while (n) {
+    if (n === el) return true;
+    n = n.parentNode;
+  }
+  return false;
+}
+
+/**
+ * 当前落点锚点能不能算出目标位置（v0.3.0）。
+ * 依赖三个数：画布宽高（`docInfo()`）+ 素材宽高（镜像契约 §5.4 必填）。
+ * 缺任何一个就**如实说缺什么**，而不是退回静默居中 —— 否则用户会以为落点生效了。
+ */
+  // ⚠️ 有选区时 `placeEvent` 的默认落点是**选区中心**（不是画布中心）——
+  // 所以基准必须由 `placeBaseCenter()` 给，绝不能自己假设画布中心。
+function anchorInfo(a) {
+  const info = ps.docInfo() || {};
+  const dW = info.docW;
+  const dH = info.docH;
+  if (!(dW > 0) || !(dH > 0) || !(a && a.width > 0) || !(a && a.height > 0)) {
+    const why = !ps.hasDocument()
+      ? "没有打开的文档"
+      : "缺尺寸（画布 " + (dW || "?") + "×" + (dH || "?") +
+        " / 素材 " + ((a && a.width) || "?") + "×" + ((a && a.height) || "?") + "）→ 只能居中";
+    return { ok: false, note: why };
+  }
+  const base = ps.placeBaseCenter();
+  const r = ps.anchorOffset(S.anchor, dW, dH, a.width, a.height, base.ok ? base : null);
+  if (!r.ok) return { ok: false, note: r.error + "→ 只能居中" };
+  return {
+    ok: true,
+    off: r,
+    docW: dW,
+    docH: dH,
+    base: base,
+    note:
+      ps.anchorLabel(S.anchor) + " · 画布 " + dW + "×" + dH +
+      // ⚠️ 这是 S24/S25 真机测出来的事实，必须让用户看见：
+      //    有选区时置入的默认落点是**选区中心**，而且**这次置入会把选区吃掉**
+      //    （实测「置入后选区=无」）—— 所以"框哪儿放哪儿"是**每次插入前框一次**。
+      (base.ok && base.from === "selection"
+        ? " · 基准=选区中心（本次置入后选区会被取消，下次要重新框）"
+        : "") +
+      " → 左上角 " + r.x + "," + r.y,
+    rect: {
+      left: r.x,
+      top: r.y,
+      right: r.x + Number(a.width),
+      bottom: r.y + Number(a.height),
+    },
+  };
+}
+
+/** 记住"上次看哪个库 / 上次选的落点"。 */
+async function savePref() {
+  try {
+    await store.writeJson(PREF_FILE, { tab: S && S.tabId, anchor: S && S.anchor });
+  } catch {
+    /* 记不住就记不住，不影响使用 */
+  }
+}
+
 /* --------------------------------------------------------------- 构建 */
 
 function build() {
@@ -149,6 +213,19 @@ function build() {
   wrap.appendChild(refs.foot);
 
   binder.on(refresh, "click", () => manualRefresh());
+
+  // 浮层（二层下拉）关闭：由**容器根节点正着判**"这次点击还在不在那个组件内"。
+  // ⚠️ 不要绑被覆盖元素的 mouseout —— 子元素会成对触发，且一旦算错就是"关了又开"的振荡回路
+  //    （调色板悬停闪烁就是这么来的）。这里是**点击驱动**，本来也不依赖 hover。
+  binder.on(wrap, "click", (ev) => {
+    if (!S || !S.subOpen) return;
+    const w = dom.$("vt-lib-subwrap");
+    if (w && insideNode(ev && ev.target, w)) return; // 点在自己身上 → 交给各自的处理器
+    S.subOpen = false;
+    if (w && w.classList) w.classList.remove("is-open");
+    const trig = dom.$("vt-lib-subsel");
+    if (trig && trig.setAttribute) trig.setAttribute("aria-expanded", "false");
+  });
 
   return wrap;
 }
@@ -224,13 +301,13 @@ function groupsSig() {
     .join("|");
 }
 
-/** 画一行筛选 chips。`label` 为空则不画前缀；`cls` 为 `mid`（缩进，子组）/ `src`（来源）。 */
+/** 画一行筛选 chips。`label` 为空则不画前缀；`cls` 为 `src`（来源行）。 */
 function makeFrow(label, chips, cls, onPick) {
   const row = dom.el("div", { class: "frow" + (cls ? " " + cls : "") });
   if (label) row.appendChild(dom.el("span", { class: "frow-lb" }, [label]));
   for (const c of chips) {
     const chip = dom.el("div", {
-      class: "fchip" + (cls === "mid" ? " sub" : "") + (c.on ? " is-on" : ""),
+      class: "fchip" + (c.on ? " is-on" : ""),
       role: "button",
       tabindex: "0",
       "data-key": c.key,
@@ -287,16 +364,83 @@ function renderFilters() {
     );
   }
 
-  /* ② 子组（契约 §5.3 加法 ③ 的两层分组） */
+  /* ② 子组（契约 §5.3 加法 ③ 的两层分组）—— **自绘下拉**
+     ════════════════════════════════════════════════════════════════════
+     为什么自绘（2026-10-11 自检 S23 真机实测，结论在 docs/25）：
+       · 原生 `<select>` 外观**改不动**，与"样式沿用现有风格"直接冲突；
+         而且它设选中态只能走 `option.selected`（`setAttribute("value")` 后 `.value` = "undefined"）；
+       · Spectrum `sp-picker` **不可用** —— 与伪造标签名的三项读数逐项相同（未注册）。
+     纪律（沿用调色板那次的四条）：
+       · **浮层不覆盖触发条**：纵向放在触发条**下方 + 6px 间隙**；
+       · 关层由**容器根节点正着判**"点击还在不在这个组件内"，**不绑被覆盖元素的 mouseout**
+         （那会造成成对触发 → 算错 → 振荡回路）；
+       · 展开状态**幂等**（只切 class，不重建整行）；
+       · ⚠️ 浮层**必须落在滚动容器 `.scroll` 之内** —— 它有 `overflow-y:auto`，越界会被裁掉。
+         这条在自检 S20c 里是**可测不变量**。 */
   if (kids.length) {
-    const chips = [{ key: "", label: "全部", n: activeNode ? activeNode.count : 0, on: !S.sub }];
-    for (const k of kids) chips.push({ key: k.name, label: k.name, n: k.count, on: S.sub === k.name });
-    refs.bar.appendChild(
-      makeFrow("", chips, "mid", (k) => {
-        S.sub = k;
-        refreshAfterFilter();
-      })
+    const total = activeNode ? activeNode.count : 0;
+    const cur = S.sub || "";
+    let curN = total;
+    for (const k of kids) if (k.name === cur) curN = k.count;
+
+    const row = dom.el("div", { class: "frow mid" });
+    const wrap = dom.el("div", {
+      class: "fsel-wrap" + (S.subOpen ? " is-open" : ""),
+      id: "vt-lib-subwrap",
+    });
+
+    const trig = dom.el("div", {
+      class: "fsel" + (cur ? " is-on" : ""),
+      id: "vt-lib-subsel",
+      role: "button",
+      tabindex: "0",
+      "data-role": "subtrigger",
+      "aria-expanded": S.subOpen ? "true" : "false",
+      title: "选择「" + (activeTop || "") + "」下的子类",
+    });
+    trig.appendChild(dom.el("span", { class: "fs-t" }, [cur || "全部子类"]));
+    trig.appendChild(dom.el("span", { class: "fs-n mono" }, [String(cur ? curN : total)]));
+    trig.appendChild(dom.el("span", { class: "fs-cv" }, ["▾"]));
+    wrap.appendChild(trig);
+
+    const pop = dom.el("div", { class: "fsel-pop", id: "vt-lib-subpop" });
+    const opts = [{ key: "", label: "全部子类", n: total }].concat(
+      kids.map((k) => ({ key: k.name, label: k.name, n: k.count }))
     );
+    for (const o of opts) {
+      const it = dom.el("div", {
+        class: "fopt" + (o.key === cur ? " is-on" : ""),
+        role: "button",
+        tabindex: "0",
+        // ⚠️ 用 `data-opt` 而不是 `data-key`：`data-key` 是**筛选 chip** 的标识，
+        //    自检按它找 chip；下拉选项混进来会让"找 chip"变得有歧义。
+        "data-opt": o.key,
+        "data-role": "subopt",
+        title: o.key ? "只看「" + o.label + "」" : "这个父组下全部",
+      });
+      it.appendChild(dom.el("span", { class: "fo-t" }, [o.label]));
+      it.appendChild(dom.el("span", { class: "fo-n mono" }, [String(o.n)]));
+      binder.on(it, "click", () => {
+        S.sub = o.key;
+        S.subOpen = false;
+        refreshAfterFilter();
+      });
+      pop.appendChild(it);
+    }
+    wrap.appendChild(pop);
+
+    binder.on(trig, "click", () => {
+      S.subOpen = !S.subOpen;
+      const w = dom.$("vt-lib-subwrap");
+      if (w && w.classList) {
+        if (S.subOpen) w.classList.add("is-open");
+        else w.classList.remove("is-open");
+      }
+      if (trig.setAttribute) trig.setAttribute("aria-expanded", S.subOpen ? "true" : "false");
+    });
+
+    row.appendChild(wrap);
+    refs.bar.appendChild(row);
   }
 
   /* ③ 来源（契约 §5.4 加法 ② 的可选 asset.source） */
@@ -324,15 +468,22 @@ function pruneFilters() {
     S.group = "";
     S.sub = "";
   }
+  // ⚠️ `kids` 必须在外层声明：下面"没有子组就收起下拉"要用到它
+  //    （上一版把它写在 if 块里的 const，块外引用会直接 ReferenceError）
+  let kids = [];
   if (S.group) {
     let node = null;
     for (const t of tree) if (t.name === S.group) node = t;
-    const kids = node ? node.children.map((c) => c.name) : [];
+    kids = node ? node.children.map((c) => c.name) : [];
     if (S.sub && kids.indexOf(S.sub) < 0) S.sub = "";
     if (!kids.length) S.sub = "";
   } else {
     S.sub = "";
   }
+  // 没有子组了：下拉必须**收起**，而且展开态也要一起清掉。
+  // ⚠️ 只清 DOM 上的 class 不够 —— 展开态存在 `S.subOpen` 里，
+  //    留着 true 会让**下一次**渲染出来的下拉一上来就是打开的。
+  if (!kids.length) S.subOpen = false;
   if (S.source) {
     const vals = mirror.sourceSummary(itemsInGroup()).map((s) => s.value);
     if (vals.indexOf(S.source) < 0) S.source = "";
@@ -526,6 +677,41 @@ function renderFoot() {
   btn.appendChild(dom.el("span", {}, ["置入到画布"]));
   binder.on(btn, "click", () => doInsert());
   act.appendChild(btn);
+
+  /* 落点：九宫格（v0.3.0）
+     ════════════════════════════════════════════════════════════════════
+     依据（2026-10-11 MCP 真机实测）：`placeEvent` 默认落在**画布居中且不缩放**，
+     而 `offset` 与图层位移 **1:1 精确** ⇒ 选一个锚点就能把素材贴到画布对应位置。
+     **零新能力**：画布宽高来自 `docInfo()`、素材宽高来自镜像（契约 §5.4 必填）。
+     ⚠️ 它只管**位置**，不管尺寸（素材不会被缩放）。 */
+  const ai = anchorInfo(a);
+  const anchorWrap = dom.el("div", { class: "anchor-wrap" });
+  anchorWrap.appendChild(dom.el("span", { class: "lf-note" }, ["落点"]));
+  const agrid = dom.el("div", { class: "anchors", id: "vt-lib-anchors" });
+  for (const an of ps.ANCHORS) {
+    const on = S.anchor === an;
+    const cell = dom.el("div", {
+      class: "anchor-cell" + (on ? " is-on" : ""),
+      role: "button",
+      tabindex: "0",
+      "data-anchor": an,
+      title: "置入到「" + ps.anchorLabel(an) + "」",
+    });
+    cell.appendChild(dom.el("span", { class: "anchor-dot" }));
+    binder.on(cell, "click", () => {
+      S.anchor = an;
+      renderFoot();
+      status("落点：[" + ps.anchorLabel(an) + "] " + anchorInfo(a).note);
+      savePref();
+    });
+    agrid.appendChild(cell);
+  }
+  anchorWrap.appendChild(agrid);
+  anchorWrap.appendChild(
+    dom.el("span", { class: "lf-note" + (ai.ok ? " mono" : "") }, [ai.note])
+  );
+  act.appendChild(anchorWrap);
+
   act.appendChild(
     dom.el("span", { class: "lf-note" }, [
       a.missing ? "原文件已丢失，无法置入" : plan.note,
@@ -704,6 +890,7 @@ async function switchScope(id) {
     S.tabId = id;
     S.group = "";
     S.sub = "";
+    S.subOpen = false;
     S.source = "";
     S.selected = null;
     const sc = scopeById(id);
@@ -712,11 +899,7 @@ async function switchScope(id) {
     renderFoot();
     loadToken++; // 作废在途的缩略图加载
     await loadScope("switch");
-    try {
-      await store.writeJson(PREF_FILE, { tab: id });
-    } catch {
-      /* 记不住就记不住，不影响使用 */
-    }
+    await savePref();
   } catch (e) {
     const m = (e && e.message) || String(e);
     status("✗ 切库失败：" + m);
@@ -823,21 +1006,36 @@ async function doInsert() {
       return { ok: false, reason: "incoming", error: inc.error };
     }
 
-    /* ---- ④ 置入 ---- */
-    const placed = await ps.placeFile(inc.entry, { verify: "change" });
+    /* ---- ④ 置入（带上"落点锚点"算出来的 offset） ---- */
+    const ai = anchorInfo(a);
+    const placed = await ps.placeFile(inc.entry, {
+      verify: "change",
+      offset: ai.ok ? { x: ai.off.offsetX, y: ai.off.offsetY } : null,
+      expectRect: ai.ok ? ai.rect : null,
+    });
     await log.appendLog(
       "library insert via=placeEvent ok=" + placed.ok + " changed=" + placed.changed +
       " layers=" + placed.layersBefore + "→" + placed.layersAfter +
       " bytes=" + inc.byteLength + " file=" + JSON.stringify(placed.file || inc.name) +
+      " anchor=" + S.anchor +
+      (ai.ok ? " off=" + ai.off.offsetX + "," + ai.off.offsetY +
+        " expect=" + ai.rect.left + "," + ai.rect.top + "," + ai.rect.right + "," + ai.rect.bottom : " off=-") +
+      (placed.rect ? " landed=" + placed.rect.left + "," + placed.rect.top + "," +
+        (placed.rect.left + placed.rect.w) + "," + (placed.rect.top + placed.rect.h) +
+        " hit=" + (placed.rect.hit === undefined ? "-" : placed.rect.hit) : "") +
       (placed.token ? " token=" + placed.token : "") +
       (placed.error ? " err=" + placed.error : "")
     );
     if (placed.ok && placed.changed) {
       status(
-        "✓ 已置入「" + a.name + "」（经 VellumDesk 取图 " + fmtSize(inc.byteLength) +
-        "，新图层" + (placed.layer && placed.layer.name ? "「" + placed.layer.name + "」" : "") +
+        "✓ 已置入「" + a.name + "」· 落点[" + ps.anchorLabel(S.anchor) + "]" +
+        (placed.rect
+          ? "　实际 " + placed.rect.left + "," + placed.rect.top +
+            "（" + placed.rect.w + "×" + placed.rect.h + "）" +
+            (placed.rect.hit === true ? " 命中 ✓" : placed.rect.hit === false ? " ⚠️ 与期望不符" : "")
+          : "") +
         "　图层数 " + placed.layersBefore + " → " + placed.layersAfter +
-        "　" + (Date.now() - t0) + "ms）"
+        "　" + (Date.now() - t0) + "ms"
       );
       return placed;
     }
@@ -862,9 +1060,14 @@ async function mount(container, context) {
   loadToken++;
 
   let want = null;
+  let wantAnchor = "mc";
   try {
     const pref = await store.readJson(PREF_FILE, null);
     want = pref && pref.tab ? String(pref.tab) : null;
+    // 落点锚点也记住（缺省居中；非法值一律回落到 mc，别信磁盘上的旧值）
+    if (pref && pref.anchor && ps.ANCHORS.indexOf(String(pref.anchor)) >= 0) {
+      wantAnchor = String(pref.anchor);
+    }
   } catch {
     want = null;
   }
@@ -883,7 +1086,9 @@ async function mount(container, context) {
     items: [],
     group: "",
     sub: "",
+    subOpen: false,
     source: "",
+    anchor: wantAnchor,
     selected: null,
     busy: false,
     watcher: null,
