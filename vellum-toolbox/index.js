@@ -61,7 +61,7 @@ const selfcheck = require("./lib/selfcheck.js");
 
 /** ⚠️ 必须与 manifest.json 的 version 一致 —— 两者任一改动都要同步另一处。 */
 const PLUGIN_ID = "com.vellum.toolbox";
-const VERSION = "0.2.4";
+const VERSION = "0.2.5";
 
 let ui = null;
 let homeBinder = null;

@@ -891,3 +891,31 @@
 - **未自证**：PS 2026 **没有随装 ScriptListener**（`Required/Plug-ins/Extensions/`
   只有 `ScriptingSupport.8li`），所以"录制"这条路本机还没实际走通过 ——
   但它现在是**可走**的（MCP 已通）。**「纯色填充图层」改色就是卡在这上面，仍未解决。**
+
+---
+
+## 决策：M2 镜像的缩略图**必须用 png/jpg，不能用 webp**（2026-10-10，自检 S19 实测）
+
+- **背景**：`docs/10` §10.6 原设计是「缩略图**直接复用 VellumDesk 的 `_thumbs`（webp），
+  不重新生成**」—— 前提是插件能渲染 webp。
+- **实测（S19，真机）**：把 `ArrayBuffer` 渲染进**可见**容器的 `<img>`，
+  判据用 `naturalWidth` 等于**预期尺寸**（不是只比 `>0`）：
+  ```
+  webp-alpha (VP8X 带 alpha, 155×320)    dataURL ✗  blobURL ✗
+  webp-plain (VP8 有损无 alpha, 78×160)   dataURL ✗  blobURL ✗
+  png        (64×48)                     dataURL ✓  blobURL ✓
+  jpg        (64×48)                     dataURL ✓  blobURL ✓
+  ```
+  两种 webp 编码变体、两条 URL 路**全失败**；同一个容器里 PNG/JPEG **立刻成功**。
+- **结论**：**UXP 的 `<img>` 不解码 webp** —— 平台约束，不是用法问题。
+- **决定**
+  1. **镜像里的缩略图一律用 png 或 jpg**；带透明用 **PNG**（实测 `_thumbs` 的缩略图确实带
+     alpha，`f1.webp` 是 VP8X flags=0x10），无透明可用 **JPEG**（省体积）。
+  2. **`_thumbs` 本身不动** —— 它是 VellumDesk 自用的缓存（它自己渲染支持 webp）。
+     转码只发生在**写镜像那一步**。
+  3. `docs/10` §10.6 的体积预算（webp 4.2 KB/张 → 3000 张 23.4 MB）**作废，需重算**。
+- **同时确立的方法学纪律（第五条"工具骗人"）**：**多嫌疑并存时，先造一个"必定成功"的
+  基准把变量分开。** 首版探针同时有「格式」与「容器可见度」两个嫌疑，且只测了 webp ——
+  "渲染失败"**无法归因**；补上 PNG 基准后才发现 png 成功，于是容器嫌疑被排除。
+  ⇒ **没有基准的失败实验，等于没做实验。**
+- **未自证**：PNG/JPEG 的**真实体积量级**未测（本机无现成 jpg，PS 导的那张是纯色、不具代表性）。

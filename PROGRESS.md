@@ -808,3 +808,47 @@
   - ⏳ 文字的**选区语义**：整层属性，不按选区裁剪（面板会明说）
   - ⏳ 文字的**层内混排**（不同片段不同色）未做（需 `textStyleRange` 的 from/to 区间）
   - ⏳ **未测**：中文文字、段落文字、多字体混排、带图层样式/变形的文字
+
+---
+
+## 2026-10-10　M2 素材库开工第一步 —— 地基探针 S19（第 14 次会话）
+
+- **用户原话**：「成功！接下来做什么？」→ 选定「开下一屏功能」→ 按里程碑进 **M2 素材库**
+- **先探地基，不先写 UI**：`docs/10` §10.5 把路线 ②（镜像单写）押在一个**尚未单独实测**
+  的环上 ——「插件读自身 PluginData 的图片文件并渲染」。它不成立，整条路线都要改。
+- **做法**：在 PluginData 下造**假镜像**（真数据取自 `D:/vellum_workspace/_thumbs` 的
+  webp + 手写 `manifest.json`），加真机自检 **S19** 读它、渲染它。
+- **结果（S19 PASS，但内含一条平台约束）**
+  - ✅ 清单读得出 + JSON.parse（2 条项目文件 / 1 条品牌）
+  - ✅ 二进制读到 **4814B（与磁盘一致）**、文件头魔数 **`RIFF`**
+    （= 拿到的是真二进制；不传 `format` 会按文本解码 —— 只比"有没有内容"会被骗过去）
+  - 🔴 **渲染：webp 全败、png/jpg 全成**
+    ```
+    webp-alpha (VP8X 带 alpha)    dataURL ✗  blobURL ✗
+    webp-plain (VP8 有损无 alpha)  dataURL ✗  blobURL ✗
+    png                           dataURL ✓  blobURL ✓
+    jpg                           dataURL ✓  blobURL ✓
+    ```
+- **结论：UXP 的 `<img>` 不解码 webp（平台约束）** ⇒ `docs/10` §10.6
+  「缩略图直接复用 `_thumbs`（webp），不重新生成」**被推翻**。
+  ⇒ 修正：**`_thumbs` 不动**（VellumDesk 自用，它自己渲染支持 webp），
+  **只在写镜像那一步转码成 png/jpg**。带透明 → PNG；无透明 → JPEG。
+  ⇒ `docs/10` §10.6 的体积预算（webp 4.2 KB/张 → 3000 张 23.4 MB）**要重算**。
+- **方法学教训（第五次踩这类坑，已存进档案）**：**多嫌疑并存时，先造一个"必定成功"的
+  基准把变量分开。** 首版探针只测 webp、容器用 `opacity:0.02` —— 两个嫌疑（格式 / 可见度）
+  同时存在，"渲染失败"根本无法归因；第二版补上 **PNG 基准**才发现 png 是成功的，
+  于是"容器不透明"被排除，只剩格式。**否则会把平台约束误判成自己的 bug，或反之。**
+- **顺带拿到的事实**
+  - `getDataFolder()` → `getEntry` 逐级进子目录 → `read({format: formats.binary})` → ArrayBuffer
+    **整条链可用**（`lib/data.js` 新增 `subfolder` / `readTextIn` / `readBinaryIn`）
+  - `ArrayBuffer → data URL` 与 `→ Blob → objectURL` **两条路都通**（体积上 blobURL 更省 33%）
+  - 容器**必须可见**：`display:none` 里 UXP 不加载图片（表现为"超时"，§10.2 已知）
+  - `_thumbs` 的真实缩略图**带 alpha**（f1 是 VP8X flags=0x10）⇒ JPEG 会丢透明，**PNG 是保底解**
+- **新增/改动文件**：`lib/data.js`（+3 函数）、`lib/selfcheck.js`（+S19）、
+  `index.js` / `manifest.json`（0.2.5）、`docs/11-素材库联动方案.md`（新建）、
+  `docs/10`（§10.5/§10.6 实测更正）、`docs/README.md`、`DECISIONS.md`、本文件
+- **遗留 / 待办**
+  - ⏳ PNG/JPEG **真实体积量级未实测**（本机工作区无现成 jpg；p2.jpg 是 PS 导的纯色，不具代表性）
+  - ⏳ 插件侧「镜像读取层 + 网格 UI + 插入」未开工
+  - ⏳ **VellumDesk 侧须单独立方案**（写镜像 + 缩略图转码 + 动态定位 PluginData 路径）
+  - ⏳ 假镜像留在 PluginData 里（不进 git），供 M2 开发期继续用
