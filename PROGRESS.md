@@ -1002,3 +1002,51 @@
   - ⏳ 来源筛选只验 `company`/`user` 两种取值
   - ⏳ 老遗留不变：S17（纯色填充图层改色）、品牌 HEX、号位 chip、端到端置入（等软件侧 `res.json`）、
     窄面板适配、`dblclick`、`object-fit` 是否真生效、revision 真变时的自动刷新
+
+---
+
+## 2026-10-11　两个界面需求的可行性评估（第 18 次会话，v0.2.9）
+
+- **用户原话**：「插件中筛选通用库内素材现在用的是 2 层按钮，UI 表现有些臃肿，我觉得可以这样：
+  一层目录（公司素材、我的收藏）仍保持按钮；二层目录在按钮下方设计一个**下拉选择控件**（样式沿用目前风格）。
+  另外，是否可以实现**素材拖动到画布指定位置**？以上两个需求可以先评估一下。」
+- **本轮只评估、不动业务代码**；新增诊断项 **S23**（`lib/selfcheck.js`）把能力问清楚。
+- **外部证据（决定性）**：Adobe Asset Link UXP 官方文档明写「**UXP 框架不支持从面板拖放资产到当前文档，
+  请改用置入副本**」；官方 *Known UXP Issues* 也写「Drag and Drop is not currently supported」。
+  论坛 2026-06 有 Adobe 员工称修复**已合入、待发版** ⇒ 将来可能可用，**本机现在不可用**。
+- **真机实测（S23，PS 27.2.0 / UXP 9.0.2）**
+  - **① 原生 `<select>`：能用，但读值要绕道**
+    `setAttribute("value","festival")` 后 `.value` = **`"undefined"`**（官方 known-issues 的坑，真实存在）；
+    改走 `option[1].selected = true` 后 → `selected=true` / `selectedIndex=1` / `.value="festival"` ✅
+    ⇒ **纪律：设选中态只能用 `option.selected`**。
+  - **② Spectrum `sp-picker` / `sp-dropdown`：不可用**
+    与**伪造标签名** `sp-not-a-real-thing-xyz` 的三项读数**逐项相同**（未注册 / 无 shadowRoot / display=block）；
+    而 `customElements.define/get/whenDefined` **都是 function**（注册表真实存在）⇒ "未注册"是可信读数。
+    ⚠️ **我第一版判错了**：用"设了宽高后几何=120x24"当"渲染出来了"的证据 —— 伪造标签名同样 120x24。
+    （同族错误**第六次**：判据描述的是"看起来像的东西"，不是"我等的那个东西"。）
+  - **③ 标准拖放不可用**：`draggable` 属性会被记住，但 **`DataTransfer = undefined`**
+    ⇒ 拖放**没有数据通道**。与官方两条口径一致。
+  - **④ 鼠标事件有实物基准**（调色板 hover/click/dblclick 在生产里跑着）；
+    `setPointerCapture`/`releasePointerCapture` 都是 function；`on*` 反射属性为 false（**不影响 addEventListener**）。
+- **需求 B 的技术半边 —— 已验到像素级（MCP 真机，临时文档 400×400，素材 320×240）**
+  ```
+  默认(offset 0,0) → 图层 bounds = 40,80,360,320      ⇒ 画布居中、不缩放
+  offset (64,48)   → 图层 bounds = 104,128,424,368    ⇒ Δ 正好 +64/+48，1:1 精确
+  ```
+  ⇒ **`offset` 是像素级精确的定位参数**。插件要"放到 (x,y)"只需
+  `offset = (x − (画布宽−素材宽)/2, y − (画布高−素材高)/2)` —— 画布尺寸来自 `docInfo()`、
+  素材宽高来自镜像 `asset.width/height`（契约 §5.4 必填）⇒ **不需要任何新能力**。
+- **未验（如实标注）**
+  - `<select>` 的**下拉弹层**能否正常打开（要真点击；本轮只验了"能建、能读值"）
+  - **选区当落点**：ExtendScript 侧带区域的 `select()` 五种写法全失败、`deselect()` 也失败，
+    **但基准 `selectAll()` 成功** ⇒ 只能说明"那几种区域写法不行"，**不能**说"选区不可用"；
+    且失败的是 **legacy ExtendScript DOM**，插件走 **UXP/AM 是另一条路** ⇒ 记为**待单独探针（S24）**
+  - 置入后**按目标矩形缩放**（`offset` 只管位置、不管尺寸）
+  - 自绘拖拽的**真鼠标触发**（合成事件不算）
+- **评估建议（详见 `docs/25`）**
+  1. 需求 A → **自绘下拉**（原生 select 样式改不动、sp-picker 实测死掉；自绘的唯一真风险已有纪律：
+     浮层不得覆盖触发条 —— 调色板振荡回路那次）
+  2. 需求 B → 先做**九宫格落点**（零新能力依赖），再做 **(c) 选区落点**（最贴近"指定位置"，但要先验）
+  3. **真拖放不做**，在 docs 里留"等 Adobe 修"的观察点
+- **改动**：`lib/selfcheck.js`（+S23 诊断项）、`index.js` / `manifest.json`（0.2.9）、
+  `docs/25-两个界面需求的可行性评估.md`（新）、`docs/README.md`；ccx 重打

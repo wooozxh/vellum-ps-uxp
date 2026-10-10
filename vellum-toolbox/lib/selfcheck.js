@@ -98,6 +98,16 @@
  *   · S20d 来源筛选 —— 「来源」行只在当前分组内真有 ≥2 种来源时出现；
  *     点它能收窄；切到单一来源的分组后该行**必须消失**（不构成筛选就不画）。
  *
+ *   v0.2.9 新增（诊断项，为两个界面需求做可行性实测）：
+ *   S23 UI 控件与交互能力探针 —— ① 原生 `<select>`/`<option>` ② Spectrum 的
+ *       `sp-picker` / `sp-dropdown` / `sp-menu` ③ HTML5 拖放（`draggable` + `DataTransfer`）
+ *       ④ 指针/鼠标事件与 `setPointerCapture`。
+ *       背景：需求是"二级筛选改成下拉控件"与"素材拖到画布指定位置"，而官方与社区口径打架
+ *       （Spectrum 支持清单里有 Picker，Known Issues 又说 `<select>` 一串怪癖；社区实测
+ *       说 PS 上 sp-dropdown 不按文档工作）。**不猜，量一次。**
+ *       ⚠️ 诚实边界：合成事件只能证明"处理器可达 + API 存在"，
+ *          **证明不了"真鼠标拖拽会产生这些事件"**；`<select>` 的下拉弹层也要真点击才能验。
+ *
  *   版本状态（v0.2.4）：S17 建的「纯色填充图层」改色**仍未解决**（已知限制，非回归），
  *   而**形状图层改色正常**（用户 2026-10-10 真机确认，日志 via=contentColorA）。
  *
@@ -1608,12 +1618,204 @@ async function run(ctx, deps) {
       "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S23: UI 控件与交互能力探针（v0.2.9 新增，**诊断项**） ----------
+     为什么要有它：用户提了两个界面需求 ——
+       ① 通用库的二级筛选从"一排按钮"改成**下拉选择控件**；
+       ② 把素材**拖到画布指定位置**。
+     这两件事都取决于 UXP 到底给不给，而官方与社区说法互相打架：
+       · 官方 Spectrum 支持清单里**有 Picker**（"sometimes known as dropdowns or selects"）；
+       · 官方 Known Issues 又写 HTML `<select>` 有一串怪癖（value 必须写成属性、不显示选中值……）；
+       · 社区实测说 **sp-dropdown 在 PS 上不按文档工作**，反而是 `sp-picker` 要套
+         `sp-dropdown` 的内部结构。
+     ⇒ **不猜，量一次。** 本项只负责给出事实，不判断好坏。
+
+     ⚠️ **诚实边界（必须写清，别让读数被高估）**：
+        合成事件只能证明「**处理器可达 + API 存在**」，
+        **证明不了"真鼠标拖拽会产生这些事件"** —— 那只能由人手动试。
+        同理，"`<select>` 能建出来"≠"它的下拉弹层能正常打开"（弹层要真点击）。
+     ⚠️ 容器必须可见（display:none 里 UXP 不加载/不布局），跑完移除。 */
+  let s23Holder = null;
+  try {
+    const S23 = "S23 UI 控件与交互能力探针（下拉控件 / 拖拽 / 指针事件）";
+    const em = (e) => String((e && e.message) || e);
+    s23Holder = document.createElement("div");
+    s23Holder.style.cssText =
+      "position:fixed;right:0;bottom:0;width:240px;height:44px;opacity:1;" +
+      "pointer-events:none;overflow:hidden;z-index:99998;";
+    document.body.appendChild(s23Holder);
+
+    /** 轮询到拿到非零几何（沿用 cssprobe 的纪律：同步 append 后立刻量得到 0）。 */
+    const laid = async (node) => {
+      const r = await waitFor(() => {
+        const b = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+        return b && (b.width > 0 || b.height > 0) ? b : null;
+      }, 3000, 120);
+      return r ? Math.round(r.width) + "x" + Math.round(r.height) : "0x0";
+    };
+
+    /* ① 原生 <select> / <option> —— 关键是**选中值读不读得到** */
+    let selLine = "未执行";
+    try {
+      const sel = document.createElement("select");
+      for (const pair of [["", "全部"], ["festival", "节日素材"], ["brand", "品牌色"]]) {
+        const o = document.createElement("option");
+        o.setAttribute("value", pair[0]);
+        o.textContent = pair[1];
+        sel.appendChild(o);
+      }
+      sel.style.cssText = "width:120px;height:24px;";
+      s23Holder.appendChild(sel);
+      const box = await laid(sel);
+
+      // 第一轮读数：程序设 setAttribute("value") 后 .value 是 undefined（官方 known-issues 说的坑）
+      sel.setAttribute("value", "festival");
+      const viaAttr = String(sel.value);
+
+      // 第二轮：改走 option.selected 这条路，看能不能把选中态读回来
+      if (sel.options && sel.options[1]) sel.options[1].selected = true;
+      const selfSelected = sel.options && sel.options[1] ? sel.options[1].selected : "n/a";
+      const idxAfter = sel.selectedIndex === undefined ? "undefined" : sel.selectedIndex;
+      const valAfter = String(sel.value);
+      const txtBack = sel.options && sel.options[1] ? String(sel.options[1].textContent) : "n/a";
+
+      selLine =
+        "建出✓ 几何=" + box + "　options=" + (sel.options ? sel.options.length : -1) +
+        "　option[1].textContent=" + JSON.stringify(txtBack) +
+        "　setAttribute(value)后 .value=" + JSON.stringify(viaAttr) +
+        "　设 option.selected 后：selected=" + JSON.stringify(selfSelected) +
+        " / selectedIndex=" + JSON.stringify(idxAfter) +
+        " / .value=" + JSON.stringify(valAfter);
+    } catch (e) {
+      selLine = "✗ " + em(e);
+    }
+
+    /* ② Spectrum 组件 —— 上一版我用"设了宽高之后几何=120x24"当证据，**那是错判据**：
+          把伪造的标签名 `sp-not-a-real-thing-xyz` 放进去，几何同样是 120x24。
+          ⇒ 改用三个**互相独立**的判别，并且拿"一定不存在的标签名"当**基准对照**：
+             (a) `customElements.get()` 是否注册过；
+             (b) `shadowRoot` 是否存在（真自定义元素通常有 shadow 内容）；
+             (c) computed `display`（未注册的自定义元素默认是 `inline`）。
+          ⚠️ 注意 (a) 单独一条也不够：UXP 的渲染器可能把某些标签名**特例处理**
+             而不放进 `customElements` 注册表 —— 所以三条要一起看。 */
+    let spLine = "";
+    try {
+      const probeTag = (tag) => {
+        const n = document.createElement(tag);
+        n.textContent = "样";
+        // 故意**不设宽高** —— 未注册的 inline 元素也会被文字撑出几何，所以几何本身不能当判据
+        s23Holder.appendChild(n);
+        let disp = "?";
+        try {
+          disp = String(getComputedStyle(n).display);
+        } catch (e2) {
+          disp = "取不到";
+        }
+        let regd = "customElements 不可用";
+        try {
+          if (typeof customElements !== "undefined" && customElements.get) {
+            regd = customElements.get(tag) ? "已注册" : "未注册";
+          }
+        } catch (e2) {
+          regd = "查询异常";
+        }
+        let sr = "n/a";
+        try {
+          sr = n.shadowRoot ? "有" : "无";
+        } catch (e2) {
+          sr = "取不到";
+        }
+        const b = n.getBoundingClientRect ? n.getBoundingClientRect() : null;
+        return (
+          tag + "[" + regd + " display=" + disp + " shadow=" + sr +
+          " 几何=" + (b ? Math.round(b.width) + "x" + Math.round(b.height) : "?") + "]"
+        );
+      };
+      const lines = [];
+      for (const t of ["sp-button", "sp-textfield", "sp-picker", "sp-dropdown", "sp-menu-item"]) {
+        lines.push(probeTag(t));
+      }
+      lines.push("基准·" + probeTag("sp-not-a-real-thing-xyz"));
+      // 关键旁证：注册表 API 是不是真的存在。若 define/whenDefined 都是 function，
+      // 说明 UXP 确实实现了 custom elements 注册表 ⇒ 上面那个"未注册"是**可信读数**
+      // （而不是"注册表根本不存在，所以查什么都说未注册"）。
+      let ceApi = "customElements 不存在";
+      try {
+        if (typeof customElements !== "undefined") {
+          ceApi =
+            "define=" + typeof customElements.define +
+            " get=" + typeof customElements.get +
+            " whenDefined=" + typeof customElements.whenDefined;
+        }
+      } catch (e2) {
+        ceApi = "取不到";
+      }
+      spLine = lines.join("　") + "　‖ 注册表 API：" + ceApi;
+    } catch (e) {
+      spLine = "✗ " + em(e);
+    }
+
+    /* ③ HTML5 拖放 —— 决定性判据是 **DataTransfer 在不在**（它是拖放的数据通道）。
+          ⚠️ 上一版写了"合成 dragstart/dragover/drop 可达"当证据，**那是无效证据**：
+             随便什么事件名这样 dispatch 都会"可达"。已删掉，免得读成"拖放可用"。 */
+    let dndLine = "";
+    try {
+      const d = document.createElement("div");
+      d.setAttribute("draggable", "true");
+      d.style.cssText = "width:40px;height:20px;";
+      s23Holder.appendChild(d);
+      dndLine =
+        "draggable 属性被记住=" + JSON.stringify(d.getAttribute("draggable")) +
+        "　DataTransfer=" + typeof DataTransfer +
+        "（它不存在 ⇒ 拿不到拖放的数据通道 ⇒ 标准 HTML5 拖放不可用；" +
+        "与官方 Known Issues 「Drag and Drop is not currently supported」一致）";
+    } catch (e) {
+      dndLine = "✗ " + em(e);
+    }
+
+    /* ④ 指针 / 鼠标事件 —— 自绘拖拽只能靠这些。
+          ⚠️ 这里同样只能测"API 存在性"；"真鼠标会产生这些事件"要人手动试。
+             但**鼠标事件本身已有实物基准**：调色板的 hover / 单击 / 双击都是它在跑。 */
+    let peLine = "";
+    try {
+      const z = document.createElement("div");
+      z.style.cssText = "width:40px;height:20px;";
+      s23Holder.appendChild(z);
+      peLine =
+        "setPointerCapture=" + typeof z.setPointerCapture +
+        "　releasePointerCapture=" + typeof z.releasePointerCapture +
+        "　on* 反射属性（onmousedown / onpointerdown）=" +
+        JSON.stringify(("onmousedown" in z) + "/" + ("onpointerdown" in z)) +
+        "（⚠️ 这条**不影响** addEventListener —— 调色板的 hover/click/dblclick 全靠它，" +
+        "是实物基准；on* 属性只是 UXP 没做 IDL 反射）";
+    } catch (e) {
+      peLine = "✗ " + em(e);
+    }
+
+    rec(
+      S23,
+      true,
+      "【诊断项，无对错】" +
+      "　①<select>：" + selLine +
+      "　②Spectrum：" + spLine +
+      "　③拖放：" + dndLine +
+      "　④指针：" + peLine
+    );
+  } catch (e) {
+    rec(
+      "S23 UI 控件与交互能力探针（下拉控件 / 拖拽 / 指针事件）",
+      true,
+      "【诊断项】探针自身抛异常：" + ((e && e.message) || e)
+    );
+  } finally {
+    if (s23Holder && s23Holder.parentNode) s23Holder.parentNode.removeChild(s23Holder);
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.2.8",
+    version: "0.2.9",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,
