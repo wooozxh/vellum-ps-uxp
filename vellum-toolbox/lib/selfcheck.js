@@ -58,13 +58,14 @@
  *          `to.textStyle.color` 里。我自己猜的两版都是"不报错、像素也不变"。
  *
  *   v0.2.5 新增（M2 素材库地基）：
- *   S19 读自身 PluginData 的镜像 —— docs/10 §10.5 把 M2 路线 ②（镜像单写）押在一个
- *       **尚未单独实测**的环上：「插件用 UXP storage 读自身 PluginData 的图片文件
- *       并渲染」。`data:` / blob→objectURL 已由 link-probe 证过可用，**但"读自身
- *       文件"这一环没测过**；它不成立，整条路线都要改。
- *       判据三条：① 清单读得出且 JSON.parse 成功；② 二进制字节数对得上**且文件头是
- *       `RIFF`**（不传 format 会按文本解码 —— 只比"有没有内容"会被骗过去）；
- *       ③ 渲染后 naturalWidth 等于**预期尺寸**（不是只比 >0）。
+ *   S19 镜像读取层 —— 读自身 PluginData 的镜像并渲染。
+ *       首版（v0.2.5）验的是「到底能不能读」，并顺带把 **UXP 不解码 webp** 这条平台约束
+ *       钉死（真机矩阵 `webp-alpha ✗ / webp-plain ✗ / png ✓ / jpg ✓` —— 它直接改写了
+ *       联动契约 §5.5 的缩略图格式约定）。
+ *       现版（v0.2.6）改为验**契约读取层本身**：`lib/mirror.js` 按 `vellum-link/1` 解析
+ *       `manifest.json` / `task.json` / `brand.json`，展平成素材列表，渲染缩略图，
+ *       并验证 **webp 防御**（读到 .webp 必须给可读错误，不能让 UI 出一堆空白格）。
+ *       假镜像由 `tools/fake-vellumdesk.cjs`（契约 §11 要求的插件侧桩）生成。
  *       ⚠️ 容器**必须可见**（display:none 里 UXP 不加载图片，表现为超时，见 §10.2）。
  *
  *   版本状态（v0.2.4）：S17 建的「纯色填充图层」改色**仍未解决**（已知限制，非回归），
@@ -88,6 +89,7 @@ const data = require("./data.js");
 const caps = require("./caps.js");
 const cssprobe = require("./cssprobe.js");
 const icons = require("./icons.js");
+const mirror = require("./mirror.js");
 
 const REPORT_FILE = "selfcheck.json";
 /** 自检色：刻意取一个几乎不会撞上品牌占位色的值，让「值确实变了」判据有意义。 */
@@ -945,169 +947,99 @@ async function run(ctx, deps) {
     }
   }
 
-  /* ---------- S19: 读自身 PluginData 的镜像（M2 素材库地基，v0.2.5 新增） ----------
-     为什么必须有这一项：docs/10 §10.5 把 M2 路线 ②（镜像单写）押在一个**尚未单独
-     实测**的环上 ——「插件用 UXP storage 读自身 PluginData 的图片文件并渲染」。
-     `data:` / blob→objectURL 已由 link-probe 证过可用，**但"读自身文件"这一环没测过**。
-     它不成立，整条路线 ② 都要改 —— 所以必须先用硬判据把它验掉。
+  /* ---------- S19: 镜像读取层（M2 素材库地基） ----------
+     v0.2.5 首版验的是「到底能不能读」；这一版改为验**契约读取层本身** ——
+     因为 `lib/mirror.js` 要按契约 `vellum-link/1` 解析三个 JSON（manifest/task/brand），
+     而之前的假镜像是我自拟的简化结构，两者必须对齐才测得准。
 
-     判据（都要硬，因为这一环最容易假阳性）：
-       ① 清单读得出、JSON.parse 成功、条目数与预期一致；
-       ② 二进制读出的**字节数**与磁盘一致，**且文件头是 `RIFF`** ——
-          这一条是关键：`read()` 不传 format 会按文本解码，拿到的是垃圾；
-          只比"有没有内容"会被它骗过去，所以要比**文件头魔数**；
-       ③ 渲染后 naturalWidth/Height 等于**预期尺寸**（不是只比 >0）。
+     判据：
+       ① `readManifest()` 成功且 `contract === "vellum-link/1"`（不认识要**降级**，不能崩）
+       ② `readScope("task")` + `flatten` 出 2 条素材；`brand` 出 3 条
+       ③ 缩略图经 `thumbUrl()` → objectURL → `<img>`，**容器可见**，naturalWidth > 0
+       ④ **webp 防御**：读到 `.webp` 必须给**可读错误**（UXP 不解码 webp，别让 UI 出一堆空白格）
 
-     ⚠️ 容器**必须可见** —— docs/10 §10.2 的坑：display:none 里 UXP 不加载图片，
-        表现是"超时"，极易误判成"网络被拒"。这里用 fixed + 48px + 低透明度，
-        保证它参与布局（留在渲染树里），又不挡任何东西。
-     ⚠️ 本项**不碰 PS 文档**，纯 UXP storage + DOM，所以没有临时文档要收尾。 */
-  const S19 = "S19 读自身 PluginData 镜像 —— 清单 / 二进制魔数 / 渲染（M2 地基；⚠️ webp 不可渲染 = 平台约束，缩略图必须 png/jpg）";
-  const S19_EXPECT = { file: "f1.webp", w: 155, h: 320, bytes: 4814 };
+     ⚠️ 本项**不碰 PS 文档**，纯 UXP storage + DOM，所以没有临时文档要收尾。
+     假镜像由 `tools/fake-vellumdesk.cjs`（契约 §11 要求的插件侧桩）生成。 */
+  const S19 = "S19 镜像读取层 —— manifest/task/brand 解析 + 缩略图渲染（契约 vellum-link/1）";
   let s19Holder = null;
   try {
-    const THUMB = ["library", "thumb"];
+    // ① 总索引
+    const m = await mirror.readManifest();
 
-    // ① 清单
-    const raw = await data.readTextIn(["library"], "manifest.json", "");
-    let man = null;
-    let perr = null;
-    try {
-      man = JSON.parse(raw);
-    } catch (e) {
-      perr = String((e && e.message) || e);
-    }
-    let fileCount = 0;
-    let brandCount = 0;
-    if (man) {
-      brandCount = ((man.brand && man.brand.items) || []).length;
-      for (const p of man.projects || []) {
-        for (const k of p.packs || []) {
-          for (const v of k.versions || []) fileCount += (v.files || []).length;
-        }
-      }
-    }
+    // ② 两个 scope 的解析 + 展平
+    let taskRows = 0;
+    let brandRows = 0;
+    let taskRev = null;
+    let firstRow = null;
+    let taskErr = null;
+    let brandErr = null;
+    if (m.ok) {
+      const ts = m.scopes.filter((s) => s.id === "task")[0];
+      if (ts) {
+        const r = await mirror.readScope(ts);
+        if (r.ok) {
+          const rows = mirror.flatten("task", r.data);
+          taskRows = rows.length;
+          taskRev = r.revision;
+          firstRow = rows[0] || null;
+        } else taskErr = r.error;
+      } else taskErr = "总索引里没有 task scope";
 
-    // ② 二进制（字节数 + 文件头魔数）
-    const bin = await data.readBinaryIn(THUMB, S19_EXPECT.file);
-    let magic = "-";
-    let bytesOk = false;
-    let magicOk = false;
-    if (bin.ok && bin.buffer) {
-      const u8 = new Uint8Array(bin.buffer);
-      magic = String.fromCharCode(u8[0], u8[1], u8[2], u8[3]);
-      magicOk = magic === "RIFF";
-      bytesOk = bin.byteLength === S19_EXPECT.bytes;
+      const bs = m.scopes.filter((s) => s.id === "brand")[0];
+      if (bs) {
+        const r = await mirror.readScope(bs);
+        if (r.ok) brandRows = mirror.flatten("brand", r.data).length;
+        else brandErr = r.error;
+      } else brandErr = "总索引里没有 brand scope";
     }
 
-    // ③ 渲染 —— 2×2 判别：格式（webp / png）× 容器可见度
-    //    首版（20:49）用 opacity:0.02 的角落容器 + 只测 webp，两条 URL 路都超时。
-    //    为分清「webp 不被解码」与「容器不算可见」，这一版：
-    //      · 容器改成 opacity:1 的真可见 fixed 容器（右下角，pointer-events:none）
-    //      · 同时渲染一个**已知尺寸的 PNG**（p1.png，64×48）作对照基准
-    const toBase64 = (buf) => {
-      const u8 = new Uint8Array(buf);
-      const T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      let out = "";
-      for (let i = 0; i < u8.length; i += 3) {
-        const b0 = u8[i];
-        const has1 = i + 1 < u8.length;
-        const has2 = i + 2 < u8.length;
-        const b1 = has1 ? u8[i + 1] : 0;
-        const b2 = has2 ? u8[i + 2] : 0;
-        out += T[b0 >> 2];
-        out += T[((b0 & 3) << 4) | (b1 >> 4)];
-        out += has1 ? T[((b1 & 15) << 2) | (b2 >> 6)] : "=";
-        out += has2 ? T[b2 & 63] : "=";
-      }
-      return out;
-    };
-
-    const render = async (src, tag) => {
-      const img = document.createElement("img");
-      img.style.cssText = "width:48px;height:48px;display:block;";
-      s19Holder.appendChild(img);
-      img.src = src;
-      const got = await waitFor(() => (img.naturalWidth > 0 ? img : null), 4000, 150);
-      const r = { ok: !!got, w: img.naturalWidth, h: img.naturalHeight };
-      await log.appendLog(
-        "selfcheck S19 render " + tag + " ok=" + r.ok + " " + r.w + "x" + r.h + " srclen=" + src.length
-      );
-      return r;
-    };
-
+    // ③ 渲染缩略图 —— 容器**必须可见**（display:none 里 UXP 不加载图片，表现为超时）
     s19Holder = document.createElement("div");
     s19Holder.style.cssText =
-      "position:fixed;right:0;bottom:0;width:48px;height:96px;opacity:1;" +
+      "position:fixed;right:0;bottom:0;width:48px;height:48px;opacity:1;" +
       "pointer-events:none;overflow:hidden;z-index:99999;";
     document.body.appendChild(s19Holder);
 
-    const CASES = [
-      { label: "webp-alpha", file: "f1.webp", mime: "image/webp", ew: 155, eh: 320 },
-      { label: "webp-plain", file: "f2.webp", mime: "image/webp", ew: 78, eh: 160 },
-      { label: "png", file: "p1.png", mime: "image/png", ew: 64, eh: 48 },
-      { label: "jpg", file: "p2.jpg", mime: "image/jpeg", ew: 64, eh: 48 },
-    ];
-    const results = [];
-    for (const c of CASES) {
-      const one = {
-        label: c.label, ew: c.ew, eh: c.eh, ok: false,
-        a: { ok: false, note: "未执行" }, b: { ok: false, note: "未执行" },
-      };
-      const b2 = await data.readBinaryIn(THUMB, c.file);
-      if (!b2.ok) {
-        one.a = { ok: false, note: "读文件失败：" + b2.error };
-        one.b = one.a;
-        results.push(one);
-        continue;
-      }
-      try {
-        const r = await render("data:" + c.mime + ";base64," + toBase64(b2.buffer), c.label + "/dataURL");
-        one.a = r.ok ? r : { ok: false, note: "naturalWidth 始终 0（超时）" };
-      } catch (e) {
-        one.a = { ok: false, note: "抛异常 " + ((e && e.message) || e) };
-      }
-      try {
-        if (typeof Blob === "function" && typeof URL !== "undefined" && URL.createObjectURL) {
-          const blob = new Blob([b2.buffer], { type: c.mime });
-          const u = URL.createObjectURL(blob);
-          const r = await render(u, c.label + "/blobURL");
-          one.b = r.ok ? r : { ok: false, note: "naturalWidth 始终 0（超时）" };
-          if (r.ok) URL.revokeObjectURL(u);
-        } else {
-          one.b = { ok: false, note: "Blob / URL.createObjectURL 不可用" };
-        }
-      } catch (e) {
-        one.b = { ok: false, note: "抛异常 " + ((e && e.message) || e) };
-      }
-      for (const r of [one.a, one.b]) {
-        if (r.ok && r.w === c.ew && r.h === c.eh) one.ok = true;
-      }
-      results.push(one);
-    }
+    let renderOk = false;
+    let renderInfo = "未执行";
+    if (firstRow) {
+      const t = await mirror.thumbUrl(firstRow.asset, taskRev);
+      if (t.ok) {
+        const img = document.createElement("img");
+        img.style.cssText = "width:48px;height:48px;display:block;";
+        s19Holder.appendChild(img);
+        img.src = t.url;
+        const got = await waitFor(() => (img.naturalWidth > 0 ? img : null), 4000, 150);
+        renderOk = !!got;
+        renderInfo = renderOk
+          ? img.naturalWidth + "x" + img.naturalHeight + " / " + t.bytes + "B" + (t.cached ? "(缓存)" : "")
+          : "naturalWidth 始终 0（超时）";
+      } else renderInfo = "取缩略图失败：" + t.error;
+    } else renderInfo = "没有可渲染的素材（" + (taskErr || "task 为空") + "）";
 
-    const byLabel = (l) => results.filter((r) => r.label === l)[0] || null;
-    const webpRes = byLabel("webp");
-    const pngRes = byLabel("png");
-    const fmtOne = (r) => (r.ok ? r.w + "x" + r.h + " ✓" : "✗ " + r.note);
-    const fmtCase = (c) =>
-      c.label + "(dataURL=" + fmtOne(c.a) + " blobURL=" + fmtOne(c.b) + ")";
+    // ④ webp 防御（UXP 不解码 webp —— 必须在这里就拦住，给出可读原因）
+    const guard = await mirror.thumbUrl({ id: -1, thumb: "thumb/should-not-exist.webp" }, 0);
 
     rec(
       S19,
-      !!man && fileCount === 2 && brandCount === 1 && bin.ok && bytesOk && magicOk &&
-        !!pngRes && pngRes.ok,
-      "清单=" + (man ? "解析成功（项目文件 " + fileCount + " 条 / 品牌 " + brandCount + " 条）" : "✗ " + perr) +
-      "　二进制=" + (bin.ok ? bin.byteLength + "B" + (bytesOk ? " ✓" : " ✗(期望 " + S19_EXPECT.bytes + "B)") : "✗ " + bin.error) +
-      "　文件头=" + JSON.stringify(magic) + (magicOk ? " ✓" : " ✗(期望 RIFF)") +
-      "　渲染 " + results.map(fmtCase).join("　") +
-      "　容器=opacity:1 fixed 右下　判据基准=png" +
-      (webpRes && webpRes.ok ? "　webp 可渲染 ✓" : "　⚠️ webp 渲染失败（M2 缩略图格式需改）")
+      m.ok && taskRows === 2 && brandRows === 3 && renderOk && !!guard.webp,
+      "契约=" + (m.ok ? m.manifest.contract + " ✓" : "✗ " + m.error) +
+      "　scopes=[" + (m.scopes || []).map((s) => s.id + ":rev" + s.revision).join(" ") + "]" +
+      "　任务库=" + taskRows + " 条" + (taskErr ? " ✗ " + taskErr : "") +
+      "　通用库=" + brandRows + " 条" + (brandErr ? " ✗ " + brandErr : "") +
+      "　缩略图=" + renderInfo +
+      "　webp 防御=" + (guard.webp ? "已拦截 ✓" : "✗ 未拦截") +
+      "　首条面包屑=" + (firstRow ? firstRow.crumb.join(" › ") : "-")
     );
   } catch (e) {
     rec(S19, false, "抛异常：" + ((e && e.message) || e));
   } finally {
     if (s19Holder && s19Holder.parentNode) s19Holder.parentNode.removeChild(s19Holder);
+    try {
+      mirror.clearThumbs();
+    } catch {
+      /* 忽略 */
+    }
   }
 
   /* ---------- 收尾：写报告 ---------- */
@@ -1115,7 +1047,7 @@ async function run(ctx, deps) {
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.2.5",
+    version: "0.2.6",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

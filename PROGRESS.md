@@ -852,3 +852,45 @@
   - ⏳ 插件侧「镜像读取层 + 网格 UI + 插入」未开工
   - ⏳ **VellumDesk 侧须单独立方案**（写镜像 + 缩略图转码 + 动态定位 PluginData 路径）
   - ⏳ 假镜像留在 PluginData 里（不进 git），供 M2 开发期继续用
+
+---
+
+## 2026-10-10　M2 第二步：契约同步 + 镜像读取层落地（第 15 次会话）
+
+- **用户拍板**：「先冻结契约 → 两边并行，插件侧先跑通」；并明确**通用库的内容范围** =
+  **公司通用素材 + 用户自积累素材**（跨任务包的公司/个人素材池），不只是"品牌识别素材"。
+- **开工前先读权威契约**（`D:/vellum-link/LINK-CONTRACT.md`，`vellum-link/1`）——
+  **发现一处实测冲突**：契约 **§5.5 写着缩略图用 `webp`**（"直接复用 `_thumbs` 产物"），
+  而本项目 S19 已证明 **UXP 不解码 webp**。→ 必须先改契约。
+- **契约同步 5 处**（按 §十 流程；已在 `LINK-LOG.md` 发 `[插件侧]` 公告，**待软件侧确认**）
+  - §5.5 缩略图格式 `webp` → **`png`（默认，保透明）/ `jpg`**；命名 `<assetId>.<ext>`
+  - §9.1 新增第 7 条（`<img>` 不解码 webp）、第 8 条（**能**读子目录与二进制）
+  - §六 「前置待实测」→ 已验过一半；§2.3 进度表 → 🔷 地基已实测通过
+  - §5.3 补注通用库的内容范围
+  - **不升契约版本**（仍 `vellum-link/1`）：改的是**文件格式约定**，`asset.thumb` 仍是路径字符串，
+    扩展名自带格式信息，协议结构未变
+- **新增 `tools/fake-vellumdesk.cjs`**（契约 §11 要求的**假软件桩**）：产出**契约合规**镜像
+  （manifest + task + brand + 5 张 PNG + handoff/），纯 JS 编码 PNG（不依赖图像库），
+  支持 `--task-rev` 模拟变更、`--clean`、`--dir`、`--major`。
+  ⚠️ 自查出并修掉一个 bug：`generatedAt` 曾用 `toISOString()` 换后缀 → **UTC 配东八区，差 8 小时**。
+- **新增 `lib/mirror.js`**（**只读**镜像，契约 §八 写者唯一性）
+  - `readManifest()`（**先校验 contract，不认识就降级**，不崩不猜）/ `readScope()`
+  - `flatten()` 树→扁平列表 + **面包屑**；`thumbUrl()`（**换 revision 统一 revoke**，防泄漏）
+  - `insertPlan()` 按 kind/ext 分派；`watch()` 每 3 秒比对 `scopes[].revision`
+  - **webp 防御**：读到 `.webp` 直接给可读错误，不让 UI 出一堆空白格
+- **S19 重做**：从"能力探针"改为"**契约读取层回归**"（旧的测自拟结构，目录已被 `--clean` 清）
+  ```
+  S19 PASS :: 契约=vellum-link/1 ✓　scopes=[task:rev87 brand:rev3]
+              任务库=2 条　通用库=3 条　缩略图=320x240 / 584B
+              webp 防御=已拦截 ✓　首条面包屑=海南升学集训营 › 开营海报-2026秋季 › V1
+  ```
+- **自证**：真机自检 **19/20**（dur=12850ms；唯一 FAIL = 已知 S17）、离线回归 **25/25**、版本 **0.2.6**
+- **新增/改动**：`lib/mirror.js`（新）、`tools/fake-vellumdesk.cjs`（新）、`lib/data.js`、
+  `lib/selfcheck.js`（S19 重做 + 清单 + 版本）、`index.js` / `manifest.json`（0.2.6）、
+  `docs/22`（新）、`docs/11`（§三 改指针 + §四 进度）、`docs/README.md`、`DECISIONS.md`、
+  **`D:/vellum-link/LINK-CONTRACT.md`（5 处）+ `LINK-LOG.md`（3 条公告）**
+- **遗留 / 待办**
+  - ⏳ **素材库 UI 未做**（本轮只到读取层）—— 下一步；⚠️ 必须绕开 UXP CSS 子集（**不用 Grid / 不用 gap**）
+  - ⏳ 「插入」只做了分派逻辑，**真插入依赖软件侧的 handoff 握手**
+  - ⏳ `watch()` 轮询未真机验证；契约 §六 的「能否 createFolder / 删自身文件」仍未验
+  - ⏳ **待用户去软件侧会话同步契约变更**（`LINK-LOG.md` 已公告）

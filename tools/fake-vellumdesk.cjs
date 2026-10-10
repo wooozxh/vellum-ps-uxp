@@ -1,0 +1,314 @@
+/*
+ * tools/fake-vellumdesk.cjs —— 「假 VellumDesk」桩（契约 §11 要求的插件侧测试桩）
+ * ===========================================================================
+ * 作用：在**没有 VellumDesk** 的情况下，往插件的 PluginData\library\ 写一份
+ *      **契约合规**的镜像，让插件侧的「读镜像」逻辑可以独立开发与验收。
+ *
+ * 用法：
+ *   node tools/fake-vellumdesk.cjs                  写默认镜像（task rev 87 / brand rev 3）
+ *   node tools/fake-vellumdesk.cjs --task-rev 88    只改 task 的 revision（用来测轮询"变了"）
+ *   node tools/fake-vellumdesk.cjs --brand-rev 4    只改 brand 的 revision
+ *   node tools/fake-vellumdesk.cjs --clean          清掉镜像目录
+ *   node tools/fake-vellumdesk.cjs --dir <path>     指定 PluginData 目录
+ *   node tools/fake-vellumdesk.cjs --major 26       指定 PS 大版本（默认 27）
+ *
+ * ⚠️ 契约要点（改这里务必对照 `D:\vellum-link\LINK-CONTRACT.md`，唯一权威源）
+ *   1. **缩略图必须 png/jpg，不得 webp** —— UXP 的 `<img>` 不解码 webp（插件侧 S19 实测）。
+ *      缩略图格式与**原文件格式无关**（`asset.thumb` 是镜像内相对路径）。
+ *   2. JSON 一律 UTF-8 无 BOM；字段名严格照契约 §5.1 / §5.2 / §5.3 / §5.4。
+ *   3. `handoff/` 由**软件侧（= 本桩）预建** —— 插件不负责建目录。
+ *   4. 三个文件的写入者**只有软件侧**；插件只读（契约 §八）。
+ */
+
+const fs = require("fs");
+const path = require("path");
+const zlib = require("zlib");
+
+const CONTRACT = "vellum-link/1";
+const MIRROR_DIR = "library";
+const PLUGIN_ID = "com.vellum.toolbox";
+
+/* ---------- 参数 ---------- */
+const argv = process.argv.slice(2);
+function argVal(name, dflt) {
+  const i = argv.indexOf(name);
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
+}
+const CLEAN = argv.includes("--clean");
+const PS_MAJOR = argVal("--major", "27");
+const TASK_REV = Number(argVal("--task-rev", "87"));
+const BRAND_REV = Number(argVal("--brand-rev", "3"));
+
+function defaultPluginData() {
+  const appData = process.env.APPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Roaming");
+  return path.join(appData, "Adobe", "UXP", "PluginsStorage", "PHSP", PS_MAJOR, "Developer", PLUGIN_ID, "PluginData");
+}
+const PLUGIN_DATA = path.resolve(argVal("--dir", defaultPluginData()));
+const LIB = path.join(PLUGIN_DATA, MIRROR_DIR);
+
+/* ---------- 极简 PNG 编码器（纯色块，够做缩略图桩） ---------- */
+let CRC_TABLE = null;
+function crc32(buf) {
+  if (!CRC_TABLE) {
+    CRC_TABLE = new Int32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      CRC_TABLE[n] = c;
+    }
+  }
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** 生成 w×h 的纯色 PNG（RGB，8bit，无 alpha）。 */
+function solidPng(w, h, rgb) {
+  const stride = w * 3 + 1;
+  const raw = Buffer.alloc(stride * h);
+  for (let y = 0; y < h; y++) {
+    let o = y * stride;
+    raw[o++] = 0; // filter: none
+    for (let x = 0; x < w; x++) {
+      raw[o++] = rgb[0];
+      raw[o++] = rgb[1];
+      raw[o++] = rgb[2];
+    }
+  }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const t = Buffer.from(type, "ascii");
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(Buffer.concat([t, data])), 0);
+    return Buffer.concat([len, t, data, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type: truecolor
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib.deflateSync(raw, { level: 9 })),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function hex2rgb(hex) {
+  const s = String(hex).replace("#", "");
+  return [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)];
+}
+
+/* ---------- 镜像内容（严格照契约 §5.1~§5.4） ---------- */
+
+/** 契约 §五：时间一律 ISO 8601 **带时区**。⚠️ 不能拿 toISOString() 换后缀 ——
+ *  它给的是 UTC，直接改 "+08:00" 会让时间差 8 小时。 */
+function isoLocal(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? "+" : "-";
+  const a = Math.abs(off);
+  return (
+    d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+    "T" + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) +
+    sign + p(Math.floor(a / 60)) + ":" + p(a % 60)
+  );
+}
+const NOW = isoLocal(new Date());
+const WS = "D:\\vellum_workspace";
+
+/** 缩略图桩：长边 ≤ 320（契约 §5.5） */
+const THUMBS = [
+  { file: "401.png", w: 320, h: 240, color: "#2F8FE0" },
+  { file: "402.png", w: 320, h: 240, color: "#23AEC1" },
+  { file: "901.png", w: 160, h: 160, color: "#0F8F63" },
+  { file: "902.png", w: 240, h: 320, color: "#3FCB7B" },
+  { file: "903.png", w: 320, h: 200, color: "#E6D6A8" },
+];
+
+function manifestJson() {
+  return {
+    contract: CONTRACT,
+    generatedAt: NOW,
+    generator: { app: "VellumDesk", version: "1.9.6", layoutVersion: "3", fixture: true },
+    workspaceRoot: WS,
+    psMajor: PS_MAJOR,
+    scopes: [
+      { id: "task", label: "任务库", file: "task.json", revision: TASK_REV, count: 2 },
+      { id: "brand", label: "通用库", file: "brand.json", revision: BRAND_REV, count: 3 },
+    ],
+  };
+}
+
+function taskJson() {
+  return {
+    contract: CONTRACT,
+    scope: "task",
+    revision: TASK_REV,
+    generatedAt: NOW,
+    projects: [
+      {
+        id: 1,
+        name: "海南升学集训营",
+        color: "#2F8FE0",
+        sortOrder: 0,
+        archived: false,
+        packs: [
+          {
+            id: 12,
+            name: "开营海报-2026秋季",
+            category: "海报",
+            channel: "朋友圈",
+            folderPath: WS + "\\海南升学集训营\\开营海报-2026秋季",
+            versions: [{ id: 30, seq: 1, isCurrent: true, note: "", folderName: "V1" }],
+            assets: [
+              {
+                id: 401,
+                name: "开营主视觉.psd",
+                ext: "psd",
+                kind: "psd",
+                role: "工程",
+                size: 5120000,
+                width: 2480,
+                height: 3508,
+                versionId: 30,
+                thumb: "thumb/401.png",
+                missing: false,
+                modifiedAt: "2026-10-08T10:00:00+08:00",
+                absPath: WS + "\\海南升学集训营\\开营海报-2026秋季\\V1\\03-工程\\开营主视觉.psd",
+                tags: ["主视觉", "竖版"],
+              },
+              {
+                id: 402,
+                name: "开营海报.jpg",
+                ext: "jpg",
+                kind: "image",
+                role: "成品",
+                size: 880000,
+                width: 2480,
+                height: 3508,
+                versionId: 30,
+                thumb: "thumb/402.png",
+                missing: false,
+                modifiedAt: "2026-10-08T12:30:00+08:00",
+                absPath: WS + "\\海南升学集训营\\开营海报-2026秋季\\V1\\01-成品\\开营海报.jpg",
+                tags: ["海报"],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function brandJson() {
+  return {
+    contract: CONTRACT,
+    scope: "brand",
+    revision: BRAND_REV,
+    generatedAt: NOW,
+    // 契约 §5.3 补注：通用库 = 公司通用素材 + 用户自积累素材
+    groups: [
+      {
+        id: 1,
+        name: "公司素材",
+        sortOrder: 0,
+        assets: [
+          {
+            id: 901,
+            name: "品牌标识.png",
+            ext: "png",
+            kind: "image",
+            role: "素材",
+            size: 24000,
+            width: 1024,
+            height: 1024,
+            versionId: null,
+            thumb: "thumb/901.png",
+            missing: false,
+            modifiedAt: "2026-09-01T09:00:00+08:00",
+            absPath: "D:\\vellum_brand\\品牌标识.png",
+            tags: ["Logo"],
+          },
+          {
+            id: 902,
+            name: "竖版海报模板.png",
+            ext: "png",
+            kind: "image",
+            role: "素材",
+            size: 180000,
+            width: 1080,
+            height: 1440,
+            versionId: null,
+            thumb: "thumb/902.png",
+            missing: false,
+            modifiedAt: "2026-09-02T09:00:00+08:00",
+            absPath: "D:\\vellum_brand\\竖版海报模板.png",
+            tags: ["模板"],
+          },
+        ],
+      },
+      {
+        id: 2,
+        name: "我的收藏",
+        sortOrder: 1,
+        assets: [
+          {
+            id: 903,
+            name: "收集-纸张纹理.png",
+            ext: "png",
+            kind: "image",
+            role: "未归属",
+            size: 62000,
+            width: 1920,
+            height: 1200,
+            versionId: null,
+            thumb: "thumb/903.png",
+            missing: false,
+            modifiedAt: "2026-10-01T15:00:00+08:00",
+            absPath: "D:\\vellum_brand\\收集\\纸张纹理.png",
+            tags: ["纹理"],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/* ---------- 落盘 ---------- */
+function writeJson(file, obj) {
+  fs.writeFileSync(path.join(LIB, file), JSON.stringify(obj, null, 2) + "\n", { encoding: "utf8" });
+}
+
+function main() {
+  if (CLEAN) {
+    fs.rmSync(LIB, { recursive: true, force: true });
+    console.log("已清掉镜像目录：" + LIB);
+    return;
+  }
+
+  fs.mkdirSync(path.join(LIB, "thumb"), { recursive: true });
+  fs.mkdirSync(path.join(LIB, "handoff"), { recursive: true }); // 契约 §六：软件侧预建
+
+  for (const t of THUMBS) {
+    fs.writeFileSync(path.join(LIB, "thumb", t.file), solidPng(t.w, t.h, hex2rgb(t.color)));
+  }
+
+  writeJson("manifest.json", manifestJson());
+  writeJson("task.json", taskJson());
+  writeJson("brand.json", brandJson());
+
+  const total = THUMBS.reduce((s, t) => s + fs.statSync(path.join(LIB, "thumb", t.file)).size, 0);
+  console.log("假 VellumDesk 镜像已写入（契约合规）：");
+  console.log("  " + LIB);
+  console.log("  manifest.json   scopes: task(rev " + TASK_REV + ") / brand(rev " + BRAND_REV + ")  psMajor=" + PS_MAJOR);
+  console.log("  task.json       1 个项目 / 1 个任务包 / V1 / 2 个素材");
+  console.log("  brand.json      2 个分组（公司素材 2 + 我的收藏 1）");
+  console.log("  thumb/          " + THUMBS.length + " 张 PNG（共 " + total + " 字节）");
+  console.log("  handoff/        已预建（req.json 由插件写，本桩不碰）");
+}
+
+main();
