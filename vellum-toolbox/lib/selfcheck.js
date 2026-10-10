@@ -134,6 +134,18 @@
  *   同时跟着改的：二层子类下拉从"独占一行"挪到**一级按钮那一行的最右侧**，
  *   S20c 因此不再依赖"子组行"这个结构，只按 id 找触发条与浮层。
  *
+ *   v0.3.2 重做（**真 VellumDesk 上线后，自检不能再绑死在假软件桩的 fixture 上**）：
+ *   🔴 起因：真机 `library/` 里已经是**真镜像**（只声明 `task`、6 个项目 5 个是空包、
+ *      缩略图叫 `t110.png`），而旧版把期望值钉成 `taskRows===3 && brandRows===4 &&
+ *      srcSig==="company:3|user:1"`、测试文件钉成 `t401.png` ⇒ 会报一堆**与真因无关的 FAIL**。
+ *   · S19 期望值改为**从原始 JSON 自己数**；镜像没声明 brand scope ⇒ 那一半记「不适用」不判失败。
+ *   · S21/S22/S24/S25 的测试文件改为**从镜像里挑**（`testThumbFile()`），不再写死文件名。
+ *   · **S20c/S20d 修一个假 FAIL**：原先直接读 `library/brand.json` 就开工，而磁盘上可能躺着
+ *     上一版（甚至假桩）留下的 **stale brand.json** ⇒ 自检去操作一个**界面上根本不存在的库**。
+ *     哪些库存在，**唯一依据是 `manifest.scopes[]`**。没有就记「不适用」。
+ *   · S20e"收窄"只能挑**有素材**的项目（0 素材的项目点下去网格会变空态块，量不到）；
+ *     并新增断言"**空项目也必须出现在选项里**"（这正是 `projectOptions()` 读原始 `projects[]` 的理由）。
+ *
  *   版本状态（v0.2.4）：S17 建的「纯色填充图层」改色**仍未解决**（已知限制，非回归），
  *   而**形状图层改色正常**（用户 2026-10-10 真机确认，日志 via=contentColorA）。
  *
@@ -1248,24 +1260,129 @@ async function run(ctx, deps) {
     }
   }
 
+  /* ---------- 共享小工具（S19 / S20 系列都要用） ----------
+     ⚠️ 本轮（v0.3.2）最重要的改造：**自检不能绑死在假软件桩那份 fixture 上**。
+        2026-10-11 真机上线后，`library/` 里躺的是**真 VellumDesk**写出来的镜像
+        （只声明 task、6 个项目 5 个是空包、缩略图叫 `t110.png`）——
+        而原先的 S19 把期望值写死成 `taskRows === 3 && brandRows === 4 &&
+        srcSig === "company:3|user:1"`，S21 又把测试文件名写死成 `t401.png`。
+        那会让自检在真镜像上**因为与真因无关的原因**报一堆 FAIL。
+        ⇒ 一律**从原始 JSON 自己数**、**从镜像里自己挑文件**。 */
+
+  /** 独立数一遍"素材形状"的对象（有 id + name + ext 三者）。 */
+  const countAssetsDeep = (node) => {
+    let n = 0;
+    const walk = (x) => {
+      if (!x || typeof x !== "object") return;
+      if (Array.isArray(x)) {
+        for (const it of x) walk(it);
+        return;
+      }
+      if (typeof x.id === "number" && typeof x.name === "string" && typeof x.ext === "string") {
+        n++;
+        return;
+      }
+      for (const k of Object.keys(x)) walk(x[k]);
+    };
+    walk(node);
+    return n;
+  };
+
+  /** 读镜像里某个 scope 文件的**原始 JSON**（自数用）。拿不到返回 null。 */
+  async function rawScopeByFile(file) {
+    try {
+      const t = await data.readTextIn(["library"], file, "");
+      return t && t.trim() ? JSON.parse(t) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 从**镜像里挑一个真实存在的缩略图**当"沙箱内测试文件"。
+   * ⚠️ 不能写死 `t401.png` —— 那是我 fixture 的文件名，真软件写出来的是 `t110.png` 这种。
+   */
+  async function pickThumbFile() {
+    const fallback = { dir: ["library", "thumb"], name: "t401.png" };
+    try {
+      const mt = await mirror.readManifest();
+      if (!mt.ok) return fallback;
+      for (const sc of mt.scopes || []) {
+        const r = await mirror.readScope(sc);
+        if (!r.ok) continue;
+        const rows = mirror.flatten(sc.id, r.data);
+        for (const row of rows) {
+          const th = row && row.asset && row.asset.thumb;
+          if (!th) continue;
+          const parts = String(th).split("/").filter(Boolean);
+          const name = parts.pop();
+          if (name) return { dir: ["library"].concat(parts), name: name };
+        }
+      }
+    } catch {
+      /* 忽略：退回兜底 */
+    }
+    return fallback;
+  }
+
+  /** 记忆化一份"沙箱内测试文件"（S21/S22/S24/S25 共用，避免各读一遍 manifest）。 */
+  let _thumbFile = null;
+  async function testThumbFile() {
+    if (!_thumbFile) _thumbFile = await pickThumbFile();
+    return _thumbFile;
+  }
+
   /* ---------- S19: 镜像读取层（M2 素材库地基） ----------
-     v0.2.5 首版验的是「到底能不能读」；这一版改为验**契约读取层本身** ——
-     因为 `lib/mirror.js` 要按契约 `vellum-link/1` 解析三个 JSON（manifest/task/brand），
-     而之前的假镜像是我自拟的简化结构，两者必须对齐才测得准。
+     v0.2.5 首版验「到底能不能读」；v0.2.6 改为验**契约读取层本身**。
+
+     🔴 **v0.3.2 的关键改造：期望值不再写死。**
+        真 VellumDesk 上线后，`library/` 里躺的是**真镜像**（2026-10-11 实测：
+        只声明 `task` 一个 scope、6 个项目里 5 个是空包、缩略图叫 `t110.png`）。
+        而旧版把期望值钉成 `taskRows===3 && brandRows===4 && srcSig==="company:3|user:1"`，
+        于是自检会在真镜像上**因为与真因无关的原因**报 FAIL —— 那种 FAIL 比不测还糟。
+        ⇒ 现在：**期望值从原始 JSON 自己数**；`brand` scope 不存在时那一半判**"不适用"**，
+          不判失败（库列表本来就完全由镜像的 `scopes[]` 决定）。
 
      判据：
        ① `readManifest()` 成功且 `contract === "vellum-link/1"`（不认识要**降级**，不能崩）
-       ② `readScope("task")` + `flatten` 出 2 条素材；`brand` 出 3 条
-       ③ 缩略图经 `thumbUrl()` → objectURL → `<img>`，**容器可见**，naturalWidth > 0
-       ④ **webp 防御**：读到 `.webp` 必须给**可读错误**（UXP 不解码 webp，别让 UI 出一堆空白格）
+       ② `task` 的条数 === 从 task.json **自己数**出来的条数
+       ③ `brand`（若镜像声明了）条数 / 子组条数 / 来源分布 都 === 自己数出来的
+       ④ 缩略图经 `thumbUrl()` → objectURL → `<img>`，**容器可见**，naturalWidth > 0
+       ⑤ **webp 防御**：读到 `.webp` 必须给**可读错误**（UXP 不解码 webp，别让 UI 出一堆空白格）
 
-     ⚠️ 本项**不碰 PS 文档**，纯 UXP storage + DOM，所以没有临时文档要收尾。
-     假镜像由 `tools/fake-vellumdesk.cjs`（契约 §11 要求的插件侧桩）生成。 */
+     ⚠️ 本项**不碰 PS 文档**，纯 UXP storage + DOM，所以没有临时文档要收尾。 */
   const S19 = "S19 镜像读取层 —— manifest/task/brand 解析 + 缩略图渲染（契约 vellum-link/1）";
   let s19Holder = null;
   try {
     // ① 总索引
     const m = await mirror.readManifest();
+
+    // ② 期望值：**从原始 JSON 自己数**（不复用 mirror 的展平结果 —— 那是拿被测模块的输出验它自己）
+    const rawTask = await rawScopeByFile("task.json");
+    const rawBrand = await rawScopeByFile("brand.json");
+    const expTask = rawTask ? countAssetsDeep(rawTask) : null;
+    const expBrand = rawBrand ? countAssetsDeep(rawBrand) : null;
+    /** 从原始 brand.json 自己算"该有多少条落在子组里"（parentId 指向存在的组才算子组）。 */
+    const expSubRows = (bd) => {
+      const byId = {};
+      for (const g of (bd && bd.groups) || []) byId[String(g.id)] = g;
+      let n = 0;
+      for (const g of (bd && bd.groups) || []) {
+        const r = g.parentId;
+        const isKid = !(r === undefined || r === null || r === "" || !byId[String(r)]);
+        if (isKid) n += (g.assets || []).length;
+      }
+      return n;
+    };
+    /** 从原始 brand.json 自己算来源分布。 */
+    const expSrcCounts = (bd) => {
+      const c = {};
+      for (const g of (bd && bd.groups) || []) {
+        for (const a of g.assets || []) if (a.source) c[String(a.source)] = (c[String(a.source)] || 0) + 1;
+      }
+      return c;
+    };
+    const canonCounts = (o) => Object.keys(o).sort().map((k) => k + ":" + o[k]).join("|");
 
     // ② 两个 scope 的解析 + 展平
     let taskRows = 0;
@@ -1275,6 +1392,7 @@ async function run(ctx, deps) {
     let firstRow = null;
     let taskErr = null;
     let brandErr = null;
+    let brandScope = null;
     if (m.ok) {
       const ts = m.scopes.filter((s) => s.id === "task")[0];
       if (ts) {
@@ -1287,23 +1405,22 @@ async function run(ctx, deps) {
         } else taskErr = r.error;
       } else taskErr = "总索引里没有 task scope";
 
-      const bs = m.scopes.filter((s) => s.id === "brand")[0];
-      if (bs) {
-        const r = await mirror.readScope(bs);
+      brandScope = m.scopes.filter((s) => s.id === "brand")[0] || null;
+      if (brandScope) {
+        const r = await mirror.readScope(brandScope);
         if (r.ok) {
           brandItems = mirror.flatten("brand", r.data);
           brandRows = brandItems.length;
         } else brandErr = r.error;
-      } else brandErr = "总索引里没有 brand scope";
+      }
     }
 
     // ②b 软件侧 2026-10-10 提的两处加法（契约 §5.3 parentId / §5.4 source）：
     //     只验"解析层"是否把它们变成了可用的结构；**界面**由 S20c / S20d 负责。
     const subRows = brandItems.filter((x) => !!x.sub).length;
-    const srcSig = mirror
-      .sourceSummary(brandItems)
-      .map((s) => s.value + ":" + s.count)
-      .join("|");
+    const srcGot = {};
+    for (const s of mirror.sourceSummary(brandItems)) srcGot[s.value] = s.count;
+    const srcSig = canonCounts(srcGot);
 
     // ③ 渲染缩略图 —— 容器**必须可见**（display:none 里 UXP 不加载图片，表现为超时）
     s19Holder = document.createElement("div");
@@ -1332,16 +1449,26 @@ async function run(ctx, deps) {
     // ④ webp 防御（UXP 不解码 webp —— 必须在这里就拦住，给出可读原因）
     const guard = await mirror.thumbUrl({ id: -1, thumb: "thumb/should-not-exist.webp" }, 0);
 
+    // 判据：**核心项总是要过**；通用库相关的只在"镜像里真有 brand scope"时才要求
+    const coreOk = m.ok && expTask !== null && taskRows === expTask && renderOk && !!guard.webp;
+    const brandOk = !brandScope
+      ? true // 镜像没声明 brand（软件侧还没写出）⇒ 这一半**不适用**，不判失败
+      : brandRows === expBrand &&
+        subRows === expSubRows(rawBrand) &&
+        srcSig === canonCounts(expSrcCounts(rawBrand));
+
     rec(
       S19,
-      m.ok && taskRows === 3 && brandRows === 4 && subRows === 1 &&
-        srcSig === "company:3|user:1" && renderOk && !!guard.webp,
+      coreOk && brandOk,
       "契约=" + (m.ok ? m.manifest.contract + " ✓" : "✗ " + m.error) +
       "　scopes=[" + (m.scopes || []).map((s) => s.id + ":rev" + s.revision).join(" ") + "]" +
-      "　任务库=" + taskRows + " 条" + (taskErr ? " ✗ " + taskErr : "") +
-      "　通用库=" + brandRows + " 条" + (brandErr ? " ✗ " + brandErr : "") +
-      "　两级分组=子组 " + subRows + " 条" +
-      "　来源=" + (srcSig || "（无 source 字段）") +
+      "　任务库=" + taskRows + " 条（自数 " + expTask + "）" + (taskErr ? " ✗ " + taskErr : "") +
+      (brandScope
+        ? "　通用库=" + brandRows + " 条（自数 " + expBrand + "）" +
+          "·子组 " + subRows + " 条（自数 " + expSubRows(rawBrand) + "）" +
+          "·来源 " + (srcSig || "无 source 字段") + "（自数 " + (canonCounts(expSrcCounts(rawBrand)) || "无 source 字段") + "）" +
+          (brandErr ? " ✗ " + brandErr : "")
+        : "　通用库=镜像里**没声明 brand scope**（VellumDesk 尚未写出）⇒ 这一半不适用") +
       "　缩略图=" + renderInfo +
       "　webp 防御=" + (guard.webp ? "已拦截 ✓" : "✗ 未拦截") +
       "　首条面包屑=" + (firstRow ? firstRow.crumb.join(" › ") : "-")
@@ -1365,28 +1492,8 @@ async function run(ctx, deps) {
   try {
     const S20 = "S20 素材库界面 —— 库切换 / 筛选 / 网格 / 缩略图 / 详情（真实 mount）";
 
-    // 独立数一遍：递归找「asset 形状」的对象（有 id + name + ext），不依赖 mirror.js
-    const countAssetsDeep = (node) => {
-      let n = 0;
-      const walk = (x) => {
-        if (!x || typeof x !== "object") return;
-        if (Array.isArray(x)) {
-          for (const it of x) walk(it);
-          return;
-        }
-        if (
-          typeof x.id === "number" &&
-          typeof x.name === "string" &&
-          typeof x.ext === "string"
-        ) {
-          n++;
-          return; // asset 内部不再往下找
-        }
-        for (const k of Object.keys(x)) walk(x[k]);
-      };
-      walk(node);
-      return n;
-    };
+    /* 独立数一遍：递归找「asset 形状」的对象（有 id + name + ext），不依赖 mirror.js。
+       ⚠️ 这个函数现在声明在 run() 顶层（S19 也要用），别在这里再 `const` 一遍。 */
 
     const collectImgs = (node, out) => {
       const kids = (node && node.children) || [];
@@ -1566,44 +1673,62 @@ async function run(ctx, deps) {
   /* ---------- S20c / S20d: 软件侧 2026-10-10 提的两处加法，落到界面上（v0.2.8 新增） ----------
      契约 §5.3 加法 ③（`groups[].parentId` 两层分组）与 §5.4 加法 ②（`asset.source`）。
      这两条**必须真机验**：解析层对了不代表界面用上了（S19 只验了前者）。
-     共同纪律：**期望值全部从原始 JSON 自己数**，绝不读 tools/library.js 的内部状态。 */
+     共同纪律：**期望值全部从原始 JSON 自己数**，绝不读 tools/library.js 的内部状态。
+
+     🔴 v0.3.2 修一个**假 FAIL**：这两条原先直接去读 `library/brand.json` 就开工，
+        而磁盘上可能躺着**上一版（甚至是假软件桩）留下的 stale brand.json** ——
+        真机 2026-10-11 就撞上了：manifest 里**根本没声明 brand scope**（真软件还没写出通用库），
+        stale 文件却还在 ⇒ 自检兴冲冲去操作一个**界面上根本不存在的库** ⇒ 两条 FAIL。
+        **哪些库存在，唯一的依据是 `manifest.scopes[]`**，不是"目录里有没有那个文件"。
+        ⇒ 先查声明；没声明就记**「不适用」**，不判失败。 */
+  let brandDeclared = false;
   let brandGroups = [];
   let twoLevel = null; // { parent, kids, kid, expParent, expKid }
   let srcInfo = null; // { counts, keys }
   try {
-    const raw = await data.readTextIn(["library"], "brand.json", "");
-    const bd = raw && raw.trim() ? JSON.parse(raw) : null;
-    brandGroups = (bd && bd.groups) || [];
+    const mm = await mirror.readManifest();
+    brandDeclared = !!(mm.ok && (mm.scopes || []).some((s) => s.id === "brand"));
+    if (!brandDeclared) {
+      const stale = await rawScopeByFile("brand.json");
+      await log.appendLog(
+        "selfcheck S20c/d 前置：镜像里没声明 brand scope ⇒ 不适用" +
+        (stale ? "（⚠️ 但磁盘上有个未被声明的 brand.json，多半是上一版残留 —— 本次不读它）" : "")
+      );
+    } else {
+      const sc = (mm.scopes || []).filter((s) => s.id === "brand")[0];
+      const bd = await rawScopeByFile(sc.file || "brand.json");
+      brandGroups = (bd && bd.groups) || [];
 
-    const byId = {};
-    for (const g of brandGroups) byId[String(g.id)] = g;
-    const assetsOf = (g) => (g && Array.isArray(g.assets) ? g.assets.length : 0);
-    const isTop = (g) => {
-      const r = g.parentId;
-      return r === undefined || r === null || r === "" || !byId[String(r)];
-    };
-    for (const g of brandGroups) {
-      if (!isTop(g)) continue;
-      const kids = brandGroups.filter((x) => !isTop(x) && String(x.parentId) === String(g.id));
-      // 找"**既有直接素材、又有子组**"的父组 —— 这正是两级分组存在的意义；
-      // 只有这种样本才能验出"点父组要能看到子组里的素材"。
-      if (kids.length && assetsOf(g) > 0) {
-        twoLevel = {
-          parent: g,
-          kids: kids,
-          kid: kids[0],
-          expParent: assetsOf(g) + kids.reduce((s, k) => s + assetsOf(k), 0),
-          expKid: assetsOf(kids[0]),
-        };
-        break;
+      const byId = {};
+      for (const g of brandGroups) byId[String(g.id)] = g;
+      const assetsOf = (g) => (g && Array.isArray(g.assets) ? g.assets.length : 0);
+      const isTop = (g) => {
+        const r = g.parentId;
+        return r === undefined || r === null || r === "" || !byId[String(r)];
+      };
+      for (const g of brandGroups) {
+        if (!isTop(g)) continue;
+        const kids = brandGroups.filter((x) => !isTop(x) && String(x.parentId) === String(g.id));
+        // 找"**既有直接素材、又有子组**"的父组 —— 这正是两级分组存在的意义；
+        // 只有这种样本才能验出"点父组要能看到子组里的素材"。
+        if (kids.length && assetsOf(g) > 0) {
+          twoLevel = {
+            parent: g,
+            kids: kids,
+            kid: kids[0],
+            expParent: assetsOf(g) + kids.reduce((s, k) => s + assetsOf(k), 0),
+            expKid: assetsOf(kids[0]),
+          };
+          break;
+        }
       }
-    }
 
-    const counts = {};
-    for (const g of brandGroups) {
-      for (const a of g.assets || []) if (a.source) counts[a.source] = (counts[a.source] || 0) + 1;
+      const counts = {};
+      for (const g of brandGroups) {
+        for (const a of g.assets || []) if (a.source) counts[a.source] = (counts[a.source] || 0) + 1;
+      }
+      srcInfo = { counts: counts, keys: Object.keys(counts) };
     }
-    srcInfo = { counts: counts, keys: Object.keys(counts) };
   } catch (e) {
     await log.appendLog("selfcheck S20c/d 前置失败 " + ((e && e.message) || e));
   }
@@ -1611,8 +1736,11 @@ async function run(ctx, deps) {
   /* S20c 两级分组筛选 */
   try {
     const S20C = "S20c 两级分组筛选 —— 点父组含子组素材、点下拉里的子组收窄（契约 §5.3 parentId）";
-    if (!twoLevel) {
-      rec(S20C, false, "镜像里没有「两层分组」样本（需要一个既有直接素材、又有子组的父组）—— 本条不作数");
+    if (!brandDeclared) {
+      rec(S20C, true, "【不适用】镜像没声明 brand scope（通用库尚未由 VellumDesk 写出）—— 本条不判失败" +
+        "（哪些库存在只看 manifest.scopes[]，不看磁盘上有没有那个文件）");
+    } else if (!twoLevel) {
+      rec(S20C, true, "【不适用】镜像里没有「两层分组」样本（需要一个既有直接素材、又有子组的父组）—— 本条不判失败");
     } else {
       const pName = twoLevel.parent.name;
       const kName = twoLevel.kid.name;
@@ -1682,10 +1810,12 @@ async function run(ctx, deps) {
   /* S20d 来源筛选（只在 ≥2 种来源时出现） */
   try {
     const S20D = "S20d 来源筛选 —— 「来源」行只在 ≥2 种来源时出现，点了能收窄（契约 §5.4 asset.source）";
-    if (!srcInfo || srcInfo.keys.length < 2) {
-      rec(S20D, false,
-        "镜像里通用库只有 " + (srcInfo ? srcInfo.keys.length : "?") +
-        " 种来源 —— 无法验证来源筛选（本条不适用；老镜像没有 source 字段时属正常）");
+    if (!brandDeclared) {
+      rec(S20D, true, "【不适用】镜像没声明 brand scope（通用库尚未由 VellumDesk 写出）—— 本条不判失败");
+    } else if (!srcInfo || srcInfo.keys.length < 2) {
+      rec(S20D, true,
+        "【不适用】镜像里通用库只有 " + (srcInfo ? srcInfo.keys.length : "?") +
+        " 种来源 —— 无法验证来源筛选（老镜像没有 source 字段时属正常）");
     } else {
       // 挑"最少的那种来源"，这样"点完卡片变少"是能看出来的
       const pick = srcInfo.keys.slice().sort((a, b) => srcInfo.counts[a] - srcInfo.counts[b])[0];
@@ -1751,9 +1881,9 @@ async function run(ctx, deps) {
     if (projList.length < 2) {
       rec(
         S20E,
-        false,
-        "镜像里任务库只有 " + projList.length + " 个项目 —— **只有一个选项不构成筛选**" +
-        "（本条不适用；需要 ≥2 个项目才验得出来）"
+        true,
+        "【不适用】镜像里任务库只有 " + projList.length + " 个项目 —— **只有一个选项不构成筛选**" +
+        "（需要 ≥2 个项目才验得出来）"
       );
     } else {
       await libSwitchTo("task");
@@ -1785,8 +1915,14 @@ async function run(ctx, deps) {
       }
 
       // ③ 选项数 + 收窄
-      const sorted = projList.slice().sort((x, y) => x.n - y.n); // 取素材最少的那个，"变少了"才看得出来
-      const pick = sorted[0];
+      // ⚠️ "收窄"只能拿**有素材**的项目来验 —— 一个 0 素材的项目点下去，网格会变成空态块，
+      //    那时 DOM 里**根本没有 `#vt-lib-grid`**，量到的会是 -1 而不是 0。
+      //    这条是被**真镜像**逼出来的：它 6 个项目里 5 个是空包（`packs: []`）。
+      const withAssets = projList.filter((p) => p.n > 0).sort((x, y) => x.n - y.n);
+      const pick = withAssets[0] || null;
+      // 反面：**空项目也必须出现在选项里** —— 这正是 `projectOptions()` 读"原始 projects[]"
+      //       而不是读"已展平的素材树"的理由（树里没有空项目）。
+      const emptyProj = projList.filter((p) => p.n === 0)[0] || null;
       let opened = false;
       let optCount = -1;
       if (trig) {
@@ -1796,7 +1932,9 @@ async function run(ctx, deps) {
         const pop = document.getElementById("vt-lib-projpop");
         optCount = pop ? pop.children.length : -1;
       }
-      const opt = libOpt(pick.name, "vt-lib-projpop", "data-proj");
+      // 选项都从**同一个浮层**里取（点掉一个就会整片重渲染，所以先全取到手再点）
+      const opt = pick ? libOpt(pick.name, "vt-lib-projpop", "data-proj") : null;
+      const emptyOpt = emptyProj ? libOpt(emptyProj.name, "vt-lib-projpop", "data-proj") : null;
       let cards = -1;
       if (opt) {
         syntheticClick(opt, false);
@@ -1804,27 +1942,41 @@ async function run(ctx, deps) {
         cards = g ? g.children.length : -1;
       }
       const closed = !libSelOpen("vt-lib-projwrap");
+      // 没有"非空项目" / 没有"空项目" / 镜像里没有 brand scope 时，对应的那一小项**不适用**
+      const narrowOk = pick ? (!!opt && cards === pick.n) : true;
+      const emptyOptOk = emptyProj ? !!emptyOpt : true;
 
       // ① 反向：切到通用库这个下拉必须消失（顶层不是项目）
+      let hasBrand = false;
       let goneOnBrand = null;
-      const okB = await libSwitchTo("brand");
-      if (okB) goneOnBrand = !document.getElementById("vt-lib-projsel");
-      await libSwitchTo("task");
+      try {
+        hasBrand = !!document.getElementById("vt-lib-tab-brand");
+        if (hasBrand) {
+          const okB = await libSwitchTo("brand");
+          if (okB) goneOnBrand = !document.getElementById("vt-lib-projsel");
+          await libSwitchTo("task");
+        }
+      } catch { /* 忽略：下面按"不适用"处理 */ }
+      const goneOk = hasBrand ? goneOnBrand === true : true;
 
       rec(
         S20E,
         okSwitch && inTop && leftOf && sameRow && opened &&
-          optCount === projList.length + 1 && !!opt && cards === pick.n && closed &&
-          goneOnBrand === true,
+          optCount === projList.length + 1 && narrowOk && emptyOptOk && closed && goneOk,
         "任务库（切换=" + okSwitch + "）　在顶部行内=" + inTop +
         "　在刷新左侧=" + leftOf + "·同一行=" + sameRow + "（" + geo + "）" +
         "　点开=" + opened +
         "　选项数=" + optCount + "（自数期望 " + (projList.length + 1) +
         " = 项目 " + projList.length + " + 全部项目）" +
-        "　取最少素材的项目「" + pick.name + "」=" + !!opt +
-        " → 卡片=" + cards + "（自数期望 " + pick.n + "）" +
+        (pick
+          ? "　取最少素材的项目「" + pick.name + "」=" + !!opt +
+            " → 卡片=" + cards + "（自数期望 " + pick.n + "）"
+          : "　（没有非空项目 ⇒ 收窄这一步不适用）") +
+        (emptyProj
+          ? "　空项目「" + emptyProj.name + "」也在选项里=" + !!emptyOpt + "（必须是 true）"
+          : "　（没有空项目 ⇒ 这一小项不适用）") +
         "　选完收起=" + closed +
-        "　切到通用库后消失=" + goneOnBrand +
+        (hasBrand ? "　切到通用库后消失=" + goneOnBrand : "　（镜像无 brand scope ⇒ 这一步不适用）") +
         "　‖ 项目自数=" + JSON.stringify(projList.map((p) => p.name + ":" + p.n))
       );
     }
@@ -1841,7 +1993,8 @@ async function run(ctx, deps) {
      ⚠️ 只作用在自建的临时文档上，跑完不保存关掉。 */
   try {
     const S21 = "S21 置入（placeEvent + 会话令牌）—— 临时文档上图层数必须增加";
-    const srcEntry = await data.entryIn(["library", "thumb"], "t401.png");
+    const tf21 = await testThumbFile();
+    const srcEntry = await data.entryIn(tf21.dir, tf21.name);
     if (!srcEntry) {
       rec(S21, false, "拿不到测试文件 Entry（镜像缺失）—— 先跑 tools/fake-vellumdesk.cjs；本条不作数");
     } else {
@@ -1870,7 +2023,7 @@ async function run(ctx, deps) {
           S21,
           !!(placed && placed.ok && placed.changed),
           "令牌=" + (tok.ok ? tok.token.slice(0, 16) + "…" : "✗ " + tok.error) +
-          "　测试文件=t401.png（沙箱内 Entry，命名空间命名）" +
+          "　测试文件=" + tf21.name + "（沙箱内 Entry，从镜像里挑）" +
           "　临时文档 id=" + scratch.id +
           "　图层数 " + (placed ? placed.layersBefore : "?") + " → " + (placed ? placed.layersAfter : "?") +
           "　changed=" + (placed ? placed.changed : "?") +
@@ -1890,11 +2043,12 @@ async function run(ctx, deps) {
      整条 handoff 搬运就可以不要了。
      做法：同一套 API 打两个 URL，**用一个"必定成功"的沙箱内路径当基准**
      （纪律：没有基准的失败实验 = 没做实验）：
-       ① file:///…\PluginData\library\thumb\t401.png  ← 沙箱内，基准
+       ① 沙箱内那个缩略图（`library/thumb/…`，就是 testThumbFile 挑出来的那张）  ← 基准
        ② file:///D:/ps-uxp-dev/PROGRESS.md            ← 沙箱外（本机固定路径）
      判据定为"两头都给出了明确答案"—— 若 ① 成功而 ② 被拒，那就是权限边界，不是用法问题。 */
   try {
-    const insidePath = await data.nativePathIn(["library", "thumb"], "t401.png");
+    const tf22 = await testThumbFile();
+    const insidePath = await data.nativePathIn(tf22.dir, tf22.name);
     const insideUrl = insidePath ? "file:///" + String(insidePath).replace(/\\/g, "/") : null;
     const outsideUrl = "file:///D:/ps-uxp-dev/PROGRESS.md";
 
@@ -1919,7 +2073,7 @@ async function run(ctx, deps) {
     rec(
       "S22 直连置入可行性探针（getEntryWithUrl 能否读沙箱外路径）",
       definite(a) && definite(b),
-      fmt(a, "基准·沙箱内 t401.png") + "　" + fmt(b, "沙箱外 PROGRESS.md") + "　⇒ " + conclusion
+      fmt(a, "基准·沙箱内 " + tf22.name) + "　" + fmt(b, "沙箱外 PROGRESS.md") + "　⇒ " + conclusion
     );
   } catch (e) {
     rec("S22 直连置入可行性探针（getEntryWithUrl 能否读沙箱外路径）", false,
@@ -2150,12 +2304,13 @@ async function run(ctx, deps) {
     const fmtR = (r) =>
       r ? r.left + "," + r.top + "," + r.right + "," + r.bottom : "（读不到）";
 
-    const entry = await data.entryIn(["library", "thumb"], "t401.png");
+    const tf24 = await testThumbFile();
+    const entry = await data.entryIn(tf24.dir, tf24.name);
     const scratch = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(选区)" });
     if (!scratch.ok) {
       rec(S24, true, "【诊断项】建临时文档失败：" + scratch.error + " —— 本条不作数");
     } else if (!entry) {
-      rec(S24, true, "【诊断项】拿不到测试图 Entry（镜像缺失）—— 先跑 tools/fake-vellumdesk.cjs；本条不作数");
+      rec(S24, true, "【诊断项】镜像里挑不出可用缩略图 —— 本条不作数");
     } else {
       let line = "";
       try {
@@ -2263,12 +2418,13 @@ async function run(ctx, deps) {
   const S25 = "S25 落点组合：有选区时 offset 必须叠在选区中心上（否则位置会整体偏）";
   try {
     const fmtB = (r) => (r ? r.left + "," + r.top + "," + r.right + "," + r.bottom : "✗");
-    const entry25 = await data.entryIn(["library", "thumb"], "t401.png");
+    const tf25 = await testThumbFile();
+    const entry25 = await data.entryIn(tf25.dir, tf25.name);
     const sc25 = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(落点)" });
     if (!sc25.ok) {
       rec(S25, false, "建临时文档失败：" + sc25.error + " —— 本条不作数");
     } else if (!entry25) {
-      rec(S25, false, "拿不到测试图 Entry（镜像缺失）—— 先跑 tools/fake-vellumdesk.cjs；本条不作数");
+      rec(S25, false, "镜像里挑不出可用缩略图 —— 本条不作数");
     } else {
       let line = "";
       let allOk = true;
@@ -2375,7 +2531,7 @@ async function run(ctx, deps) {
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.3.1",
+    version: "0.3.2",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

@@ -899,6 +899,15 @@
         word-break: break-all;
       }
 
+      /* 「镜像里只有 N 个库」的如实提示 —— 只在不足 2 个库时显示（默认 display:none） */
+      .lib-metanote {
+        margin: -5px 0 9px;
+        font-size: 11px;
+        line-height: 1.6;
+        color: var(--vt-warn);
+        word-break: break-all;
+      }
+
       /* 筛选区：最多三行（顶层分组 / 子组 / 来源）。
          外层改成 block —— 行与行要竖着排，flex 行会把三行并排。
          每行自己 flex-wrap：窄面板下 chips 要能换行，所以必须给底部间距，
@@ -1304,9 +1313,9 @@
         text-overflow: ellipsis;
       }
 
-      /* 选中详情 */
+      /* 选中详情 + 置入（v0.3.2 起**挪到网格上方** —— 素材多时不必滚到底部去按置入） */
       .lib-foot {
-        margin-top: 4px;
+        margin: 0 0 10px;
         padding: 9px 10px;
         border: 1px solid var(--vt-line2);
         border-radius: 3px;

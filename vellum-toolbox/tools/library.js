@@ -213,17 +213,28 @@ function build() {
   refs.meta = dom.el("div", { class: "lib-meta mono" }, ["正在读取镜像 …"]);
   wrap.appendChild(refs.meta);
 
+  /* 镜像"只有几个库"的如实提示（默认隐藏）——
+     为什么要有这一行：库列表**完全由镜像的 `scopes[]` 决定**，
+     某个库"不见了"通常是软件侧那一版镜像里没写出对应 scope，而不是插件丢了入口。
+     用户 2026-07-11 报过「通用素材库入口丢失」，真因就是新镜像只声明了 task。 */
+  refs.metaNote = dom.el("div", { class: "lib-metanote", id: "vt-lib-metanote" }, [""]);
+  refs.metaNote.style.display = "none";
+  wrap.appendChild(refs.metaNote);
+
   /* ② 分组筛选 */
   refs.bar = dom.el("div", { class: "lib-bar", id: "vt-lib-bar" });
   wrap.appendChild(refs.bar);
 
-  /* ③ 网格 / 状态块 */
-  refs.body = dom.el("div", { class: "lib-body", id: "vt-lib-body" });
-  wrap.appendChild(refs.body);
-
-  /* ④ 选中详情 */
+  /* ③ 选中详情 + 置入（**在网格上方**）
+     ⚠️ v0.3.2 按用户要求挪到顶部：素材一多，"选完再滚到最底下按置入"很难受
+        （用户原话：「可以把置入放在顶部（库选择和目录筛选下方，瀑布流上方）」）。
+        代价是详情块常占约 150px；未选中时只有一行提示，不占地方。 */
   refs.foot = dom.el("div", { class: "lib-foot", id: "vt-lib-foot" });
   wrap.appendChild(refs.foot);
+
+  /* ④ 网格 / 状态块 */
+  refs.body = dom.el("div", { class: "lib-body", id: "vt-lib-body" });
+  wrap.appendChild(refs.body);
 
   binder.on(refresh, "click", () => manualRefresh());
 
@@ -393,6 +404,7 @@ function renderTabs() {
 function renderMeta() {
   if (!S.manifest) {
     refs.meta.textContent = "镜像不可用";
+    if (refs.metaNote) refs.metaNote.style.display = "none";
     return;
   }
   const parts = [
@@ -402,6 +414,20 @@ function renderMeta() {
   if (S.manifest.psMajor) parts.push("PS " + S.manifest.psMajor);
   if (S.manifest.workspaceRoot) parts.push(S.manifest.workspaceRoot);
   refs.meta.textContent = parts.join("　·　");
+
+  // 只有 1 个库时把话说明白（见 build() 里 refs.metaNote 的说明）。
+  if (refs.metaNote) {
+    const scopes = S.scopes || [];
+    if (scopes.length < 2) {
+      refs.metaNote.textContent =
+        "镜像里目前只有 " + scopes.length + " 个库" +
+        (scopes.length ? "（" + scopes.map((s) => s.label || s.id).join(" / ") + "）" : "") +
+        " —— 其余库要由 VellumDesk 写进 manifest.scopes 才会出现";
+      refs.metaNote.style.display = "block";
+    } else {
+      refs.metaNote.style.display = "none";
+    }
+  }
 }
 
 /* ------------------------------------------------------------- 筛选 chips */
@@ -827,7 +853,9 @@ function renderFoot() {
   dom.clear(refs.foot);
   const sel = S.selected;
   if (!sel) {
-    refs.foot.appendChild(dom.el("span", { class: "lf-hint" }, ["点一张素材看详情，再点「置入到画布」"]));
+    refs.foot.appendChild(
+      dom.el("span", { class: "lf-hint" }, ["在下面选一张素材 —— 这里会出现置入按钮与落点"])
+    );
     return;
   }
   const a = sel.asset;
@@ -1212,16 +1240,32 @@ async function doInsert() {
       return { ok: false, reason: "handoff-timeout", error: res.error };
     }
 
-    /* ---- ③ 原图到手：拿到 Entry（置入必须靠它换会话令牌） ---- */
+    /* ---- ③ 原图到手：拿到 Entry（置入必须靠它换会话令牌） ----
+       ⚠️ `fetchIncoming` 内部会**再等一小会儿文件落盘** —— 软件侧很可能"先写 res、后拷文件"。
+          🔴 而且这条失败文案必须**说准**：只有文件真的在才能说"已就位"。
+          上一版不管三七二十一就说「原图已就位但拿不到句柄」，真机上文件压根没到
+          （res.json 报 `ok:true / size=627927`，`handoff/` 里却没有那个文件）——
+          **判据正确 ≠ 反馈正确**：一句错位的描述会把排查方向直接带偏。 */
     const inc = await handoff.fetchIncoming(res.data);
     await log.appendLog(
       "library handoff incoming ok=" + inc.ok + " name=" + JSON.stringify(inc.name) +
-      " bytes=" + inc.byteLength + " entry=" + !!inc.entry +
+      " bytes=" + inc.byteLength + " entry=" + !!inc.entry + " waited=" + inc.waited +
+      " res=" + JSON.stringify(inc.res) +
       (inc.error ? " err=" + inc.error : "")
     );
     if (!inc.ok) {
-      status("✗ 原图已就位但拿不到可置入的文件句柄：" + (inc.error || "未知"));
-      return { ok: false, reason: "incoming", error: inc.error };
+      const r = inc.res || {};
+      const claimedOk = r.ok === true;
+      status(
+        "✗ 取不到可置入的文件：handoff/" + inc.name + " 找不到（等了 " + inc.waited + "ms）" +
+        "　—— VellumDesk 回复 ok=" + (r.ok === null || r.ok === undefined ? "?" : r.ok) +
+        (r.size !== null && r.size !== undefined ? " · size=" + r.size : "") +
+        (claimedOk
+          ? "，但文件没落盘。请它按「**先拷文件、后写 res.json**」的顺序来（契约 §六）"
+          : (r.error ? "　它报的错：" + r.error : "，且没给原因")) +
+        (inc.error ? "　〔本机读数：" + inc.error + "〕" : "")
+      );
+      return { ok: false, reason: "incoming", error: inc.error, waited: inc.waited };
     }
 
     /* ---- ④ 置入（带上"落点锚点"算出来的 offset） ---- */

@@ -1517,6 +1517,167 @@ async function main() {
     await sleep(50);
   }
 
+  /* ---- 41. 详情/置入区必须在**瀑布流上方**（用户第 3 条：素材多时不必滚到底部按置入） ----
+     ⚠️ mock DOM 没有 compareDocumentPosition —— 用"在父节点 children 里的下标"比顺序，
+        这比读源码里的书写顺序更硬（它验的是**实际挂载出来的结构**）。 */
+  {
+    const libMod = require(path.join(PKG, "tools", "library.js"));
+    const ctx41 = {
+      setStatus() {},
+      data: require(path.join(PKG, "lib", "data.js")),
+      ps: require(path.join(PKG, "lib", "ps.js")),
+    };
+    await libMod.mount(view, ctx41);
+    await sleep(250);
+
+    const idxOf = (id) => {
+      const el = document.getElementById(id);
+      const wrap = el ? el.parentNode : null;
+      if (!wrap) return -1;
+      for (let i = 0; i < wrap.children.length; i++) {
+        if (wrap.children[i].getAttribute("id") === id) return i;
+      }
+      return -1;
+    };
+    const footIdx = idxOf("vt-lib-foot");
+    const bodyIdx = idxOf("vt-lib-body");
+    const barIdx = idxOf("vt-lib-bar");
+    // 顺序应当是：筛选行 → 详情/置入 → 网格
+    const orderOk = barIdx >= 0 && footIdx > barIdx && bodyIdx > footIdx;
+    // 两个库时不该显示"只有 N 个库"的提示
+    const note = document.getElementById("vt-lib-metanote");
+    const noteHidden = !!(note && String(note.style.display) === "none");
+    check(
+      "41 详情/置入区在瀑布流上方（筛选行 → 详情 → 网格），且两个库时不显示提示",
+      orderOk && noteHidden,
+      "筛选行 index=" + barIdx + "　详情 index=" + footIdx + "　网格 index=" + bodyIdx +
+        "（须 筛选<详情<网格）　库数提示隐藏=" + noteHidden
+    );
+    libMod.unmount();
+    await sleep(50);
+  }
+
+  /* ---- 42. 镜像里只有 1 个库时，面板要**如实说明**（用户报「通用素材库入口丢失」） ----
+     真因是软件侧那一版 manifest 只声明了 task ⇒ 插件只渲染 1 个 tab（这是**设计如此**：
+     库列表完全由 scopes[] 决定）。但不说明白，用户只会看到"入口不见了"。 */
+  {
+    const savedManifest = files["library/manifest.json"];
+    const onlyTask = JSON.parse(savedManifest);
+    onlyTask.scopes = onlyTask.scopes.filter((s) => s.id === "task");
+    files["library/manifest.json"] = JSON.stringify(onlyTask);
+
+    const libMod = require(path.join(PKG, "tools", "library.js"));
+    await libMod.mount(view, {
+      setStatus() {},
+      data: require(path.join(PKG, "lib", "data.js")),
+      ps: require(path.join(PKG, "lib", "ps.js")),
+    });
+    await sleep(250);
+    const note = document.getElementById("vt-lib-metanote");
+    const txt = note ? String(note.textContent || "") : "";
+    const shown = !!(note && String(note.style.display) !== "none");
+    const tabs = document.getElementById("vt-lib-tabs");
+    const tabCount = tabs ? tabs.children.length : -1;
+    check(
+      "42 镜像只有 1 个库时给出如实提示（库列表由 manifest.scopes 决定，不是插件丢了入口）",
+      tabCount === 1 && shown && txt.indexOf("只有 1 个库") >= 0,
+      "tab 数=" + tabCount + "（期望 1，与 scopes 一致）　提示显示=" + shown +
+        "　文案=" + JSON.stringify(txt.slice(0, 60))
+    );
+    libMod.unmount();
+    await sleep(50);
+    files["library/manifest.json"] = savedManifest; // 还原，别影响后面的断言
+  }
+
+  /* ---- 43. handoff：res 先到、文件后到 ⇒ 必须**等文件落盘**，不能看一眼就判死 ----
+     这条直接对应用户报的 ①「原图已就位但拿不到文件句柄」：真机上 res.json 写着
+     `ok:true / size=627927`，而 handoff/ 里压根没有那个文件。 */
+  {
+    const handoff = require(path.join(PKG, "lib", "handoff.js"));
+    delete files["library/handoff/incoming.png"];
+    const resObj = {
+      contract: "vellum-link/1", reqId: "r-late", ok: true,
+      file: "handoff/incoming.png", size: 12,
+    };
+    // 文件"迟到" 400ms 才出现
+    setTimeout(() => {
+      files["library/handoff/incoming.png"] = "hello-bytes!";
+    }, 400);
+    const t0 = Date.now();
+    const inc = await handoff.fetchIncoming(resObj, { waitMs: 3000, intervalMs: 100 });
+    const dt = Date.now() - t0;
+
+    // 反面：文件**始终不来**时，错误文案要能说明"res 说 ok 但文件不在"
+    delete files["library/handoff/incoming.png"];
+    const t1 = Date.now();
+    const miss = await handoff.fetchIncoming(
+      { reqId: "r-never", ok: true, file: "handoff/incoming.png", size: 627927 },
+      { waitMs: 500, intervalMs: 100 }
+    );
+    const dt1 = Date.now() - t1;
+
+    // 源码级：那句错位的"原图已就位"必须已经不存在（用**完整的旧公文**，避免误伤引用它的注释）
+    const libSrc = fs.readFileSync(path.join(PKG, "tools", "library.js"), "utf8");
+    const wordingFixed =
+      libSrc.indexOf("原图已就位但拿不到可置入的文件句柄") < 0 &&
+      libSrc.indexOf("先拷文件、后写 res.json") >= 0;
+
+    check(
+      "43 handoff：等文件落盘（res 先到/文件后到）+ 文件真的不来时不谎报「已就位」",
+      inc.ok === true && inc.byteLength === 12 && dt >= 350 &&
+        miss.ok === false && miss.res && miss.res.size === 627927 &&
+        miss.error.indexOf("不存在") >= 0 && dt1 >= 450 && wordingFixed,
+      "迟到场景：ok=" + inc.ok + " 字节=" + inc.byteLength + " 等了=" + dt + "ms（须 ≥350）" +
+        "　不来场景：ok=" + miss.ok + " 等了=" + dt1 + "ms　res.size=" + (miss.res ? miss.res.size : "-") +
+        "　错误=" + JSON.stringify(miss.error) +
+        "　错位文案已改掉=" + wordingFixed
+    );
+  }
+
+  /* ---- 44. 假软件桩**拒绝**覆盖真软件写的镜像（不允许"--force"以外的方式清掉真镜像） ----
+     为什么值得一条断言：真 VellumDesk 上线后，真镜像与 fixture 躺在同一个目录里，
+     一句随手命令就会把用户的真素材换成假数据，而且**看起来是成功的**。
+     ⚠️ 本环境**起不了子进程**（`spawnSync` 报 EBUSY）⇒ 改用两件更强的东西：
+        ① 安全闸抽成**纯函数** `canWrite()`，直接单测四种情形；
+        ② **源码级**确认两条写路径（正常写 / `--clean`）**都调了**它 —— 只测纯函数不够，
+           得确认它真的被接上。 */
+  {
+    const os = require("os");
+    const stub = require(path.join(__dirname, "fake-vellumdesk.cjs"));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vellum-fake-"));
+    const man = path.join(tmp, "manifest.json");
+    const write = (obj) => fs.writeFileSync(man, JSON.stringify(obj));
+
+    write({ contract: "vellum-link/1", generator: { app: "VellumDesk", version: "1.9.7" }, scopes: [] });
+    const a = stub.canWrite(man, false); // 真软件写的 → 拒
+    write({ contract: "vellum-link/1", generator: { app: "VellumDesk", fixture: true }, scopes: [] });
+    const b = stub.canWrite(man, false); // 本桩自己写的 → 允
+    write({ generator: { app: "VellumDesk" } });
+    const c = stub.canWrite(man, true); // --force → 允
+    fs.rmSync(man);
+    const d = stub.canWrite(man, false); // 空目录 → 允
+    write({ contract: "vellum-link/1", generator: { app: "VellumDesk" } });
+    const e = stub.canWrite(man, true); // --force + 真镜像 → 允（user 明确的意图）
+    fs.rmSync(tmp, { recursive: true, force: true });
+
+    const src = fs.readFileSync(path.join(__dirname, "fake-vellumdesk.cjs"), "utf8");
+    const callCount = (src.match(/assertNotClobbering\(\);/g) || []).length;
+    const exits3 = src.indexOf("process.exit(3)") >= 0;
+    const guarded = callCount === 2 && exits3;
+
+    check(
+      "44 假软件桩拒绝覆盖真镜像（canWrite 单测 + 两条写路径都接了闸）",
+      a.ok === false && a.reason === "foreign" &&
+        b.ok === true && c.ok === true && d.ok === true && e.ok === true && guarded,
+      "真 manifest→" + (a.ok ? "允许" : "拒绝") + "（须拒绝）" +
+        "　fixture→" + (b.ok ? "允许" : "拒绝") + "（须允许）" +
+        "　--force→" + (c.ok ? "允许" : "拒绝") + "（须允许）" +
+        "　空目录→" + (d.ok ? "允许" : "拒绝") + "（须允许）" +
+        "　‖ 源码闸：assertNotClobbering() 调用 " + callCount + " 处（须 2：正常写 + --clean）" +
+        "　process.exit(3)=" + exits3
+    );
+  }
+
   /* ---- 生成浏览器预览（用的是同一份渲染代码产出的 DOM） ---- */
   let previewPath = null;
   if (WANT_PREVIEW) {

@@ -11,6 +11,13 @@
  *   node tools/fake-vellumdesk.cjs --clean          清掉镜像目录
  *   node tools/fake-vellumdesk.cjs --dir <path>     指定 PluginData 目录
  *   node tools/fake-vellumdesk.cjs --major 26       指定 PS 大版本（默认 27）
+ *   node tools/fake-vellumdesk.cjs --force          **强行覆盖非 fixture 的镜像**（见下）
+ *
+ * 🔴 **安全闸（2026-10-11 加）：本桩拒绝对"真软件写的镜像"落笔。**
+ *    真 VellumDesk 上线后，真镜像与假镜像躺在**同一个目录**里，
+ *    一句随手命令就会把用户的真项目/真素材换成 fixture，而且**看起来是成功的**。
+ *    识别方式：本桩写的 manifest 带 `generator.fixture = true`，真软件的不带 ⇒ 直接 `exit 3`。
+ *    要覆盖必须显式 `--force`。**`--clean` 同样受这道闸保护。**
  *
  * ⚠️ 契约要点（改这里务必对照 `D:\vellum-link\LINK-CONTRACT.md`，唯一权威源）
  *   1. **缩略图必须 png/jpg，不得 webp** —— UXP 的 `<img>` 不解码 webp（插件侧 S19 实测）。
@@ -46,6 +53,7 @@ function argVal(name, dflt) {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
 }
 const CLEAN = argv.includes("--clean");
+const FORCE = argv.includes("--force");
 const PS_MAJOR = argVal("--major", "27");
 const TASK_REV = Number(argVal("--task-rev", "87"));
 const BRAND_REV = Number(argVal("--brand-rev", "3"));
@@ -360,6 +368,49 @@ function brandJson() {
   };
 }
 
+/**
+ * **纯函数**：给定 manifest 路径与自身身份，判断"能不能写"。
+ * 抽成纯函数是为了**能被测**（本环境起不了子进程：`spawnSync` 报 EBUSY），
+ * 于是"拒绝覆盖"这件事靠两个东西守住：① 这个函数的单测；② 源码级确认两条写路径都调了它。
+ * @returns {{ok:true, reason?:string} | {ok:false, reason:"foreign", prev:object|null}}
+ */
+function canWrite(manifestPath, force) {
+  if (force) return { ok: true, reason: "forced" };
+  if (!fs.existsSync(manifestPath)) return { ok: true, reason: "fresh" };
+  let prev = null;
+  try {
+    prev = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  } catch {
+    prev = null; // 解析不了（可能正被真软件写着）→ 按"不是我们的"处理，更安全
+  }
+  const ours = !!(prev && prev.generator && prev.generator.fixture === true);
+  if (ours) return { ok: true, reason: "ours" };
+  return { ok: false, reason: "foreign", prev: prev };
+}
+
+/* ---------- 安全闸：绝不覆盖"真软件"写出来的镜像 ----------
+ * 为什么必须有这道闸（2026-10-11 加）：真 VellumDesk 已经上线写镜像了，
+ * 而这台机器上**真镜像和假镜像躺在同一个目录**。以前本桩是"随手一跑"，
+ * 现在同一句命令会**把用户的真镜像（真项目/真素材/真缩略图）整个换成 fixture**——
+ * 而且它看起来"成功"了，最难发现。
+ * 识别方式：本桩写出的 manifest 带 `generator.fixture = true`；真软件的不带。
+ * 要强行覆盖必须显式 `--force`（`--clean` 同样受此闸保护）。 */
+function assertNotClobbering() {
+  const man = path.join(LIB, "manifest.json");
+  const v = canWrite(man, FORCE);
+  if (v.ok) return;
+  console.error("");
+  console.error("✗ 拒绝覆盖：现有 manifest.json 不是本桩写的（缺 generator.fixture=true）。");
+  console.error("  那意味着 **VellumDesk 真软件**已经往这里写过镜像了：");
+  console.error("  " + man);
+  console.error("  （generator=" + JSON.stringify(v.prev && v.prev.generator ? v.prev.generator : null) + "）");
+  console.error("");
+  console.error("  本桩会把整个 library/ 换成 fixture —— 真项目/真素材会一起没。");
+  console.error("  真要覆盖：node tools/fake-vellumdesk.cjs --force");
+  console.error("  只想清空：node tools/fake-vellumdesk.cjs --clean   （⚠️ 同样会删掉真镜像，所以也要 --force）");
+  process.exit(3);
+}
+
 /* ---------- 落盘 ---------- */
 function writeJson(file, obj) {
   fs.writeFileSync(path.join(LIB, file), JSON.stringify(obj, null, 2) + "\n", { encoding: "utf8" });
@@ -367,10 +418,13 @@ function writeJson(file, obj) {
 
 function main() {
   if (CLEAN) {
+    assertNotClobbering();
     fs.rmSync(LIB, { recursive: true, force: true });
     console.log("已清掉镜像目录：" + LIB);
     return;
   }
+
+  assertNotClobbering();
 
   fs.mkdirSync(path.join(LIB, "thumb"), { recursive: true });
   fs.mkdirSync(path.join(LIB, "handoff"), { recursive: true }); // 契约 §六：软件侧预建
@@ -404,4 +458,8 @@ function main() {
   console.log("  handoff/        已预建（req.json 由插件写，本桩不碰）");
 }
 
-main();
+// ⚠️ 只有**被直接执行**时才跑 main —— 被 `require`（离线回归要测 `canWrite`）时不跑。
+//    否则 require 一次就会真的把镜像写掉。
+if (require.main === module) main();
+
+module.exports = { canWrite, main };

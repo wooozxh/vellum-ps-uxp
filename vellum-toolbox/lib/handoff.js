@@ -38,6 +38,8 @@ const RES_FILE = "res.json";
 const CONTRACT = "vellum-link/1";
 const DEFAULT_TIMEOUT_MS = 10000; // 契约 §六.4
 const POLL_MS = 300; // 契约 §六 拓扑图
+const FILE_WAIT_MS = 5000; // 看到 res 之后再给文件落盘多久（见 fetchIncoming 说明）
+const FILE_POLL_MS = 250;
 
 function dirParts() {
   return [MIRROR_DIR, HANDOFF_DIR];
@@ -149,21 +151,70 @@ function incomingName(res) {
  * 为什么要 Entry 而不只是路径：UXP 把文件交给 `batchPlay` 时，
  * 需要的是从 **Entry 换出来的会话令牌**，字符串路径会被拒
  * （真机实测 `invalid file token used`，见 lib/ps.js placeFile）。
+ *
+ * 🔴 **为什么这里要"轮询等文件"而不是看一眼就判死**（2026-10-11 真机踩到）：
+ *    软件侧很可能「**先写 res.json、后拷文件**」，于是插件看到 res 的那一刻文件还没落盘 ——
+ *    真机日志 `handoff incoming ok=false name="incoming.jpg" bytes=0 entry=false
+ *    err=文件不存在：incoming.jpg`，而 res.json 里白纸黑字写着 `ok:true, size:627927`。
+ *    一眼判死就把"**竞态**"和"**软件根本没拷**"混成了同一个现象。
+ *    ⇒ 看到 res 之后再给它一小段时间找文件（默认 5s / 每 250ms 一次）。
+ *    契约 §六 已补一条顺序约束：**先落文件、后写 res.json**；这里是不依赖对方守约的容错。
+ *
+ * @param {object} res   `res.json` 的原始对象
+ * @param {object} [opts] `{waitMs, intervalMs}`
+ * @returns {Promise<object>} ok / name / entry / path / byteLength / waited / res / error
  */
-async function fetchIncoming(res) {
+async function fetchIncoming(res, opts) {
+  const o = opts || {};
+  const waitMs = typeof o.waitMs === "number" ? o.waitMs : FILE_WAIT_MS;
+  const step = o.intervalMs || FILE_POLL_MS;
   const name = incomingName(res);
-  const entry = await data.entryIn(dirParts(), name);
-  const bin = await data.readBinaryIn(dirParts(), name);
+  const t0 = Date.now();
+
+  let entry = null;
+  let bin = { ok: false, error: "未尝试" };
+  for (;;) {
+    entry = await data.entryIn(dirParts(), name);
+    if (entry) {
+      bin = await data.readBinaryIn(dirParts(), name);
+      if (bin.ok) break;
+    }
+    if (Date.now() - t0 >= waitMs) break;
+    await sleep(step);
+  }
+  const waited = Date.now() - t0;
   const ok = !!entry && !!bin.ok;
+
+  // 失败为什么要带上 res 里的读数：这句话要能**区分**两种完全不同的原因 ——
+  //   · res 说 ok:true 但文件不在 ⇒ **软件侧没拷成 / 拷晚了**（对方的问题）
+  //   · res 说 ok:false ⇒ 软件侧明确报错，看它的 error（原文带出来）
+  const resInfo = res
+    ? {
+        ok: !!res.ok,
+        size: res.size === undefined || res.size === null ? null : res.size,
+        at: res.at || null,
+        error: res.error === undefined ? null : res.error,
+      }
+    : null;
+
+  let error = null;
+  if (!ok) {
+    if (!entry) {
+      error = "handoff/" + name + " 不存在（等了 " + waited + "ms）";
+    } else {
+      error = "文件在，但读不出字节（" + (bin.error || "未知") + "）";
+    }
+  }
+
   return {
     ok: ok,
     name: name,
     entry: entry || null,
     path: entry ? entry.nativePath || null : null,
     byteLength: bin.ok ? bin.byteLength : 0,
-    error: bin.ok
-      ? (entry ? null : "文件在，但拿不到 Entry（置入必须用 Entry 换会话令牌）")
-      : bin.error,
+    waited: waited,
+    res: resInfo,
+    error: error,
   };
 }
 
@@ -188,6 +239,8 @@ module.exports = {
   RES_FILE,
   DEFAULT_TIMEOUT_MS,
   POLL_MS,
+  FILE_WAIT_MS,
+  FILE_POLL_MS,
   dirParts,
   isoLocal,
   newReqId,
