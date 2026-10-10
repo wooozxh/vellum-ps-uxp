@@ -917,6 +917,16 @@
         align-items: center;
       }
 
+      /* chips 装在 .fchips 里（把左侧剩余宽度吃满）——
+         这样**行尾还能再挂一个下拉**（通用库的二级子类就挂在同一行的最右边）。 */
+      .fchips {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
       .frow .fchip {
         margin: 0 6px 4px 0;
       }
@@ -959,7 +969,7 @@
         font-size: 10px;
       }
 
-      /* ── 二层筛选：自绘下拉（v0.3.0）
+      /* ── 自绘下拉（v0.3.0；v0.3.1 起「项目」与「二层子类」共用）
          为什么自绘：原生 <select> 外观改不动（与"样式沿用现有风格"冲突），
          而 Spectrum sp-picker 真机实测未注册 ⇒ 不可用。见 docs/25。 */
       .fsel-wrap {
@@ -968,8 +978,17 @@
         margin: 0 6px 4px 0;
       }
 
+      /* 挂在**行尾**的下拉：自身不伸缩、贴右侧，宽度封顶（长名字靠 .fs-t 截断） */
+      .fsel-wrap.push {
+        flex: 0 0 auto;
+        align-self: center;
+        margin: 0 0 4px 8px;
+        max-width: 150px;
+      }
+
       .fsel {
         display: inline-block;
+        max-width: 100%;
         height: 22px;
         line-height: 20px;
         padding: 0 6px 0 8px;
@@ -980,6 +999,22 @@
         font-size: 11px;
         white-space: nowrap;
         cursor: pointer;
+      }
+
+      /* 触发条里的三个片段一律 `vertical-align: top`（内容盒正好 20px），
+         否则"截断用的 inline-block"与"纯文本"基线不一致，三个片段会高低错位。 */
+      .fsel .fs-t {
+        display: inline-block;
+        max-width: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        vertical-align: top;
+      }
+
+      .fsel .fs-n,
+      .fsel .fs-cv {
+        vertical-align: top;
       }
 
       .fsel:hover {
@@ -1002,20 +1037,24 @@
       }
 
       /* 展开的列表。
-         ⚠️ 两条硬约束：
+         ⚠️ 三条硬约束：
            ① 与触发条之间留 6px 间隙、且**不覆盖触发条本身**（覆盖会让指针一进入浮层，
               触发条就"失焦"，若隐藏逻辑再绑 hover 就是振荡回路 —— 调色板那次的教训）；
-           ② **必须落在滚动容器 `.scroll` 之内** —— 它有 overflow-y:auto，越界会被裁掉。
-              这条在自检 S20c 里是**可测不变量**。 */
+           ② **必须落在滚动容器 `.scroll` 之内** —— 它同时有 `overflow-y:auto` 与
+              `overflow-x:hidden`，**越界会被裁掉**。这条在自检 S20c 里是**可测不变量**；
+           ③ 因此浮层是**右对齐**展开的（`right:0` 而非 `left:0`）——
+              这两个下拉都贴在**行尾**，往右展开必然越界。 */
       .fsel-pop {
         display: none;
         position: absolute;
-        left: 0;
+        right: 0;
         top: 100%;
         margin-top: 6px;
         min-width: 100%;
+        max-width: 230px;
         max-height: 168px;
         overflow-y: auto;
+        overflow-x: hidden;
         z-index: 30;
         padding: 3px;
         border: 1px solid var(--vt-line);
@@ -1047,8 +1086,12 @@
         color: var(--vt-tx);
       }
 
+      /* `min-width:0` + 截断：选项名可能很长（项目名），浮层又有 max-width */
       .fopt .fo-t {
         flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .fopt .fo-n {
@@ -1058,19 +1101,26 @@
         opacity: 0.65;
       }
 
-      /* ── 落点：九宫格（v0.3.0）—— 3×3 用 flex-wrap + 百分比（不用 Grid、不用 gap） */
+      /* ── 落点：九宫格（v0.3.0；v0.3.1 起「落点」二字移到九宫格**上方**）
+         3×3 用 flex-wrap + 百分比（不用 Grid、不用 gap） */
       .anchor-wrap {
         display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        margin-left: 10px;
+        flex-direction: column;
+        align-items: flex-start;
+        flex: 0 0 auto;
+        margin-left: 14px;
+      }
+
+      .anchor-hd {
+        margin-bottom: 4px;
+        font-size: 11px;
+        color: var(--vt-tx4);
       }
 
       .anchors {
         display: flex;
         flex-wrap: wrap;
         width: 96px;
-        margin-right: 8px;
       }
 
       .anchor-cell {
@@ -1098,8 +1148,17 @@
         border-color: var(--vt-ac);
       }
 
+      /* ⚠️ 已废弃：v0.3.1 起「落点」二字改用 `.anchor-hd`（在九宫格上方），
+         说明文字挪到置入按钮下方。留这条只是防止老标记写法意外错位。 */
       .anchor-wrap .lf-note {
         margin-left: 0;
+      }
+
+      /* 顶部行里的「项目」下拉（仅任务库）：紧挨刷新按钮左侧 */
+      .lib-proj {
+        flex: 0 0 auto;
+        margin: 0 0 6px 6px;
+        max-width: 55%;
       }
 
       .fchip:hover {
@@ -1127,8 +1186,9 @@
         display: block;
       }
 
-      /* 网格：负外边距 + 每格左右内边距 —— 这样三列之间与两端都对齐，
-         且完全不依赖 gap / Grid / :nth-child。 */
+      /* 网格：负外边距 + 每格左右内边距 —— 这样两列之间与两端都对齐，
+         且完全不依赖 gap / Grid / :nth-child。
+         v0.3.1：3 列 → **2 列**（用户要求"卡片再大一些"）。 */
       .lib-grid {
         display: flex;
         flex-wrap: wrap;
@@ -1136,7 +1196,7 @@
       }
 
       .card {
-        width: 33.3333%;
+        width: 50%;
         padding: 0 5px 10px;
         cursor: pointer;
       }
@@ -1153,10 +1213,11 @@
         border-color: var(--vt-ac);
       }
 
-      /* 缩略图区：固定高度，图片 contain（不裁切、不变形） */
+      /* 缩略图区：固定高度，图片 contain（不裁切、不变形）
+         v0.3.1：两列之后卡片变宽，缩略图高度跟着放大（84 → 120），否则卡片会显得扁。 */
       .card-th {
         position: relative;
-        height: 84px;
+        height: 120px;
         background: var(--vt-sink);
         border-bottom: 1px solid var(--vt-line2);
         overflow: hidden;
@@ -1224,8 +1285,8 @@
 
       .card-nm {
         display: block;
-        padding: 5px 6px 1px;
-        font-size: 11px;
+        padding: 6px 7px 1px;
+        font-size: 12px;
         line-height: 1.4;
         color: var(--vt-tx);
         white-space: nowrap;
@@ -1235,8 +1296,8 @@
 
       .card-mt {
         display: block;
-        padding: 0 6px 6px;
-        font-size: 10px;
+        padding: 0 7px 7px;
+        font-size: 11px;
         color: var(--vt-tx4);
         white-space: nowrap;
         overflow: hidden;
@@ -1280,17 +1341,40 @@
         color: var(--vt-tx4);
       }
 
+      /* 素材信息与动作区之间的分隔线：**细、不抢视线**（用户要求"不用太明显"） */
+      .lf-sep {
+        height: 1px;
+        margin: 9px 0;
+        background: var(--vt-line2);
+      }
+
+      /* 动作区（v0.3.1 按用户要求改排）：**左＝置入按钮（说明文字在它下方）、右＝落点九宫格** */
       .lf-act {
         display: flex;
         flex-wrap: wrap;
-        align-items: center;
-        margin-top: 8px;
+        align-items: flex-start;
+        justify-content: space-between;
+      }
+
+      .lf-act-l {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        flex: 1 1 auto;
+        min-width: 0;
       }
 
       .lf-note {
-        margin-left: 8px;
+        margin-top: 6px;
         font-size: 11px;
+        line-height: 1.5;
         color: var(--vt-tx4);
+        word-break: break-all;
+      }
+
+      /* 「不能置入」的提示（原文件丢失 / 类型不支持）—— 用主题里的警示色，两种主题都读得清 */
+      .lf-note.is-warn {
+        color: var(--vt-warn);
       }
 
       /* 主按钮（复用 .mini 的形状）+ 不可用态 */

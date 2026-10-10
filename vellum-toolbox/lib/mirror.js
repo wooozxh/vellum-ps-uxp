@@ -189,6 +189,18 @@ function flattenBrand(d) {
   return out;
 }
 
+/**
+ * 这个 scope 的**形态** —— 用来决定界面怎么排（不是靠 scope id 硬编码）。
+ * 契约 §5.2 的 `task.json` 有 `projects`；§5.3 的 `brand.json` 有 `groups`。
+ * 认不出来就返回 `"unknown"`，界面按"没有二级结构"处理（宁少不崩）。
+ */
+function scopeKind(data) {
+  const d = data || {};
+  if (Array.isArray(d.projects)) return "task";
+  if (Array.isArray(d.groups)) return "brand";
+  return "unknown";
+}
+
 /** 按 scope id 展平。 */
 function flatten(scopeId, d) {
   return scopeId === "brand" ? flattenBrand(d) : flattenTask(d);
@@ -433,6 +445,7 @@ module.exports = {
   flatten,
   flattenTask,
   flattenBrand,
+  scopeKind,
   groupTree,
   sourceSummary,
   sourceLabel,

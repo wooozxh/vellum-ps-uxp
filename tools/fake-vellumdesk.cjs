@@ -134,6 +134,7 @@ const WS = "D:\\vellum_workspace";
 const THUMBS = [
   { file: "t401.png", w: 320, h: 240, color: "#2F8FE0" },
   { file: "t402.png", w: 320, h: 240, color: "#23AEC1" },
+  { file: "t403.png", w: 300, h: 300, color: "#C86A2B" },
   { file: "b1.png", w: 160, h: 160, color: "#0F8F63" },
   { file: "b2.png", w: 240, h: 320, color: "#3FCB7B" },
   { file: "b3.png", w: 320, h: 200, color: "#E6D6A8" },
@@ -148,7 +149,7 @@ function manifestJson() {
     workspaceRoot: WS,
     psMajor: PS_MAJOR,
     scopes: [
-      { id: "task", label: "任务库", file: "task.json", revision: TASK_REV, count: 2 },
+      { id: "task", label: "任务库", file: "task.json", revision: TASK_REV, count: 3 },
       { id: "brand", label: "通用库", file: "brand.json", revision: BRAND_REV, count: 4 },
     ],
   };
@@ -207,6 +208,42 @@ function taskJson() {
                 modifiedAt: "2026-10-08T12:30:00+08:00",
                 absPath: WS + "\\海南升学集训营\\开营海报-2026秋季\\V1\\01-成品\\开营海报.jpg",
                 tags: ["海报"],
+              },
+            ],
+          },
+        ],
+      },
+      /* 第二个项目：单靠一个项目**验不出项目筛选**（下拉只有一个选项时它就不构成筛选） */
+      {
+        id: 2,
+        name: "秋季招生宣讲",
+        color: "#C86A2B",
+        sortOrder: 1,
+        archived: false,
+        packs: [
+          {
+            id: 21,
+            name: "宣讲主KV-2026",
+            category: "主视觉",
+            channel: "官网",
+            folderPath: WS + "\\秋季招生宣讲\\宣讲主KV-2026",
+            versions: [{ id: 40, seq: 1, isCurrent: true, note: "", folderName: "V1" }],
+            assets: [
+              {
+                id: 403,
+                name: "宣讲主KV.png",
+                ext: "png",
+                kind: "image",
+                role: "成品",
+                size: 1320000,
+                width: 3000,
+                height: 3000,
+                versionId: 40,
+                thumb: "thumb/t403.png",
+                missing: false,
+                modifiedAt: "2026-10-09T09:15:00+08:00",
+                absPath: WS + "\\秋季招生宣讲\\宣讲主KV-2026\\V1\\01-成品\\宣讲主KV.png",
+                tags: ["KV"],
               },
             ],
           },
@@ -361,7 +398,7 @@ function main() {
   console.log("假 VellumDesk 镜像已写入（契约合规）：");
   console.log("  " + LIB);
   console.log("  manifest.json   scopes: task(rev " + TASK_REV + ") / brand(rev " + BRAND_REV + ")  psMajor=" + PS_MAJOR);
-  console.log("  task.json       1 个项目 / 1 个任务包 / V1 / 2 个素材（id 401/402）");
+  console.log("  task.json       2 个项目 / 2 个任务包 / 各 V1 / 3 个素材（id 401/402/403）");
   console.log("  brand.json      两级分组：公司素材(2) › 节日素材(1) ／ 我的收藏(1)　来源 company 3 / user 1");
   console.log("  thumb/          " + THUMBS.length + " 张 PNG 命名空间命名（共 " + total + " 字节）");
   console.log("  handoff/        已预建（req.json 由插件写，本桩不碰）");

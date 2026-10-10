@@ -1245,6 +1245,278 @@ async function main() {
     );
   }
 
+  /* ==================================================================
+   * v0.3.1：用户 2026-10-11 提的四条 UI 调整
+   *   ① 详情区：置入按钮居左、落点九宫格居右（「落点」在九宫格上方）、
+   *      信息区与动作区之间加细分隔线、去掉「置入为新图层」文案
+   *   ② 任务库：刷新按钮左侧加「项目」筛选下拉
+   *   ③ 素材网格：3 列 → 2 列
+   *   ④ 通用库：二级下拉与一级按钮放同一行的最右侧
+   * ================================================================== */
+
+  /* ---- 37. 素材网格改 2 列（缩略图跟着加高） ---- */
+  {
+    const css = fs.readFileSync(path.join(PKG, "index.html"), "utf8");
+    const cardBlock = (/\.card\s*\{[^}]*\}/.exec(css) || [""])[0];
+    const thBlock = (/\.card-th\s*\{[^}]*\}/.exec(css) || [""])[0];
+    const w = /width:\s*([0-9.]+)%/.exec(cardBlock);
+    const h = /height:\s*(\d+)px/.exec(thBlock);
+    check(
+      "37 素材网格 2 列：.card 宽 50% + .card-th 加高（卡片变小格子 → 变大）",
+      !!w && Number(w[1]) === 50 && !!h && Number(h[1]) >= 100,
+      ".card 宽=" + (w ? w[1] + "%" : "?") +
+        "　.card-th 高=" + (h ? h[1] + "px" : "?") +
+        "　（3 列旧值 33.3333% / 84px）"
+    );
+  }
+
+  /* ---- 38. 四条调整的"结构件"齐备（源码级，防止以后手滑改回去） ----
+     重点两条：
+       · 下拉浮层必须**右对齐**（`right:0` 且没有 `left:0`）—— 这两个下拉都贴**行尾**，
+         而滚动容器有 `overflow-x:hidden`，往右展开会被裁掉（真机 S20c 是硬判据）；
+       · `.fchips` 必须能伸缩（`flex:1 1 auto`）—— 二级下拉靠它被顶到行尾。 */
+  {
+    const css = fs.readFileSync(path.join(PKG, "index.html"), "utf8");
+    const pop = (/\.fsel-pop\s*\{[^}]*\}/.exec(css) || [""])[0];
+    const proj = (/\.lib-proj\s*\{[^}]*\}/.exec(css) || [""])[0];
+    const fchips = (/\.fchips\s*\{[^}]*\}/.exec(css) || [""])[0];
+    const sep = (/\.lf-sep\s*\{[^}]*\}/.exec(css) || [""])[0];
+    const hd = (/\.anchor-hd\s*\{[^}]*\}/.exec(css) || [""])[0];
+    const rightAnchored = pop.indexOf("right: 0") >= 0 && pop.indexOf("left: 0") < 0;
+    check(
+      "38 四条调整的结构件齐备（下拉右对齐 / chips 可伸缩 / 顶部槽位 / 分隔线 / 落点标题）",
+      rightAnchored && proj.indexOf("flex") >= 0 && fchips.indexOf("flex: 1 1 auto") >= 0 &&
+        /height:\s*1px/.test(sep) && !!hd,
+      "浮层右对齐（right:0 且无 left:0）=" + rightAnchored +
+        "　.lib-proj=" + !!proj + "　.fchips 可伸缩=" + (fchips.indexOf("flex: 1 1 auto") >= 0) +
+        "　.lf-sep=" + (/height:\s*1px/.test(sep) ? "1px 细线" : "缺少") +
+        "　.anchor-hd=" + !!hd
+    );
+  }
+
+  /* ---- 39. mirror.scopeKind：按**结构**判镜像形态（不靠 scope id 硬编码） ----
+     为什么重要：界面要按"这个库有没有项目层"决定排布。若写成 `if (id === "task")`，
+     软件侧将来加库 / 改名就会静默失效（界面照常渲染，只是少了那一块）。 */
+  {
+    const mirror = require(path.join(PKG, "lib", "mirror.js"));
+    const a = mirror.scopeKind({ projects: [] });
+    const b = mirror.scopeKind({ groups: [] });
+    const c = mirror.scopeKind({});
+    const d = mirror.scopeKind(null);
+    const e = mirror.scopeKind({ projects: [], groups: [] });
+    check(
+      "39 mirror.scopeKind —— 结构判定（projects→task / groups→brand / 其它→unknown）",
+      a === "task" && b === "brand" && c === "unknown" && d === "unknown" && e === "task",
+      "projects→" + a + "　groups→" + b + "　{}→" + c + "　null→" + d +
+        "　两者都有→" + e + "（projects 更具体，优先）"
+    );
+  }
+
+  /* ---- 40. 真实挂载一遍：项目下拉 / 二级下拉同行 / 详情区新布局 ----
+     把一份最小镜像灌进 mock 文件树（前面 23 条验的是"镜像缺失"那条路，
+     这条走**有镜像**那条路）。判据全部读 DOM，不读模块内部状态。 */
+  {
+    files["library/manifest.json"] = JSON.stringify({
+      contract: "vellum-link/1",
+      generatedAt: "2026-10-11T02:00:00+08:00",
+      scopes: [
+        { id: "task", label: "任务库", file: "task.json", revision: 11, count: 3 },
+        { id: "brand", label: "通用库", file: "brand.json", revision: 3, count: 2 },
+      ],
+    });
+    const mkAsset = (id, name, thumb, extra) =>
+      Object.assign(
+        {
+          id: id, name: name, ext: "png", kind: "image", role: "成品",
+          width: 100, height: 100, versionId: null, thumb: thumb, missing: false,
+          absPath: "D:/w/" + name,
+        },
+        extra || {}
+      );
+    files["library/task.json"] = JSON.stringify({
+      contract: "vellum-link/1", scope: "task", revision: 11,
+      projects: [
+        {
+          id: 1, name: "甲项目",
+          packs: [{
+            id: 11, name: "甲包",
+            versions: [{ id: 30, seq: 1, isCurrent: true, folderName: "V1" }],
+            assets: [
+              mkAsset(401, "a.png", "thumb/t1.png", { versionId: 30 }),
+              mkAsset(402, "b.png", "thumb/t1.png", { versionId: 30 }),
+            ],
+          }],
+        },
+        {
+          id: 2, name: "乙项目",
+          packs: [{
+            id: 21, name: "乙包",
+            versions: [{ id: 40, seq: 1, isCurrent: true, folderName: "V1" }],
+            assets: [mkAsset(403, "c.png", "thumb/t1.png", { versionId: 40 })],
+          }],
+        },
+      ],
+    });
+    files["library/brand.json"] = JSON.stringify({
+      contract: "vellum-link/1", scope: "brand", revision: 3,
+      // ⚠️ 必须有**两个顶层分组**：只有一个顶层组时，"一级 chips 行"本身不构成筛选、不许画
+      //    （那时二级下拉会退化成独占一行的兜底分支 —— 正是这个 fixture 第一版踩的坑）
+      groups: [
+        {
+          id: 1, name: "公司素材", sortOrder: 0,
+          assets: [mkAsset(901, "x.png", "thumb/t1.png", { source: "company" })],
+        },
+        {
+          id: 2, name: "节日素材", parentId: 1, sortOrder: 1,
+          assets: [mkAsset(902, "y.png", "thumb/t1.png", { source: "company" })],
+        },
+        {
+          id: 3, name: "我的收藏", sortOrder: 2,
+          assets: [mkAsset(903, "z.png", "thumb/t1.png", { source: "user" })],
+        },
+      ],
+    });
+    dirs["library"] = true;
+    dirs["library/thumb"] = true;
+    files["library/thumb/t1.png"] = "\u0089PNG-fake"; // 内容不重要，只要"有缩略图"这条路走通
+
+    const libMod = require(path.join(PKG, "tools", "library.js"));
+    await libMod.mount(view, {
+      setStatus() {},
+      data: require(path.join(PKG, "lib", "data.js")),
+      ps: require(path.join(PKG, "lib", "ps.js")),
+    });
+    await sleep(300);
+
+    const click = (el) => {
+      if (el) el.dispatchEvent(new Event("click", { bubbles: true }));
+      return !!el;
+    };
+    /**
+     * ⚠️ mock 的 `byId` 是**只增不减**的注册表 —— `removeChild` 不会把它摘掉，
+     * 所以脱离 DOM 的老节点**仍然能被 getElementById 找到**。
+     * 因此"这个元素没了"必须判**是否还挂在文档上**，不能只判 `!!el`。
+     * （真机 UXP 的 getElementById 是正常的，这条只影响离线。）
+     */
+    const attached = (el) => {
+      for (let n = el; n; n = n.parentNode) {
+        if (n === global.document.documentElement) return true;
+      }
+      return false;
+    };
+    /** 往上找第一个 class 含 cls 的祖先。 */
+    const ancWith = (el, cls) => {
+      for (let n = el; n; n = n.parentNode) {
+        const c = String((n.getAttribute && n.getAttribute("class")) || "");
+        if (c.split(/\s+/).indexOf(cls) >= 0) return n;
+      }
+      return null;
+    };
+    /** 递归收集带某属性的元素。 */
+    const collectByAttr = (root, attr, out) => {
+      if (!root) return out;
+      for (const c of root.children) {
+        if (c.getAttribute && c.getAttribute(attr) !== null) out.push(c);
+        collectByAttr(c, attr, out);
+      }
+      return out;
+    };
+
+    // ① 任务库：项目下拉存在，而且真的在**顶部槽位**里
+    const projSel = document.getElementById("vt-lib-projsel");
+    const slot = document.getElementById("vt-lib-projslot");
+    let inSlot = false;
+    for (let n = projSel; n; n = n.parentNode) if (n === slot) { inSlot = true; break; }
+
+    // ② 选第二个项目 → 卡片收窄到 1（自数） + 筛选区**不再重复**这个条件
+    click(projSel);
+    const pop = document.getElementById("vt-lib-projpop");
+    let opt2 = null;
+    if (pop) {
+      for (const c of pop.children) if (c.getAttribute("data-proj") === "乙项目") opt2 = c;
+    }
+    const optCount = pop ? pop.children.length : -1;
+    click(opt2);
+    await sleep(200);
+    const g1 = document.getElementById("vt-lib-grid");
+    const cardsTask = g1 ? g1.children.length : -1;
+    // 任务库只有一层（`flattenTask` 的 `sub` 恒为空）⇒ 筛选区里不该再出现项目 chip
+    const barChips = collectByAttr(document.getElementById("vt-lib-bar"), "data-key", []).length;
+
+    // ③ 切到通用库：项目下拉必须**从 DOM 摘掉**；二级下拉与一级按钮**同一行**
+    click(document.getElementById("vt-lib-tab-brand"));
+    await sleep(300);
+    const projGone = !attached(document.getElementById("vt-lib-projsel"));
+    const bar = document.getElementById("vt-lib-bar");
+    const findChip = (key) => {
+      for (const c of collectByAttr(bar, "data-key", [])) {
+        if (c.getAttribute("data-key") === key) return c;
+      }
+      return null;
+    };
+    click(findChip("公司素材"));
+    await sleep(200);
+    const subSel = document.getElementById("vt-lib-subsel");
+    const rowOfChip = ancWith(findChip("公司素材"), "frow");
+    const rowOfSub = ancWith(subSel, "frow");
+    const sameRow = !!(attached(subSel) && rowOfChip && rowOfSub && rowOfChip === rowOfSub);
+    // 失败时"自己解释自己"：把筛选区的结构签名打出来（只看直接子节点的 class + 里面的 chip key）
+    const barSig = () => {
+      if (!bar) return "no-bar";
+      const out = [];
+      for (const r of bar.children) {
+        const rc = String((r.getAttribute && r.getAttribute("class")) || "").replace(/\s+/g, ".");
+        const bits = [];
+        for (const c of collectByAttr(r, "data-key", [])) bits.push("chip:" + JSON.stringify(c.getAttribute("data-key")));
+        for (const c of collectByAttr(r, "data-opt", [])) bits.push("opt:" + JSON.stringify(c.getAttribute("data-opt")));
+        if (r.querySelector && r.querySelector(".fsel")) bits.push("trig");
+        out.push(rc + "{" + bits.join(",") + "}");
+      }
+      return out.join(" | ");
+    };
+
+    // ④ 详情区：细分隔线 + 「落点」标题在九宫格上方 + 去掉了「置入为新图层」
+    const g2 = document.getElementById("vt-lib-grid");
+    click(g2 && g2.children.length ? g2.children[0] : null);
+    await sleep(150);
+    const foot = document.getElementById("vt-lib-foot");
+    let sepOk = false;
+    let hdOk = false;
+    if (foot) {
+      const walk = (n) => {
+        for (const c of n.children) {
+          const cl = String((c.getAttribute && c.getAttribute("class")) || "");
+          if (cl.split(/\s+/)[0] === "lf-sep") sepOk = true;
+          if (cl.split(/\s+/)[0] === "anchor-hd") hdOk = true;
+          walk(c);
+        }
+      };
+      walk(foot);
+    }
+    const footTxt = foot ? String(foot.textContent || "") : "";
+    const planNoteGone = footTxt.indexOf("置入为新图层") < 0 && footTxt.indexOf("置入为智能对象") < 0;
+
+    check(
+      "40 真实挂载：项目下拉在顶部槽位/不重复画 chip · 二级与一级同行 · 详情区分隔线+落点标题",
+      inSlot && optCount === 3 && cardsTask === 1 && barChips === 0 &&
+        projGone && sameRow && sepOk && hdOk && planNoteGone,
+      "项目下拉在顶部槽位=" + inSlot +
+        "　选项数=" + optCount + "（期望 3 = 2 项目 + 全部）" +
+        "　选「乙项目」→卡片=" + cardsTask + "（期望 1）" +
+        "　筛选区里的 chip 数=" + barChips + "（须 0：项目条件已挪到顶部，不许重复画）" +
+        "　切通用库后项目下拉已摘下=" + projGone +
+        "　二级与一级同一 .frow=" + sameRow +
+        "　详情区 .lf-sep=" + sepOk + "·.anchor-hd=" + hdOk +
+        "　「置入为新图层」文案已去掉=" + planNoteGone +
+        "　‖ 失败时看这里·筛选区结构=" + barSig() +
+        "　（二级下拉 attached=" + attached(subSel) + "　chip 所在行=" + !!rowOfChip +
+        "　下拉所在行=" + !!rowOfSub + "）"
+    );
+
+    libMod.unmount();
+    await sleep(50);
+  }
+
   /* ---- 生成浏览器预览（用的是同一份渲染代码产出的 DOM） ---- */
   let previewPath = null;
   if (WANT_PREVIEW) {

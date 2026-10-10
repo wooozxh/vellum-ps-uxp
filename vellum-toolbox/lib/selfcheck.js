@@ -126,6 +126,14 @@
  *       四条判据：无选区·左上→0,0 ／ 基准报 selection 且中心 220,220 ／
  *       有选区·居中→仍居中于画布 ／ **有选区·左上→0,0**（最后这条才证明叠加语义对）。
  *
+ *   v0.3.1 新增（用户 2026-10-11 提的 4 条 UI 调整）：
+ *   S20e 任务库的**项目筛选下拉** —— 位置判据是**矩形比对**（必须落在刷新按钮左侧且同一行，
+ *       不靠 DOM 顺序猜）；还要求它**只在任务库出现**（切到通用库必须消失），
+ *       以及"选项数 = 项目数 + 全部项目""选一个项目后卡片数收窄到该项目的素材数"。
+ *       ⚠️ 一个项目时它**不构成筛选**（与「来源」行同一判断）—— 那时本条判为"不适用"。
+ *   同时跟着改的：二层子类下拉从"独占一行"挪到**一级按钮那一行的最右侧**，
+ *   S20c 因此不再依赖"子组行"这个结构，只按 id 找触发条与浮层。
+ *
  *   版本状态（v0.2.4）：S17 建的「纯色填充图层」改色**仍未解决**（已知限制，非回归），
  *   而**形状图层改色正常**（用户 2026-10-10 真机确认，日志 via=contentColorA）。
  *
@@ -388,25 +396,28 @@ async function run(ctx, deps) {
     if (c) syntheticClick(c, false);
     return !!c;
   }
-  /* ---- 二层下拉（v0.3.0）：触发条 / 展开态 / 选项 ---- */
-  function libSelWrap() {
-    return document.getElementById("vt-lib-subwrap");
+  /* ---- 自绘下拉（v0.3.0）：触发条 / 展开态 / 选项 ----
+     ⚠️ 页面上有**两个**下拉（二层子类 / 项目），所以这些都带 id 参数，
+        默认值是二层子类那一个（旧调用点不用改）。 */
+  function libSelWrap(wrapId) {
+    return document.getElementById(wrapId || "vt-lib-subwrap");
   }
-  function libSelTrigger() {
-    return document.getElementById("vt-lib-subsel");
+  function libSelTrigger(trigId) {
+    return document.getElementById(trigId || "vt-lib-subsel");
   }
-  function libSelOpen() {
-    const w = libSelWrap();
+  function libSelOpen(wrapId) {
+    const w = libSelWrap(wrapId);
     return !!(w && String((w.getAttribute && w.getAttribute("class")) || "").indexOf("is-open") >= 0);
   }
-  /** 下拉里的选项（用 `data-opt` 找，与筛选 chip 的 `data-key` 分开，免得有歧义）。 */
-  function libOpt(key) {
-    const pop = document.getElementById("vt-lib-subpop");
+  /** 下拉里的选项（用独立标识属性找：`data-opt` / `data-proj`，与筛选 chip 的 `data-key` 分开）。 */
+  function libOpt(key, popId, attr) {
+    const pop = document.getElementById(popId || "vt-lib-subpop");
     if (!pop) return null;
+    const A = attr || "data-opt";
     const walk = (n) => {
       for (let i = 0; i < n.children.length; i++) {
         const c = n.children[i];
-        const k = c.getAttribute ? c.getAttribute("data-opt") : null;
+        const k = c.getAttribute ? c.getAttribute(A) : null;
         if (k !== null && k === key) return c;
         const d = walk(c);
         if (d) return d;
@@ -414,6 +425,18 @@ async function run(ctx, deps) {
       return null;
     };
     return walk(pop);
+  }
+  /**
+   * 元素是否带某个 class。
+   * ⚠️ 必须按 **token** 判，不能用 `indexOf` 子串判 ——
+   *    `.fchips`（行内的 chips 容器）会被 `indexOf("fchip")` 判成 chip（返回 0），
+   *    于是结构签名里冒出一个 `chip:null`，白让人怀疑"是不是多画了一个空 chip"。
+   *    （同一族纪律：判据要描述**我等的那个东西**，不是"看起来像的东西"。）
+   */
+  function hasClass(el, cls) {
+    if (!el || !el.getAttribute) return false;
+    const c = String(el.getAttribute("class") || "");
+    return c.split(/\s+/).indexOf(cls) >= 0;
   }
   /** 筛选区里**平铺的子组按钮**个数（改下拉之前是一排，现在必须是 0）。 */
   function libFlatSubChips() {
@@ -423,8 +446,7 @@ async function run(ctx, deps) {
     const walk = (x) => {
       for (let i = 0; i < x.children.length; i++) {
         const c = x.children[i];
-        const cls = String((c.getAttribute && c.getAttribute("class")) || "");
-        if (cls.indexOf("fchip") >= 0 && cls.indexOf("sub") >= 0) n++;
+        if (hasClass(c, "fchip") && hasClass(c, "sub")) n++;
         walk(c);
       }
     };
@@ -516,12 +538,11 @@ async function run(ctx, deps) {
       const walk = (n) => {
         for (let j = 0; j < n.children.length; j++) {
           const c = n.children[j];
-          const cls = String((c.getAttribute && c.getAttribute("class")) || "");
-          if (cls.indexOf("fchip") >= 0) bits.push("chip:" + JSON.stringify(c.getAttribute("data-key")));
-          else if (cls.indexOf("fopt") >= 0) bits.push("opt:" + JSON.stringify(c.getAttribute("data-opt")));
-          else if (cls.indexOf("fsel-pop") >= 0) bits.push("pop");
-          else if (cls.indexOf("fsel-wrap") >= 0) bits.push("wrap{open=" + (cls.indexOf("is-open") >= 0) + "}");
-          else if (cls.indexOf("fsel") >= 0) bits.push("trig");
+          if (hasClass(c, "fchip")) bits.push("chip:" + JSON.stringify(c.getAttribute("data-key")));
+          else if (hasClass(c, "fopt")) bits.push("opt:" + JSON.stringify(c.getAttribute("data-opt")));
+          else if (hasClass(c, "fsel-pop")) bits.push("pop");
+          else if (hasClass(c, "fsel-wrap")) bits.push("wrap{open=" + hasClass(c, "is-open") + "}");
+          else if (hasClass(c, "fsel")) bits.push("trig");
           walk(c);
         }
       };
@@ -1313,7 +1334,7 @@ async function run(ctx, deps) {
 
     rec(
       S19,
-      m.ok && taskRows === 2 && brandRows === 4 && subRows === 1 &&
+      m.ok && taskRows === 3 && brandRows === 4 && subRows === 1 &&
         srcSig === "company:3|user:1" && renderOk && !!guard.webp,
       "契约=" + (m.ok ? m.manifest.contract + " ✓" : "✗ " + m.error) +
       "　scopes=[" + (m.scopes || []).map((s) => s.id + ":rev" + s.revision).join(" ") + "]" +
@@ -1703,6 +1724,112 @@ async function run(ctx, deps) {
     }
   } catch (e) {
     rec("S20d 来源筛选 —— 「来源」行只在 ≥2 种来源时出现，点了能收窄（契约 §5.4 asset.source）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* S20e 任务库的「项目」筛选下拉（v0.3.1，用户 2026-10-11 要求：放在刷新按钮左侧）
+     判据三条，都是硬的（"看起来像"不算）：
+       ① **只在任务库出现** —— 切到通用库必须消失（那里顶层是「公司素材 / 我的收藏」，不是项目）；
+       ② 位置真的在**刷新按钮左侧**且同一行 —— 用**矩形**比，不靠 DOM 顺序猜；
+       ③ 选项数 = 项目数 + 「全部项目」，且选一个项目后卡片数收窄到该项目的素材数。
+     ⚠️ 期望值全部从 task.json **自己数**，不读 library.js / mirror.js 的中间结果。 */
+  try {
+    const S20E = "S20e 项目筛选下拉 —— 只在任务库出现、在刷新按钮左侧、选项数对、能收窄";
+    let projList = []; // [{ name, n }]
+    try {
+      const rawT = await data.readTextIn(["library"], "task.json", "");
+      const td = rawT && rawT.trim() ? JSON.parse(rawT) : null;
+      for (const p of (td && td.projects) || []) {
+        let n = 0;
+        for (const k of p.packs || []) n += (k.assets || []).length;
+        projList.push({ name: p.name, n: n });
+      }
+    } catch (e) {
+      await log.appendLog("selfcheck S20e 前置失败 " + ((e && e.message) || e));
+    }
+
+    if (projList.length < 2) {
+      rec(
+        S20E,
+        false,
+        "镜像里任务库只有 " + projList.length + " 个项目 —— **只有一个选项不构成筛选**" +
+        "（本条不适用；需要 ≥2 个项目才验得出来）"
+      );
+    } else {
+      await libSwitchTo("task");
+      const okSwitch = libGridScope() === "task";
+
+      const trig = document.getElementById("vt-lib-projsel");
+      const refresh = document.getElementById("vt-lib-refresh");
+
+      // ② 位置：在刷新按钮左侧 + 同一行（矩形比对）
+      let geo = "拿不到矩形";
+      let leftOf = false;
+      let sameRow = false;
+      if (trig && refresh) {
+        const a = trig.getBoundingClientRect();
+        const b = refresh.getBoundingClientRect();
+        leftOf = a.right <= b.left + 2;
+        sameRow = a.top < b.bottom && b.top < a.bottom;
+        geo = "项目下拉 " + Math.round(a.left) + "~" + Math.round(a.right) +
+          "　刷新按钮 " + Math.round(b.left) + "~" + Math.round(b.right);
+      }
+
+      // 必须在**顶部行**（vm-lib-projslot）里，不能跑到筛选区里
+      const topSlot = document.getElementById("vt-lib-projslot");
+      let inTop = false;
+      let node = trig;
+      while (node) {
+        if (node === topSlot) { inTop = true; break; }
+        node = node.parentNode;
+      }
+
+      // ③ 选项数 + 收窄
+      const sorted = projList.slice().sort((x, y) => x.n - y.n); // 取素材最少的那个，"变少了"才看得出来
+      const pick = sorted[0];
+      let opened = false;
+      let optCount = -1;
+      if (trig) {
+        syntheticClick(trig, false);
+        const o = await waitFor(() => (libSelOpen("vt-lib-projwrap") ? true : null), 2500, 120);
+        opened = !!o;
+        const pop = document.getElementById("vt-lib-projpop");
+        optCount = pop ? pop.children.length : -1;
+      }
+      const opt = libOpt(pick.name, "vt-lib-projpop", "data-proj");
+      let cards = -1;
+      if (opt) {
+        syntheticClick(opt, false);
+        const g = await libWaitCards(pick.n, 5000, "task");
+        cards = g ? g.children.length : -1;
+      }
+      const closed = !libSelOpen("vt-lib-projwrap");
+
+      // ① 反向：切到通用库这个下拉必须消失（顶层不是项目）
+      let goneOnBrand = null;
+      const okB = await libSwitchTo("brand");
+      if (okB) goneOnBrand = !document.getElementById("vt-lib-projsel");
+      await libSwitchTo("task");
+
+      rec(
+        S20E,
+        okSwitch && inTop && leftOf && sameRow && opened &&
+          optCount === projList.length + 1 && !!opt && cards === pick.n && closed &&
+          goneOnBrand === true,
+        "任务库（切换=" + okSwitch + "）　在顶部行内=" + inTop +
+        "　在刷新左侧=" + leftOf + "·同一行=" + sameRow + "（" + geo + "）" +
+        "　点开=" + opened +
+        "　选项数=" + optCount + "（自数期望 " + (projList.length + 1) +
+        " = 项目 " + projList.length + " + 全部项目）" +
+        "　取最少素材的项目「" + pick.name + "」=" + !!opt +
+        " → 卡片=" + cards + "（自数期望 " + pick.n + "）" +
+        "　选完收起=" + closed +
+        "　切到通用库后消失=" + goneOnBrand +
+        "　‖ 项目自数=" + JSON.stringify(projList.map((p) => p.name + ":" + p.n))
+      );
+    }
+  } catch (e) {
+    rec("S20e 项目筛选下拉 —— 只在任务库出现、在刷新按钮左侧、选项数对、能收窄", false,
       "抛异常：" + ((e && e.message) || e));
   }
 
@@ -2248,7 +2375,7 @@ async function run(ctx, deps) {
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.3.0",
+    version: "0.3.1",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,
