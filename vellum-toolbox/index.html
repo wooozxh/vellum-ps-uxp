@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <script src="index.js"></script>
+    <style>
+      /* =====================================================================
+         Vellum 工具箱 · 外壳与工具 UI
+         视觉依据：design-demos/B-native-pro.html（方向 B · Native Pro）
+         落地评审：docs/14 ／ v0.2.1 修复：docs/16 ／ v0.2.2 修复：docs/17
+
+         【真机踩坑后的三条硬纪律 —— 新增控件必须遵守】
+
+         ① SVG 图标：**每个子元素都要显式写 fill / stroke**
+            UXP 的 SVG 渲染器不把父节点的绘制属性继承给子元素，子元素会退回
+            SVG 初值 fill:black / stroke:none → 闭合路径变黑块、线条图标在深色
+            面板上直接"消失"。封装在 lib/icons.js 的 applyPaint() 里。
+
+         ② 布局：**只用 display:flex（div 上），不用 display:inline-flex；
+            不用 <button> 承载 flex 布局**
+            真机表现：inline-flex 不可靠；<button> 上的 flex 不生效且文字被强制
+            居中 —— 这正是"顶栏圆点与文字重叠/不对齐"「首页行文字居中、图标不
+            显示」的成因。所以本版把导航行改成 div + 绝对定位，完全不依赖 flex。
+
+         ③ **悬停浮层不得覆盖任何可悬停元素，且必须在"让帧之后"才量尺寸**
+            （v0.2.2 新增，成因见 docs/17）
+            · 浮层若压在色块上，指针就会落到浮层上 → 色块失焦 → 浮层消失 →
+              色块复得焦点 → 浮层又出现 —— **振荡回路，表现为疯狂闪烁**。
+              所以 .tip 的纵向位置一律落在 `.sw-grid` **之外**（上/下二选一）。
+            · UXP 的布局是**异步**的：`display:none → block` 的同一同步块里
+              `getBoundingClientRect()` 拿不到尺寸（真机实测 0x0）。
+              几何一律等 `lib/dom.js` 的 settle()/轮询之后量。
+            · 色块**不绑 mouseout**（子元素会造成成对事件）；隐藏由面板根节点
+              统一判断"指针还在不在当前色块内部"。回归测试见 selfcheck S15。
+
+         其余 UXP 改写纪律（v0.2.2 已按真机实测校正，⚠️ 标注意味着"能用但有前提"）
+           ❌ display:grid                          → flex-wrap + 百分比宽度
+           ❌ transition / animation                → 一律不做动效
+           ❌ 伪元素 ::before/::after 承担结构       → 改用真实子元素
+           ❌ flex gap                              → 间距一律 margin（真机实测无效）
+           ✅ transform                             → 真机可用（v0.2.1 推翻旧结论）
+           ✅ letter-spacing / var()                → 真机可用
+           ⚠️ box-shadow                            → computed 有值，但可能被静默忽略
+                                                      （需 CSSNextSupport，本项目未开）
+                                                      → 视觉上仍用真实描边元素替代
+           ⚠️ linear-gradient                       → 同上，能写但别拿它承担关键视觉
+         ===================================================================== */
+
+      /* ------------------------------------------------ 设计令牌 · 深色（默认） */
+      :root {
+        --vt-sans: system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        --vt-mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+
+        --vt-panel: #323232;
+        --vt-bar: #2b2b2b;
+        --vt-surf: #3a3a3a;
+        --vt-surf2: #2e2e2e;
+        --vt-raised: #424242;
+        --vt-sink: #262626;
+        --vt-line: #4a4a4a;
+        --vt-line2: #3f3f3f;
+        --vt-edge: #1c1c1c;
+
+        --vt-tx: #e6e6e6;
+        --vt-tx2: #a2a2a2;
+        --vt-tx3: #7e7e7e;
+        --vt-tx4: #5f5f5f;
+
+        --vt-ac: #1473e6;
+        --vt-ac-hi: #2e8ff0;
+        --vt-ok: #4cd07e;
+        --vt-warn: #e8b65e;
+
+        --vt-hair: rgba(127, 127, 127, 0.16);
+      }
+
+      /* ------------------------------------------------ 设计令牌 · 浅色 */
+      @media (prefers-color-scheme: light) {
+        :root:not(.vt-dark) {
+          --vt-panel: #f0f0f0;
+          --vt-bar: #e4e4e4;
+          --vt-surf: #ffffff;
+          --vt-surf2: #e8e8e8;
+          --vt-raised: #dcdcdc;
+          --vt-sink: #d6d6d6;
+          --vt-line: #c4c4c4;
+          --vt-line2: #d8d8d8;
+          --vt-edge: #ababab;
+
+          --vt-tx: #1a1a1a;
+          --vt-tx2: #4d4d4d;
+          --vt-tx3: #6e6e6e;
+          --vt-tx4: #8c8c8c;
+
+          --vt-ac: #1473e6;
+          --vt-ac-hi: #0d63d0;
+          --vt-ok: #1f9d55;
+          --vt-warn: #b07a1e;
+
+          --vt-hair: rgba(127, 127, 127, 0.22);
+        }
+      }
+
+      :root.vt-light {
+        --vt-panel: #f0f0f0;
+        --vt-bar: #e4e4e4;
+        --vt-surf: #ffffff;
+        --vt-surf2: #e8e8e8;
+        --vt-raised: #dcdcdc;
+        --vt-sink: #d6d6d6;
+        --vt-line: #c4c4c4;
+        --vt-line2: #d8d8d8;
+        --vt-edge: #ababab;
+
+        --vt-tx: #1a1a1a;
+        --vt-tx2: #4d4d4d;
+        --vt-tx3: #6e6e6e;
+        --vt-tx4: #8c8c8c;
+
+        --vt-ac: #1473e6;
+        --vt-ac-hi: #0d63d0;
+        --vt-ok: #1f9d55;
+        --vt-warn: #b07a1e;
+
+        --vt-hair: rgba(127, 127, 127, 0.22);
+      }
+
+      /* ------------------------------------------------------------ 基础 */
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+
+      body {
+        font-family: var(--vt-sans);
+        /* 字号比设计稿整体 +1px：设计稿 9.5–12px 承中文在 Windows 下会糊。
+           本版最小 11px，正文 13px。（用户明确要求「不接受糊」） */
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--vt-tx);
+        background: var(--vt-panel);
+      }
+
+      .mono {
+        font-family: var(--vt-mono);
+        font-size: 0.92em;
+      }
+
+      .grow {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      /* 图标容器。⚠️ 只写 flex，不写 inline-flex（真机不可靠）。
+         全部使用点都在 flex 容器内，block 化后行为一致。 */
+      .i {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+      }
+
+      .i svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      /* 带 role="button" 的元素：复位浏览器默认外观。
+         本版**不再使用 <button>** —— 真机上 button 上的 flex 不生效、
+         文字被强制居中（见文件头 ②）。 */
+      [role="button"] {
+        font-family: inherit;
+        font-size: inherit;
+        color: inherit;
+        background: transparent;
+        border: 0;
+        padding: 0;
+      }
+
+      /* ---------------------------------------------------------- 外壳框架 */
+      .app {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        overflow: hidden;
+        background: var(--vt-panel);
+      }
+
+      .brandbar {
+        flex: none;
+        height: 2px;
+        background: var(--vt-ac);
+      }
+
+      /* 顶栏：不用 gap，改用逐项 margin —— 间距不押在 gap 支持度上 */
+      .bar {
+        height: 32px;
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        padding: 0 8px;
+        background: var(--vt-bar);
+        border-bottom: 1px solid var(--vt-edge);
+      }
+
+      .back {
+        width: 22px;
+        height: 20px;
+        margin-right: 6px;
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--vt-tx2);
+        border: 1px solid transparent;
+        cursor: pointer;
+        flex: 0 0 auto;
+      }
+
+      .back:hover {
+        background: var(--vt-raised);
+        border-color: var(--vt-line);
+        color: var(--vt-tx);
+      }
+
+      /* 首页收起返回键（旧版用 opacity .3，会在标题左侧留一个空位） */
+      .back.is-off {
+        display: none;
+      }
+
+      .back .i {
+        width: 14px;
+        height: 14px;
+      }
+
+      /* 首页顶栏左侧的品牌标（替代上面的空位）。图形标比例 256:164 */
+      .bar-logo {
+        display: none;
+        width: 25px;
+        height: 16px;
+        margin-right: 7px;
+        object-fit: contain;
+        flex: 0 0 auto;
+      }
+
+      .bar-logo.is-on {
+        display: block;
+      }
+
+      .bar-title {
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .bar-sub {
+        font-size: 12px;
+        color: var(--vt-tx3);
+        margin-left: 7px;
+        padding-left: 7px;
+        border-left: 1px solid var(--vt-line);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* 环境 chip：圆点用「固定尺寸 + margin-right」保证不与文字重叠 */
+      .bar-chip {
+        display: flex;
+        align-items: center;
+        height: 20px;
+        margin-left: 8px;
+        padding: 0 7px;
+        border-radius: 3px;
+        border: 1px solid transparent;
+        color: var(--vt-tx3);
+        font-size: 11px;
+        line-height: 1;
+        flex: 0 0 auto;
+        cursor: pointer;
+      }
+
+      .bar-chip:hover {
+        background: var(--vt-raised);
+        border-color: var(--vt-line);
+        color: var(--vt-tx);
+      }
+
+      .led {
+        display: block;
+        width: 6px;
+        height: 6px;
+        min-width: 6px;
+        flex: 0 0 6px;
+        margin-right: 6px;
+        border-radius: 50%;
+        background: var(--vt-tx4);
+      }
+
+      .led.ok {
+        background: var(--vt-ok);
+      }
+
+      .led.off {
+        background: var(--vt-tx4);
+      }
+
+      .scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        background: var(--vt-panel);
+      }
+
+      .screen {
+        display: none;
+      }
+
+      .screen.active {
+        display: block;
+      }
+
+      .statusbar {
+        flex: none;
+        max-height: 92px;
+        overflow-y: auto;
+        padding: 7px 12px;
+        background: var(--vt-bar);
+        border-top: 1px solid var(--vt-edge);
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--vt-tx2);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      /* ------------------------------------------------------- 首页 · 功能选择 */
+      .hero {
+        display: block;
+        text-align: center;
+        padding: 26px 20px 16px;
+      }
+
+      /* 品牌标（透明 PNG）。用 block + margin:auto 居中 —— 不依赖 flex */
+      .hero-mark {
+        display: block;
+        width: 96px;
+        height: 62px;
+        margin: 0 auto 10px;
+        object-fit: contain;
+      }
+
+      .hero-txt h1 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+      }
+
+      .hero-sub {
+        margin: 3px 0 0;
+        font-size: 11px;
+        color: var(--vt-tx4);
+      }
+
+      /* 原生列表：普通块级堆叠（不用 flex-direction，少押一个特性） */
+      .navlist {
+        display: block;
+        border-top: 1px solid var(--vt-line2);
+      }
+
+      /* 首页功能行 —— 布局**完全用绝对定位**，不依赖 flex：
+           左 12px 图标（26×26）· 中间文字块（左对齐）· 右侧号位 chip · 最右箭头
+         行高固定 54px，所有绝对坐标按它算，避免居中依赖 transform。 */
+      .navitem {
+        position: relative;
+        display: block;
+        height: 54px;
+        padding: 0 34px 0 48px;
+        border-bottom: 1px solid var(--vt-line2);
+        text-align: left;
+        cursor: pointer;
+        overflow: hidden;
+      }
+
+      .navitem:hover,
+      .navitem.is-hover {
+        background: var(--vt-raised);
+      }
+
+      .navitem.is-planned {
+        cursor: default;
+      }
+
+      .navitem.is-planned:hover {
+        background: transparent;
+      }
+
+      .ni-ico {
+        position: absolute;
+        left: 12px;
+        top: 14px;
+        width: 26px;
+        height: 26px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        background: var(--vt-surf);
+        border: 1px solid var(--vt-line);
+        color: var(--vt-tx2);
+      }
+
+      .navitem.is-planned .ni-ico {
+        color: var(--vt-tx3);
+        background: var(--vt-surf2);
+      }
+
+      .ni-ico .i {
+        width: 15px;
+        height: 15px;
+      }
+
+      .ni-main {
+        display: block;
+        padding-top: 10px;
+        text-align: left;
+      }
+
+      .ni-name {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 1.35;
+        color: var(--vt-tx);
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ni-desc {
+        display: block;
+        font-size: 12px;
+        line-height: 1.35;
+        color: var(--vt-tx3);
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .navitem.is-planned .ni-name {
+        color: var(--vt-tx2);
+      }
+
+      /* 号位 chip（↑1…↑4）—— 视觉占位，见 docs/16 的说明 */
+      .ni-key {
+        position: absolute;
+        right: 34px;
+        top: 18px;
+        height: 18px;
+        line-height: 16px;
+        padding: 0 6px;
+        border-radius: 3px;
+        background: var(--vt-surf);
+        border: 1px solid var(--vt-line);
+        color: var(--vt-tx3);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .navitem.is-planned .ni-key {
+        background: var(--vt-surf2);
+      }
+
+      .ni-arrow {
+        position: absolute;
+        right: 11px;
+        top: 20px;
+        width: 14px;
+        height: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--vt-tx3);
+      }
+
+      .ni-arrow .i {
+        width: 13px;
+        height: 13px;
+      }
+
+      .tail {
+        margin: 14px 12px 24px;
+        padding: 10px 12px;
+        border: 1px solid var(--vt-line2);
+        border-radius: 4px;
+        background: var(--vt-surf2);
+      }
+
+      .tail-title {
+        margin: 0 0 7px;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        color: var(--vt-tx3);
+      }
+
+      .tail-item {
+        display: block;
+        margin: 0;
+        padding: 4px 0;
+        font-size: 12px;
+        color: var(--vt-tx2);
+        border-top: 1px solid var(--vt-hair);
+        text-align: left;
+      }
+
+      /* ⚠️ 不用 :first-of-type —— 支持度不确定，改由 JS 给首行挂 .is-first */
+      .tail-item.is-first {
+        border-top: 0;
+      }
+
+      .tail-item .t-key {
+        display: inline-block;
+        min-width: 76px;
+        color: var(--vt-tx2);
+      }
+
+      .tail-item .t-val {
+        display: inline-block;
+        color: var(--vt-tx4);
+        word-break: break-all;
+      }
+
+      /* ------------------------------------------------------------ 调色板 */
+      .s-palette {
+        padding: 12px 14px 22px;
+      }
+
+      .fgbg-card {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        padding: 10px 12px;
+        border-radius: 3px;
+        background: var(--vt-surf2);
+        border: 1px solid var(--vt-line2);
+        margin-bottom: 14px;
+      }
+
+      .fgbg {
+        position: relative;
+        width: 42px;
+        height: 30px;
+        flex: 0 0 auto;
+        margin-right: 12px;
+      }
+
+      .sq {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 24px;
+        height: 24px;
+        border-radius: 2px;
+        border: 1px solid var(--vt-edge);
+      }
+
+      .sq.fg {
+        z-index: 2;
+      }
+
+      .sq.bg {
+        left: 16px;
+        top: 6px;
+      }
+
+      .ro {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .ro-hex {
+        margin: 0;
+        font-size: 12px;
+        color: var(--vt-tx2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .ro-pair {
+        flex: 1 1 100%;
+        display: block;
+        min-width: 0;
+        padding-top: 9px;
+        margin-top: 9px;
+        border-top: 1px solid var(--vt-line2);
+      }
+
+      .ro-row {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 12px;
+        color: var(--vt-tx3);
+      }
+
+      .ro-row .k {
+        display: inline-block;
+        min-width: 46px;
+      }
+
+      .ro-row b {
+        font-size: 12px;
+        color: var(--vt-tx);
+        font-weight: 400;
+      }
+
+      .sec {
+        display: block;
+        margin: 0 0 8px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--vt-line2);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        color: var(--vt-tx3);
+      }
+
+      .sec .sec-t {
+        display: inline-block;
+      }
+
+      .sec-actions {
+        display: inline-block;
+        margin-left: 8px;
+      }
+
+      .sec-note {
+        display: inline-block;
+        margin-right: 8px;
+        font-size: 11px;
+        letter-spacing: 0;
+        color: var(--vt-tx4);
+      }
+
+      /* ⚠️ inline-flex 在真机不可靠 → 用小按钮走 inline-block + 行高对齐 */
+      .mini {
+        display: inline-block;
+        height: 22px;
+        line-height: 20px;
+        padding: 0 8px;
+        border-radius: 3px;
+        background: var(--vt-surf);
+        border: 1px solid var(--vt-line);
+        color: var(--vt-tx2);
+        font-size: 11px;
+        letter-spacing: 0;
+        cursor: pointer;
+      }
+
+      .mini:hover {
+        border-color: var(--vt-tx4);
+        color: var(--vt-tx);
+      }
+
+      .mini .i {
+        display: inline-block;
+        width: 11px;
+        height: 11px;
+        margin-right: 5px;
+        vertical-align: -1px;
+      }
+
+      .sw-wrap {
+        position: relative;
+        margin-bottom: 14px;
+      }
+
+      /* 设计稿是 CSS Grid 的 3 / 4 列；UXP 无 Grid → flex + 百分比宽度 */
+      .sw-grid {
+        display: flex;
+        flex-wrap: wrap;
+      }
+
+      .sw {
+        position: relative;
+        cursor: pointer;
+        border: 1px solid var(--vt-edge);
+      }
+
+      .sw-grid.brand .sw {
+        width: 33.3333%;
+        height: 40px;
+      }
+
+      .sw-grid.mine .sw {
+        width: 25%;
+        height: 32px;
+      }
+
+      /* hover / 选中反馈。
+         ⚠️ 设计稿用 box-shadow，本项目最低版本（PS 2024）拿不到，
+         改成**真实描边元素**向外扩 2px —— 视觉等价，且一定生效。 */
+      .sw-ring {
+        display: none;
+        position: absolute;
+        top: -2px;
+        left: -2px;
+        right: -2px;
+        bottom: -2px;
+        border: 2px solid var(--vt-ac);
+        pointer-events: none;
+      }
+
+      .sw:hover .sw-ring,
+      .sw.is-ho .sw-ring {
+        display: block;
+      }
+
+      .sw:hover,
+      .sw.is-ho {
+        z-index: 2;
+      }
+
+      /* 「我的颜色」右上角的删除 ✕。
+         ⚠️ 之前"看不到 ✕"不是 CSS 问题，是 SVG 不继承 fill → 黑叉压深底。
+         这里同时把尺寸提到 18px、描边加粗，进一步提升可辨识度。 */
+      .sw-del {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(12, 12, 12, 0.6);
+        color: #ffffff;
+        cursor: pointer;
+      }
+
+      .sw-del:hover {
+        background: rgba(0, 0, 0, 0.88);
+      }
+
+      .sw-del .i {
+        width: 11px;
+        height: 11px;
+      }
+
+      .tip {
+        display: none;
+        position: absolute;
+        z-index: 9;
+        padding: 3px 7px;
+        border-radius: 3px;
+        background: var(--vt-sink);
+        border: 1px solid var(--vt-line);
+        font-size: 11px;
+        color: var(--vt-tx);
+        white-space: nowrap;
+        pointer-events: none;
+      }
+
+      .tip.is-on {
+        display: block;
+      }
+
+      .empty {
+        padding: 22px 12px;
+        text-align: center;
+      }
+
+      .empty-t {
+        margin: 0 0 5px;
+        font-size: 12px;
+        color: var(--vt-tx2);
+      }
+
+      .empty-s {
+        margin: 0;
+        font-size: 11px;
+        color: var(--vt-tx3);
+      }
+
+      /* 操作提示条：行距按用户反馈加大（原来 gap 6px + 行高 1.45 偏挤） */
+      .hints {
+        display: block;
+        margin-top: 6px;
+        padding: 10px 11px 4px;
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+        background: var(--vt-surf2);
+      }
+
+      .hints p {
+        display: block;
+        margin: 0 0 9px;
+        font-size: 12px;
+        line-height: 1.7;
+        color: var(--vt-tx2);
+      }
+
+      .kbd {
+        display: inline-block;
+        margin-right: 8px;
+        padding: 1px 6px;
+        border-radius: 2px;
+        background: var(--vt-raised);
+        border: 1px solid var(--vt-line);
+        color: var(--vt-tx);
+        font-size: 11px;
+        line-height: 1.5;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="app" id="vt-app">
+      <div class="brandbar"></div>
+
+      <header class="bar" id="vt-bar">
+        <div class="back is-off" id="vt-back" role="button" tabindex="0" title="返回"></div>
+        <img class="bar-logo" id="vt-logo" src="icons/logo-mark.png" alt="Vellum" />
+        <span class="bar-title" id="vt-title">Vellum 工具箱</span>
+        <span class="bar-sub" id="vt-sub"></span>
+        <span class="grow"></span>
+        <div class="bar-chip" id="vt-chip" role="button" tabindex="0" title="点击查看运行环境">
+          <i class="led" id="vt-led"></i><span class="mono" id="vt-env">…</span>
+        </div>
+      </header>
+
+      <div class="scroll" id="vt-body">
+        <section class="screen active" id="vt-home"></section>
+        <section class="screen" id="vt-tool-view"></section>
+      </div>
+
+      <div class="statusbar" id="vt-status">就绪。</div>
+    </div>
+  </body>
+</html>
