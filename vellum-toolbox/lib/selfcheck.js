@@ -68,6 +68,27 @@
  *       假镜像由 `tools/fake-vellumdesk.cjs`（契约 §11 要求的插件侧桩）生成。
  *       ⚠️ 容器**必须可见**（display:none 里 UXP 不加载图片，表现为超时，见 §10.2）。
  *
+ *   v0.2.7 新增（M2 素材库界面）：
+ *   S20 素材库界面 —— 走真实 mount 路径（`ctx.shell.showTool("assets")`），验
+ *       ① 库切换 chips **由 `manifest.scopes[]` 动态生成**（不是写死两个 tab）
+ *       ② 分组筛选 chips（只有一组时不出，避免噪音）
+ *       ③ 网格卡片数 = 展平后的素材数（**不是**只看"有没有渲染出来"）
+ *       ④ 缩略图在**真实卡片里的 `<img>`** 上真的解出尺寸（naturalWidth>0）
+ *          —— 这一条才是"镜像 → 面板"整条链的终点，前一轮 S19 只验了独立容器
+ *       ⑤ 点一张卡 → 详情行出现文件名 / 面包屑 / 原始路径；再把筛选切一次确认计数变化
+ *   S21 置入描述符（`placeEvent`）—— 在**自建的临时文档**上跑一次真实 place，
+ *       判据是**图层数增加**（不是"命令没报错"）。
+ *       为什么单独立项：这是本项目第一次用 `placeEvent`，而它决定 M2 的架构。
+ *       真机读数（21:32，裸路径版）：`Error: invalid file token used`
+ *       ⇒ Photoshop 的 AM 层要的是 UXP **授权过的文件令牌**，不是路径。
+ *       v0.2.7 改成 **Entry → createSessionToken → `_path: token`** 再验一次。
+ *   S22 直连置入可行性探针 —— `getEntryWithUrl` 能不能读**沙箱外**的绝对路径。
+ *       这是**诊断项**（不是回归项）：结果决定 handoff 搬运到底能不能省。
+ *       用"沙箱内路径"当**基准**对照 —— 首轮（21:37）连基准都失败了
+ *       （`Could not find an entry of 'file:///…PluginData/library/thumb/401.png'`），
+ *       所以那条读数**无结论**，只能说明"这么用不行"，不能说明"权限边界在哪"。
+ *       ⇒ 代码里刻意把结论分成三档（基准失败 = 无结论），免得下次又拿错读数当结论。
+ *
  *   版本状态（v0.2.4）：S17 建的「纯色填充图层」改色**仍未解决**（已知限制，非回归），
  *   而**形状图层改色正常**（用户 2026-10-10 真机确认，日志 via=contentColorA）。
  *
@@ -1042,12 +1063,305 @@ async function run(ctx, deps) {
     }
   }
 
+  /* ---------- S20: 素材库界面（v0.2.7 新增） ----------
+     为什么必须走真实 mount：面板我点不了，但「镜像数据到底有没有变成界面」
+     只能通过真实 DOM 来验。这里刻意**不复用 tools/library.js 的内部状态**来当期望值 ——
+     期望值全部从**原始 JSON 自己数**，否则就是"拿自己的输出验自己"。
+     （S19 只验了"读得出 + 独立容器能渲染"；S20 验的是"整条链的终点：真实卡片里的图"） */
+  try {
+    const S20 = "S20 素材库界面 —— 库切换 / 筛选 / 网格 / 缩略图 / 详情（真实 mount）";
+
+    // 独立数一遍：递归找「asset 形状」的对象（有 id + name + ext），不依赖 mirror.js
+    const countAssetsDeep = (node) => {
+      let n = 0;
+      const walk = (x) => {
+        if (!x || typeof x !== "object") return;
+        if (Array.isArray(x)) {
+          for (const it of x) walk(it);
+          return;
+        }
+        if (
+          typeof x.id === "number" &&
+          typeof x.name === "string" &&
+          typeof x.ext === "string"
+        ) {
+          n++;
+          return; // asset 内部不再往下找
+        }
+        for (const k of Object.keys(x)) walk(x[k]);
+      };
+      walk(node);
+      return n;
+    };
+
+    const collectImgs = (node, out) => {
+      const kids = (node && node.children) || [];
+      for (let i = 0; i < kids.length; i++) {
+        const c = kids[i];
+        if (String(c.tagName).toUpperCase() === "IMG") out.push(c);
+        collectImgs(c, out);
+      }
+      return out;
+    };
+
+    const rawMan = await data.readTextIn(["library"], "manifest.json", "");
+    let man = null;
+    try {
+      man = rawMan && rawMan.trim() ? JSON.parse(rawMan) : null;
+    } catch {
+      man = null;
+    }
+
+    await ctx.shell.showTool("assets", "selfcheck");
+
+    if (!man || !man.scopes || !man.scopes.length) {
+      /* 镜像缺失 → 界面应当走**空态**分支。这也是一个真检查（不是"跳过"）。 */
+      const body = document.getElementById("vt-lib-body");
+      const txt = body ? String(body.textContent || "") : "";
+      const retry = document.getElementById("vt-lib-retry");
+      rec(
+        S20,
+        !!body && txt.indexOf("镜像") >= 0 && !!retry,
+        "镜像缺失，走空态分支　状态块=" + JSON.stringify(txt.slice(0, 60)) +
+        "　重试按钮=" + !!retry +
+        "　（要跑完整回归先执行 tools/fake-vellumdesk.cjs）"
+      );
+    } else {
+      const tabsEl = document.getElementById("vt-lib-tabs");
+      const barEl = document.getElementById("vt-lib-bar");
+      const tabCount = tabsEl ? tabsEl.children.length : 0;
+
+      // 当前激活的库（从 DOM 读，不读模块内部状态）
+      let activeId = null;
+      let onChips = 0;
+      if (tabsEl) {
+        for (let i = 0; i < tabsEl.children.length; i++) {
+          const c = tabsEl.children[i];
+          if (c.getAttribute && String(c.getAttribute("class") || "").indexOf("is-on") >= 0) {
+            onChips++;
+            activeId = c.getAttribute("data-scope");
+          }
+        }
+      }
+
+      // 期望值：自己数 activeId 那个 scope 的素材数
+      let expect = -1;
+      let scopeFile = "";
+      for (const s of man.scopes) {
+        if (s.id === activeId) scopeFile = s.file;
+      }
+      if (scopeFile) {
+        const raw = await data.readTextIn(["library"], scopeFile, "");
+        try {
+          expect = countAssetsDeep(JSON.parse(raw));
+        } catch {
+          expect = -1;
+        }
+      }
+
+      // 等缩略图读完（library.js 是顺序读的，所以给足时间）
+      await waitFor(() => {
+        const g = document.getElementById("vt-lib-grid");
+        if (!g) return null;
+        const imgs = collectImgs(g, []);
+        if (!imgs.length) return null;
+        for (const im of imgs) {
+          if (!im.naturalWidth) return null;
+        }
+        return imgs;
+      }, 8000, 250);
+
+      const grid = document.getElementById("vt-lib-grid");
+      const cards = grid ? grid.children.length : 0;
+      const imgs = grid ? collectImgs(grid, []) : [];
+      let loaded = 0;
+      for (const im of imgs) if (im.naturalWidth > 0) loaded++;
+
+      // 点第一张卡 → 详情行必须出现这个文件
+      let detailOk = false;
+      let firstName = "";
+      if (grid && grid.children.length) {
+        const c0 = grid.children[0];
+        const ft = document.getElementById("vt-lib-foot");
+        if (c0) {
+          syntheticClick(c0, false);
+          await waitFor(() => (c0.getAttribute("class") || "").indexOf("is-on") >= 0, 1500, 100);
+        }
+        // 名字从卡片自己的 .card-nm 拿，再要求详情里有它
+        let nm = "";
+        const nmEl = (c0 && c0.children[0] && c0.children[0].children[1]) || null;
+        if (nmEl) nm = String(nmEl.textContent || "");
+        firstName = nm;
+        const ftxt = ft ? String(ft.textContent || "") : "";
+        detailOk = !!nm && ftxt.indexOf(nm) >= 0;
+      }
+
+      const okAll =
+        !!tabsEl &&
+        tabCount === man.scopes.length &&
+        onChips === 1 &&
+        !!grid &&
+        cards > 0 &&
+        cards === expect &&
+        imgs.length > 0 &&
+        loaded === imgs.length &&
+        detailOk;
+
+      rec(
+        S20,
+        okAll,
+        "库 chips=" + tabCount + "/" + man.scopes.length +
+        "（激活 1 个？" + (onChips === 1 ? "是" : "否！") + "，当前 " + activeId + "）" +
+        "　筛选行元素=" + (barEl ? barEl.children.length : 0) +
+        "　卡片=" + cards + "（自数期望 " + expect + "）" +
+        "　缩略图 " + loaded + "/" + imgs.length + " 解出尺寸" +
+        "　详情行含「" + firstName + "」=" + detailOk
+      );
+
+      // 顺带验一次「切库」：切到另一个库，卡片数要对上那个库的自数
+      if (man.scopes.length >= 2) {
+        const other = man.scopes[0].id === activeId ? man.scopes[1] : man.scopes[0];
+        let expect2 = -1;
+        try {
+          const raw2 = await data.readTextIn(["library"], other.file, "");
+          expect2 = countAssetsDeep(JSON.parse(raw2));
+        } catch {
+          expect2 = -1;
+        }
+        const chip = document.getElementById("vt-lib-tab-" + other.id);
+        if (chip) {
+          syntheticClick(chip, false);
+          // ⚠️ 判据必须是"**新的**库已经渲染完"，不能只等"网格里有东西"——
+          //    旧网格还在 DOM 里，那种等法第一轮就命中，量到的永远是上一个库的卡片数。
+          //    （v0.2.7 第一版就是这么误报的：切到通用库却量到 2 张 = 任务库的张数。）
+          const g2 = await waitFor(() => {
+            const onChip = document.getElementById("vt-lib-tab-" + other.id);
+            const cls = onChip ? String(onChip.getAttribute("class") || "") : "";
+            if (cls.indexOf("is-on") < 0) return null;
+            const el = document.getElementById("vt-lib-grid");
+            if (!el || el.children.length !== expect2) return null;
+            return el;
+          }, 6000, 200);
+          const c2 = g2 ? g2.children.length : 0;
+          const chip2 = document.getElementById("vt-lib-tab-" + other.id);
+          rec(
+            "S20b 切库 —— 卡片数跟着换（证明 tab 不是写死的）",
+            !!g2 && c2 === expect2 && expect2 >= 0,
+            "切到 " + other.id + "（" + other.label + "）→ 卡片=" + c2 + "（自数期望 " + expect2 + "）" +
+            "　chip class=" + JSON.stringify(chip2 ? chip2.getAttribute("class") : null)
+          );
+        } else {
+          rec("S20b 切库 —— 卡片数跟着换（证明 tab 不是写死的）", false, "找不到 chip id=vt-lib-tab-" + other.id);
+        }
+        // 切回来，免得把面板留在奇怪的状态
+        const back = document.getElementById("vt-lib-tab-" + activeId);
+        if (back) syntheticClick(back, false);
+      }
+    }
+  } catch (e) {
+    rec("S20 素材库界面 —— 库切换 / 筛选 / 网格 / 缩略图 / 详情（真实 mount）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S21: 置入（placeEvent + 会话令牌）（v0.2.7 新增） ----------
+     本项目第一次用 `placeEvent`。判据是**图层数增加**，不是"命令没报错"。
+     ⚠️ 第一版（21:32）传的是**裸路径** → `Error: invalid file token used`
+        ⇒ Photoshop 的 AM 层要的是 UXP **授权过的文件令牌**，不是路径。
+        这条直接判了「按 absPath 直连置入」死刑，handoff 搬运是必需的（见 docs/23）。
+     ⚠️ 只作用在自建的临时文档上，跑完不保存关掉。 */
+  try {
+    const S21 = "S21 置入（placeEvent + 会话令牌）—— 临时文档上图层数必须增加";
+    const srcEntry = await data.entryIn(["library", "thumb"], "401.png");
+    if (!srcEntry) {
+      rec(S21, false, "拿不到测试文件 Entry（镜像缺失）—— 先跑 tools/fake-vellumdesk.cjs；本条不作数");
+    } else {
+      const tok = await ps.sessionTokenFor(srcEntry);
+      const scratch = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(place)" });
+      if (!scratch.ok) {
+        rec(S21, false, "建临时文档失败：" + scratch.error);
+      } else {
+        let placed = null;
+        try {
+          if (!tok.ok) {
+            placed = { ok: false, error: "换会话令牌失败：" + tok.error };
+          } else {
+            placed = await ps.placeFile(srcEntry, { verify: "change" });
+          }
+        } catch (e) {
+          placed = { ok: false, error: "抛异常：" + ((e && e.message) || e) };
+        } finally {
+          try {
+            await ps.closeDocument(scratch.id);
+          } catch {
+            /* 忽略 */
+          }
+        }
+        rec(
+          S21,
+          !!(placed && placed.ok && placed.changed),
+          "令牌=" + (tok.ok ? tok.token.slice(0, 16) + "…" : "✗ " + tok.error) +
+          "　测试文件=401.png（沙箱内 Entry）" +
+          "　临时文档 id=" + scratch.id +
+          "　图层数 " + (placed ? placed.layersBefore : "?") + " → " + (placed ? placed.layersAfter : "?") +
+          "　changed=" + (placed ? placed.changed : "?") +
+          (placed && placed.layer ? "　新图层=「" + placed.layer.name + "」" : "") +
+          (placed && placed.error ? "　err=" + placed.error : "")
+        );
+      }
+    }
+  } catch (e) {
+    rec("S21 置入（placeEvent + 会话令牌）—— 临时文档上图层数必须增加", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S22: 直连置入可行性探针（v0.2.7 新增） ----------
+     这是**诊断项**（不是回归项）：把"能不能读到沙箱外的文件"这件事问清楚，
+     因为它的答案决定 M2 的架构 —— 若能直接读到 `absPath`，
+     整条 handoff 搬运就可以不要了。
+     做法：同一套 API 打两个 URL，**用一个"必定成功"的沙箱内路径当基准**
+     （纪律：没有基准的失败实验 = 没做实验）：
+       ① file:///…\PluginData\library\thumb\401.png   ← 沙箱内，基准
+       ② file:///D:/ps-uxp-dev/PROGRESS.md            ← 沙箱外（本机固定路径）
+     判据定为"两头都给出了明确答案"—— 若 ① 成功而 ② 被拒，那就是权限边界，不是用法问题。 */
+  try {
+    const insidePath = await data.nativePathIn(["library", "thumb"], "401.png");
+    const insideUrl = insidePath ? "file:///" + String(insidePath).replace(/\\/g, "/") : null;
+    const outsideUrl = "file:///D:/ps-uxp-dev/PROGRESS.md";
+
+    const a = insideUrl ? await ps.canEntryFromUrl(insideUrl) : { ok: false, error: "拿不到沙箱内测试路径" };
+    const b = await ps.canEntryFromUrl(outsideUrl);
+    const definite = (r) => !!(r && (r.got === true || r.error));
+    const fmt = (r, tag) =>
+      tag + "=" + (r && r.got ? "拿到 entry（" + r.name + "）" : "未拿到（" + ((r && r.error) || "无错误信息") + "）");
+
+    // 🔴 判据的关键在这里：**基准没成功时，这个实验没有结论**，不能拿它去证明"沙箱外不可读"。
+    //    首轮（v0.2.7 21:37）的读数就是这种情况 —— 连我们自己沙箱里的 401.png 都没读到，
+    //    那么"沙箱外也读不到"就完全可能是 URL 形式不对 / API 用法不对，而不是权限边界。
+    //    （纪律：没有基准的失败实验 = 没做实验。这条在 S19 的 webp 判别上刚吃过一次。）
+    const baseOk = !!(a && a.got);
+    const conclusion = baseOk
+      ? (b && b.got
+        ? "沙箱外可读 ⇒ 直连置入**可行**，handoff 可省（需与软件侧重新对齐契约）"
+        : "基准成功、沙箱外失败 ⇒ 直连置入**不可行**，handoff 是必需的（与 S21 一致）")
+      : "⚠️ **本实验无结论**：连沙箱内基准都没拿到 entry ⇒ 分不清是权限边界还是用法不对。" +
+        "待查方向：URL 形式（是否要 URL 编码）、是否需 manifest 声明 requiredPermissions.localFileSystem。";
+
+    rec(
+      "S22 直连置入可行性探针（getEntryWithUrl 能否读沙箱外路径）",
+      definite(a) && definite(b),
+      fmt(a, "基准·沙箱内 401.png") + "　" + fmt(b, "沙箱外 PROGRESS.md") + "　⇒ " + conclusion
+    );
+  } catch (e) {
+    rec("S22 直连置入可行性探针（getEntryWithUrl 能否读沙箱外路径）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.2.6",
+    version: "0.2.7",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

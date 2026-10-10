@@ -226,32 +226,62 @@ global.Event = class Event {
  * 二、假 uxp / photoshop
  * ================================================================== */
 
+/* 最小文件树：键是 "a/b/file" 形式的路径，目录由前缀推出来。
+   v0.2.7 起支持子目录 —— M2 素材库要读 `library/manifest.json`、
+   写 `library/handoff/req.json`，根目录一个 mockFolder 已经不够用了。 */
 const files = Object.create(null);
-const mockFolder = {
-  nativePath: "C:/fake/PluginData",
-  async getEntry(name) {
-    if (!(name in files)) throw new Error("ENOENT " + name);
-    return {
-      read: async () => files[name],
-      write: async (t) => { files[name] = String(t); },
-      delete: async () => { delete files[name]; },
-    };
-  },
-  async createFile(name) {
-    files[name] = "";
-    return {
-      read: async () => files[name],
-      write: async (t) => { files[name] = String(t); },
-      delete: async () => { delete files[name]; },
-    };
-  },
-};
+const dirs = Object.create(null);
+
+function makeFile(full) {
+  return {
+    nativePath: "C:/fake/PluginData/" + full,
+    async read() {
+      return files[full];
+    },
+    async write(t) {
+      files[full] = String(t);
+    },
+    async delete() {
+      delete files[full];
+    },
+  };
+}
+
+function makeFolder(prefix) {
+  return {
+    nativePath: "C:/fake/PluginData" + (prefix ? "/" + prefix : ""),
+    async getEntry(name) {
+      const full = prefix ? prefix + "/" + name : name;
+      if (dirs[full]) return makeFolder(full);
+      if (full in files) return makeFile(full);
+      throw new Error("ENOENT " + full);
+    },
+    async createFolder(name) {
+      const full = prefix ? prefix + "/" + name : name;
+      dirs[full] = true;
+      return makeFolder(full);
+    },
+    async createFile(name, opts) {
+      const full = prefix ? prefix + "/" + name : name;
+      if (!(full in files) || (opts && opts.overwrite)) files[full] = "";
+      return makeFile(full);
+    },
+  };
+}
+
+const mockFolder = makeFolder("");
 
 const mockUxp = {
   storage: {
     localFileSystem: {
       getDataFolder: async () => mockFolder,
       getPluginFolder: async () => mockFolder,
+      // v0.2.7：置入要把 Entry 换成 batchPlay 认的会话令牌
+      createSessionToken: async (entry) =>
+        "token:" + (entry && entry.nativePath ? entry.nativePath : "?"),
+      getEntryWithUrl: async () => {
+        throw new Error("offline mock：不模拟沙箱外读取");
+      },
     },
   },
   host: { name: "Photoshop", version: "26.1.0", uiLocale: "zh_CN" },
@@ -837,6 +867,182 @@ async function main() {
 
   fakeDoc.activeLayers = [{ id: 201, name: "图层 1", kind: "pixel" }];
   mockApp.documents.length = 0;
+
+  /* ---- 22. 注册表：素材库已从 planned 升为可点工具 ----
+     （首页仍是 4 行、顺序与号位不变，只是第 2 项从"灰行 + 提示"变成真能进的工具） */
+  {
+    const registry = require(path.join(PKG, "tools", "index.js"));
+    const ids = registry.tools.map((t) => t.id);
+    const inPlanned = registry.planned.some((p) => p.id === "assets");
+    const libMod = registry.byId("assets");
+    const row2 = navs.length >= 2 ? navs[1] : null;
+    const row2Key = row2 ? row2.getAttribute("data-tool") : null;
+    const stillPlanned = row2
+      ? String(row2.getAttribute("class") || "").indexOf("is-planned") >= 0
+      : true;
+    check(
+      "22 素材库已上线：registry.tools 里 + ready + 首页第 2 行可点",
+      ids.indexOf("assets") >= 0 && !inPlanned && !!libMod && libMod.ready === true &&
+        typeof libMod.mount === "function" && typeof libMod.unmount === "function" &&
+        row2Key === "assets" && !stillPlanned,
+      "tools=" + ids.join(",") + "　planned=" + registry.planned.map((p) => p.id).join(",") +
+        "　第 2 行 data-tool=" + row2Key + "　仍标 is-planned=" + stillPlanned
+    );
+  }
+
+  /* ---- 23. 素材库：真实挂载 + 镜像缺失时的空态 ----
+     验两件事：① 自检 S20 依赖的选择器全部存在（免得真机上一堆 FAIL 其实只是改了名）；
+     ② **镜像不存在时的降级路径不抛异常**（真机上这条就是"用户还没在 VellumDesk 里同步过"，
+     必须给可读提示 + 重试，而不是白屏）。 */
+  {
+    const libMod = require(path.join(PKG, "tools", "library.js"));
+    const fakeCtx = {
+      setStatus() {},
+      data: require(path.join(PKG, "lib", "data.js")),
+      ps: require(path.join(PKG, "lib", "ps.js")),
+    };
+    await libMod.mount(view, fakeCtx);
+    await sleep(200);
+    const tabs = document.getElementById("vt-lib-tabs");
+    const bar = document.getElementById("vt-lib-bar");
+    const body = document.getElementById("vt-lib-body");
+    const foot = document.getElementById("vt-lib-foot");
+    const retry = document.getElementById("vt-lib-retry");
+    const bodyTxt = body ? String(body.textContent || "") : "";
+    check(
+      "23 素材库：选择器齐备 + 镜像缺失时走空态（不抛、有重试）",
+      !!tabs && !!bar && !!body && !!foot && !!retry && bodyTxt.indexOf("镜像") >= 0,
+      "tabs=" + !!tabs + "　bar=" + !!bar + "　body=" + !!body + "　foot=" + !!foot +
+        "　重试按钮=" + !!retry + "　空态文案=" + JSON.stringify(bodyTxt.slice(0, 46))
+    );
+    libMod.unmount();
+    await sleep(50);
+  }
+
+  /* ---- 24. 素材库 UI 的 UXP 约束（源码级，防止以后手滑写回禁用特性） ---- */
+  {
+    const src = fs.readFileSync(path.join(PKG, "tools", "library.js"), "utf8");
+    const css = fs.readFileSync(path.join(PKG, "index.html"), "utf8");
+    const m = /\.lib-grid\s*\{[^}]*\}/.exec(css);
+    const gridBlock = m ? m[0] : "";
+    const badBtn = src.indexOf('el("button"') >= 0 || src.indexOf('createElement("button")') >= 0;
+    check(
+      "24 素材库 UI 不碰禁用特性（无 Grid / 无 gap / 无 <button>）",
+      src.indexOf("display:grid") < 0 &&
+        !badBtn &&
+        gridBlock.indexOf("flex-wrap") >= 0 &&
+        gridBlock.indexOf("gap") < 0,
+      "源码含 display:grid=" + (src.indexOf("display:grid") >= 0) +
+        "　源码建 <button>=" + badBtn +
+        "　.lib-grid 用 flex-wrap=" + (gridBlock.indexOf("flex-wrap") >= 0) +
+        "　.lib-grid 含 gap=" + (gridBlock.indexOf("gap") >= 0)
+    );
+  }
+
+  /* ---- 25. handoff 请求（契约 §六）：形状 + reqId 唯一 + 只认自己的 res ----
+     这一条是跨项目的接口，错了会**悄悄置入错的那张图**（第二次请求认领到上一次的 res），
+     所以三个判据缺一不可。 */
+  {
+    const handoff = require(path.join(PKG, "lib", "handoff.js"));
+    const r1 = await handoff.request({ id: 401, name: "x.png" }, "task");
+    const b1 = JSON.parse(files["library/handoff/req.json"] || "{}");
+    const r2 = await handoff.request({ id: 401, name: "x.png" }, "task");
+    const b2 = JSON.parse(files["library/handoff/req.json"] || "{}");
+    const isoOk = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/.test(String(b1.at || ""));
+    const idOk = /^r-\d{8}T\d{6}-[0-9a-f]{4}$/.test(String(b1.reqId || ""));
+
+    // 先放一份"上一次的" res → 必须被忽略（不认 reqId）
+    files["library/handoff/res.json"] = JSON.stringify({
+      contract: "vellum-link/1", reqId: "r-19700101T000000-dead", ok: true,
+      file: "handoff/incoming.png",
+    });
+    const stale = await handoff.waitForRes(b2.reqId, 400, 100);
+    // 再放"这一次的" → 必须认领成功
+    files["library/handoff/res.json"] = JSON.stringify({
+      contract: "vellum-link/1", reqId: b2.reqId, ok: true,
+      file: "handoff/incoming.png", size: 1234,
+    });
+    const mine = await handoff.waitForRes(b2.reqId, 900, 100);
+
+    check(
+      "25 handoff 请求：契约形状 + reqId 每次新 + 只认自己的 res",
+      r1.ok && r2.ok && b1.contract === "vellum-link/1" && b1.assetId === 401 &&
+        b1.scope === "task" && isoOk && idOk && b1.reqId !== b2.reqId &&
+        !stale.ok && stale.timedOut === true && mine.ok === true && mine.data.reqId === b2.reqId,
+      "contract=" + b1.contract + "　assetId=" + b1.assetId + "　scope=" + b1.scope +
+        "　at=" + b1.at + "（带时区=" + isoOk + "）" +
+        "　reqId=" + b1.reqId + "（形状=" + idOk + "，两次不同=" + (b1.reqId !== b2.reqId) + "）" +
+        "　别人的 res 被忽略=" + (stale.timedOut === true) +
+        "　自己的 res 认领=" + (mine.ok === true)
+    );
+  }
+
+  /* ---- 26. placeEvent 描述符形状（对应真机 S21） ----
+     描述符**照抄** @alisaitteke/photoshop-mcp 的工作实现（ExtendScript 的
+     `executeAction(cTID('Plc '), …)` 逐句翻成 ActionJSON）；这条断言把形状钉死，
+     免得以后有人"顺手简化"成想当然的写法 —— 那种错最贵：不报错也不生效。 */
+  {
+    const psm = require(path.join(PKG, "lib", "ps.js"));
+    const d = psm.placeDesc("D:\\a\\b.png");
+    check(
+      "26 placeEvent 描述符形状（照抄工作实现，不自己发挥）",
+      d._obj === "placeEvent" && !!d.null && d.null._path === "D:\\a\\b.png" &&
+        d.null._kind === "local" &&
+        d.freeTransformCenterState._enum === "quadCenterState" &&
+        d.freeTransformCenterState._value === "QCSAverage" &&
+        d.offset._obj === "offset" &&
+        d._options.dialogOptions === "dontDisplay",
+      "_obj=" + d._obj + "　null._path=" + JSON.stringify(d.null && d.null._path) +
+        "　null._kind=" + (d.null && d.null._kind) +
+        "　FTcs=" + d.freeTransformCenterState._value +
+        "　offset._obj=" + d.offset._obj +
+        "　dialogOptions=" + d._options.dialogOptions
+    );
+  }
+
+  /* ---- 27. 置入：裸路径必须**立即拒绝**且一条命令都不发 ----
+     真机实测（v0.2.7 S21 第一版）：把 `asset.absPath` 直接塞进 placeEvent 的 `_path`
+     会得到 `Error: invalid file token used` —— AM 层要的是 UXP 授权过的**文件令牌**。
+     这条断言把"别再试裸路径"钉在离线回归里（否则以后很容易有人"顺手简化"回去）。 */
+  {
+    const psm = require(path.join(PKG, "lib", "ps.js"));
+    mockApp.documents.length = 0; // 连文档都没有，仍然应该先被"裸路径"这一条挡住
+    sentCalls.length = 0;
+    const r = await psm.placeFile("D:\\vellum_workspace\\a\\b.png", { verify: "change" });
+    check(
+      "27 置入：裸路径立即拒绝（不发任何命令，提示要 Entry/令牌）",
+      r.ok === false && r.noToken === true && sentCalls.length === 0 &&
+        String(r.error).indexOf("令牌") >= 0,
+      "ok=" + r.ok + "　noToken=" + r.noToken + "　发出的命令 = " + sentCalls.length + " 条（必须 0）" +
+        "　提示=" + JSON.stringify(r.error)
+    );
+  }
+
+  /* ---- 28. 置入：Entry → 会话令牌 → placeEvent ----
+     离线这一条只钉**命令形状**（真机行为由 S21 负责）：`_obj="placeEvent"`，
+     且 `null._path` 必须是**令牌**而不是路径。 */
+  {
+    const psm = require(path.join(PKG, "lib", "ps.js"));
+    const entry = {
+      name: "incoming.png",
+      nativePath: "C:/fake/PluginData/library/handoff/incoming.png",
+    };
+    fakeDoc.layers = [{ id: 500 }];
+    mockApp.documents.length = 1;
+    sentCalls.length = 0;
+    const r = await psm.placeFile(entry, { verify: "change" });
+    const c = sentCalls.length ? sentCalls[sentCalls.length - 1] : null;
+    const p = c && c.null ? String(c.null._path) : "";
+    check(
+      "28 置入：Entry → 令牌 → placeEvent（_path 是令牌，不是路径）",
+      sentCalls.length === 1 && !!c && c._obj === "placeEvent" && p.indexOf("token:") === 0 &&
+        p.indexOf(":\\") < 0 && c.freeTransformCenterState._value === "QCSAverage",
+      "命令=" + (c ? c._obj : "-") + "　_path=" + JSON.stringify(p) +
+        "　FTcs=" + (c ? c.freeTransformCenterState._value : "-") +
+        "　ok=" + r.ok + "　layers=" + r.layersBefore + "→" + r.layersAfter
+    );
+    mockApp.documents.length = 0;
+  }
 
   /* ---- 生成浏览器预览（用的是同一份渲染代码产出的 DOM） ---- */
   let previewPath = null;

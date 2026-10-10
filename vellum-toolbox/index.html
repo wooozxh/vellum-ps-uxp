@@ -827,6 +827,309 @@
         line-height: 1.5;
         white-space: nowrap;
       }
+      /* ------------------------------------------------------------ 素材库 (M2)
+         数据来自「镜像」（见 D:\vellum-link\LINK-CONTRACT.md）。
+         ⚠️ 三条纪律在本节各有一处体现，改之前先读文件头：
+            · 网格是 **flex-wrap + 百分比**（无 Grid）；间距一律 margin（无 gap）
+            · 所有可点元素是 `div[role="button"]`（无 <button>）
+            · 缩略图容器**必须可见**（display:none 里 UXP 根本不加载图片）
+      */
+      .s-lib {
+        padding: 12px 14px 22px;
+      }
+
+      /* 库切换行：chips 左、刷新右。用 flex-wrap 而不是 gap 排布 */
+      .lib-top {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        margin-bottom: 2px;
+      }
+
+      .lib-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .ltab {
+        display: inline-block;
+        height: 26px;
+        line-height: 24px;
+        padding: 0 10px;
+        margin: 0 6px 6px 0;
+        border-radius: 3px;
+        border: 1px solid var(--vt-line);
+        background: var(--vt-surf2);
+        color: var(--vt-tx2);
+        font-size: 12px;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      .ltab:hover {
+        border-color: var(--vt-tx4);
+        color: var(--vt-tx);
+      }
+
+      .ltab.is-on {
+        background: var(--vt-ac);
+        border-color: var(--vt-ac);
+        color: #ffffff;
+      }
+
+      .ltab .lt-n {
+        margin-left: 6px;
+        font-size: 11px;
+        opacity: 0.75;
+      }
+
+      .lib-refresh {
+        margin: 0 0 6px 0;
+        flex: 0 0 auto;
+      }
+
+      .lib-meta {
+        display: block;
+        margin: 0 0 9px;
+        font-size: 11px;
+        line-height: 1.6;
+        color: var(--vt-tx4);
+        word-break: break-all;
+      }
+
+      /* 分组筛选 */
+      .lib-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        min-height: 22px;
+        margin-bottom: 9px;
+        padding-bottom: 7px;
+        border-bottom: 1px solid var(--vt-line2);
+      }
+
+      .fchip {
+        display: inline-block;
+        height: 22px;
+        line-height: 20px;
+        padding: 0 8px;
+        margin: 0 6px 0 0;
+        border-radius: 3px;
+        border: 1px solid var(--vt-line2);
+        background: transparent;
+        color: var(--vt-tx3);
+        font-size: 11px;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      .fchip:hover {
+        border-color: var(--vt-tx4);
+        color: var(--vt-tx);
+      }
+
+      .fchip.is-on {
+        background: var(--vt-surf);
+        border-color: var(--vt-line);
+        color: var(--vt-tx);
+      }
+
+      .fchip .fc-n {
+        margin-left: 5px;
+        opacity: 0.7;
+      }
+
+      .lib-count {
+        font-size: 11px;
+        color: var(--vt-tx4);
+      }
+
+      .lib-body {
+        display: block;
+      }
+
+      /* 网格：负外边距 + 每格左右内边距 —— 这样三列之间与两端都对齐，
+         且完全不依赖 gap / Grid / :nth-child。 */
+      .lib-grid {
+        display: flex;
+        flex-wrap: wrap;
+        margin: 0 -5px;
+      }
+
+      .card {
+        width: 33.3333%;
+        padding: 0 5px 10px;
+        cursor: pointer;
+      }
+
+      .card-in {
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+        background: var(--vt-surf2);
+        overflow: hidden;
+      }
+
+      .card:hover .card-in,
+      .card.is-on .card-in {
+        border-color: var(--vt-ac);
+      }
+
+      /* 缩略图区：固定高度，图片 contain（不裁切、不变形） */
+      .card-th {
+        position: relative;
+        height: 84px;
+        background: var(--vt-sink);
+        border-bottom: 1px solid var(--vt-line2);
+        overflow: hidden;
+      }
+
+      .card-img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      .card-ph {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        color: var(--vt-tx4);
+      }
+
+      .card-ext {
+        position: absolute;
+        right: 0;
+        top: 0;
+        padding: 1px 4px;
+        background: rgba(12, 12, 12, 0.62);
+        color: #ffffff;
+        font-size: 10px;
+        line-height: 1.5;
+      }
+
+      .card-miss {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        padding: 1px 5px;
+        background: #8e2f2f;
+        color: #ffffff;
+        font-size: 10px;
+        line-height: 1.6;
+      }
+
+      .card-nm {
+        display: block;
+        padding: 5px 6px 1px;
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--vt-tx);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .card-mt {
+        display: block;
+        padding: 0 6px 6px;
+        font-size: 10px;
+        color: var(--vt-tx4);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* 选中详情 */
+      .lib-foot {
+        margin-top: 4px;
+        padding: 9px 10px;
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+        background: var(--vt-surf2);
+      }
+
+      .lf-hint {
+        display: block;
+        font-size: 11px;
+        color: var(--vt-tx4);
+      }
+
+      .lf-t {
+        display: block;
+        margin-bottom: 3px;
+        font-size: 12px;
+        color: var(--vt-tx);
+        word-break: break-all;
+      }
+
+      .lf-s {
+        display: block;
+        margin-bottom: 2px;
+        font-size: 11px;
+        line-height: 1.6;
+        color: var(--vt-tx3);
+        word-break: break-all;
+      }
+
+      .lf-path {
+        font-size: 10px;
+        color: var(--vt-tx4);
+      }
+
+      .lf-act {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-top: 8px;
+      }
+
+      .lf-note {
+        margin-left: 8px;
+        font-size: 11px;
+        color: var(--vt-tx4);
+      }
+
+      /* 主按钮（复用 .mini 的形状）+ 不可用态 */
+      .mini.pri {
+        background: var(--vt-ac);
+        border-color: var(--vt-ac);
+        color: #ffffff;
+      }
+
+      .mini.pri:hover {
+        background: var(--vt-ac-hi);
+        border-color: var(--vt-ac-hi);
+        color: #ffffff;
+      }
+
+      .mini.is-off {
+        opacity: 0.45;
+        cursor: default;
+      }
+
+      .mini.is-off:hover {
+        border-color: var(--vt-line);
+        color: var(--vt-tx2);
+      }
+
+      .mini.pri.is-off:hover {
+        background: var(--vt-ac);
+        border-color: var(--vt-ac);
+        color: #ffffff;
+      }
+
+      .lib-retry {
+        margin-top: 10px;
+      }
     </style>
   </head>
 

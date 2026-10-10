@@ -33,6 +33,11 @@
  *   v0.2.4 补**文字图层**改色（`set` → `to.textStyle.color`，非破坏性、文字保持可编辑）；
  *          真机确认「形状图层」改色正常（via=contentColorA），
  *          「纯色填充图层」仍未解决（已知限制，非回归）—— 见 docs/21。
+ *   v0.2.5 M2 素材库地基探针（读自身 PluginData 的镜像）—— 见 docs/11。
+ *          ⇒ 实测出**UXP 的 `<img>` 不解码 webp**，缩略图格式改为 png/jpg（契约 §5.5 修正）。
+ *   v0.2.7 **素材库界面落地**（`tools/library.js`）：库切换 / 分组筛选 / 缩略图网格 /
+ *          详情 / 每 3 秒对 revision 自动刷新 / 置入（先直连 absPath，不行再走 handoff 握手）
+ *          —— 见 docs/23。
  *
  * ⚠️ 两条真机硬纪律（改 UI 前必读 index.html 头部注释）
  *   ① SVG 每个子元素都要显式写 fill/stroke（UXP 不做继承）→ 见 lib/icons.js
@@ -57,11 +62,12 @@ const caps = require("./lib/caps.js");
 const icons = require("./lib/icons.js");
 const registry = require("./tools/index.js");
 const palette = require("./tools/palette.js");
+const library = require("./tools/library.js");
 const selfcheck = require("./lib/selfcheck.js");
 
 /** ⚠️ 必须与 manifest.json 的 version 一致 —— 两者任一改动都要同步另一处。 */
 const PLUGIN_ID = "com.vellum.toolbox";
-const VERSION = "0.2.6";
+const VERSION = "0.2.7";
 
 let ui = null;
 let homeBinder = null;
@@ -513,7 +519,12 @@ async function init(reason) {
 
   if (doVerify) {
     try {
-      await selfcheck.run(ctx, { palette: palette, registry: registry, icons: icons });
+      await selfcheck.run(ctx, {
+        palette: palette,
+        library: library,
+        registry: registry,
+        icons: icons,
+      });
     } catch (err) {
       await log.appendLog("selfcheck FAILED  " + ((err && err.message) || err));
     }

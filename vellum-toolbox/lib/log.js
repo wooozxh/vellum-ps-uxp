@@ -26,24 +26,47 @@ function timestamp(d) {
   );
 }
 
-/** 追加一行。返回 true/false 表示是否写成功（不抛）。 */
-async function appendLog(line) {
-  try {
-    const prev = await data.readText(LOG_NAME, "");
-    await data.writeText(LOG_NAME, prev + timestamp() + "  " + line + "\n");
-    return true;
-  } catch {
-    return false;
-  }
+/* -------------------------------------------------------------------------
+ * 🔴 v0.2.7 修的并发缺陷：日志写必须**串行化**
+ * -------------------------------------------------------------------------
+ * 真机实测（2026-10-10 21:32 那次自检）：多条 `appendLog` 并发时，
+ * "读全文 → 拼一行 → 写回" 这个读改写会互相覆盖 —— 日志里出现了
+ * `task:87|brand:3 thread=vellum-link/1` 这种**被拦腰截断**的行，
+ * 而完整的那一行整个消失。自检本身就是并发写日志的（多项交替），
+ * 所以这不是理论问题，它已经让我在排查时看丢过一条关键记录。
+ *
+ * 做法两条：① 内存缓存最新全文（省掉每次读盘）；② 所有 append 排进同一条 Promise 链。
+ */
+let chain = Promise.resolve();
+let cache = null;
+
+/** 追加一行。返回 true/false 表示是否写成功（不抛）。并发安全。 */
+function appendLog(line) {
+  chain = chain.then(async () => {
+    try {
+      if (cache === null) cache = await data.readText(LOG_NAME, "");
+      const next = cache + timestamp() + "  " + line + "\n";
+      await data.writeText(LOG_NAME, next);
+      cache = next;
+      return true;
+    } catch {
+      cache = null; // 写失败就让下一次重新读盘，别拿着过期缓存继续写
+      return false;
+    }
+  });
+  return chain;
 }
 
 /** 只读日志全文（面板里显示、外部脚本读回都用它）。 */
-function readLog() {
-  return data.readText(LOG_NAME, "");
+async function readLog() {
+  const text = await data.readText(LOG_NAME, "");
+  cache = text;
+  return text;
 }
 
 /** 清空日志（开发用；不删文件，避免句柄失效）。 */
-function clearLog() {
+async function clearLog() {
+  cache = "";
   return data.writeText(LOG_NAME, "");
 }
 

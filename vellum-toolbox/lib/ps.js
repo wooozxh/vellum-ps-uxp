@@ -48,6 +48,7 @@
  */
 
 const photoshop = require("photoshop");
+const uxpNS = require("uxp"); // v0.2.7：置入要用 uxp.storage 的会话令牌
 const { app, core, action } = photoshop;
 const batchPlay = action.batchPlay;
 
@@ -954,6 +955,183 @@ async function fillLayer(hexOrRgb, opts) {
   };
 }
 
+/* ------------------------------------------------------ 置入素材（M2） */
+
+/*
+ * ════════════════════════════════════════════════════════════════════════
+ * ★★★ 置入的**唯一可行**路线：Entry → 会话令牌 → `placeEvent` ★★★
+ * ════════════════════════════════════════════════════════════════════════
+ * 2026-10-10 真机（PS 27.2 / UXP 9.0.2）自检 S21 实测：
+ *
+ *   · 把**裸路径**（`D:\…\401.png`）放进 `placeEvent` 的 `_path` →
+ *     `Error: invalid file token used`
+ *     → Photoshop 的 AM 层要的**不是路径，而是 UXP 授权过的「文件令牌」**。
+ *   · 令牌只能由 **Entry 对象**换出来（`localFileSystem.createSessionToken(entry)`）。
+ *     而能拿到 Entry 的途径只有两条：
+ *       ① 插件自己的 PluginData（沙箱内）；
+ *       ② 用户经**文件选择器**显式授权。
+ *   · 用户的 `asset.absPath`（`D:\vellum_workspace\…`）两者都不是。
+ *
+ * ⇒ **「按 absPath 直连置入」在 UXP 架构上不成立** —— 这不是偏好问题。
+ *   所以契约 §六 的 handoff 搬运（软件侧把原图拷进我们的 `handoff/`）**是必需的**，
+ *   而且恰好把文件送进了我们**能拿到 Entry** 的目录 —— 契约的设计比它自己写的理由更硬。
+ *
+ * 描述符本身的形状照抄 @alisaitteke/photoshop-mcp 的工作实现（`dist/api/extendscript.js`
+ * 的 `placeImage()`，逐句翻成 ActionJSON）：
+ *   executeAction(cTID('Plc '), desc)        →  _obj:"placeEvent"
+ *   desc.putPath(cTID('null'), imageFile)    →  null:{_path, _kind:"local"}
+ *   desc.putEnumerated('FTcs','QCSt','Qcsa') →  freeTransformCenterState:{quadCenterState, QCSAverage}
+ *   desc.putObject('Ofst','Ofst', offset)    →  offset:{_obj:"offset", horizontal/vertical}
+ * 唯一改动：把 `_path` 的值从路径换成**令牌**。
+ */
+
+function placeDesc(pathOrToken) {
+  return {
+    _obj: "placeEvent",
+    null: { _path: String(pathOrToken), _kind: "local" },
+    freeTransformCenterState: { _enum: "quadCenterState", _value: "QCSAverage" },
+    offset: {
+      _obj: "offset",
+      horizontal: { _unit: "pixelsUnit", _value: 0 },
+      vertical: { _unit: "pixelsUnit", _value: 0 },
+    },
+    _options: { dialogOptions: "dontDisplay" },
+  };
+}
+
+/**
+ * 把一个 UXP File entry 换成 batchPlay 能认的会话令牌。
+ * ⚠️ `createSessionToken` 是 UXP 7.1+ 的 API，取不到就如实降级（不当成"能用"）。
+ * @returns {Promise<{ok:boolean, token?:string, error?:string}>}
+ */
+async function sessionTokenFor(entry) {
+  if (!entry) return { ok: false, error: "没有 Entry 对象" };
+  let lfs = null;
+  try {
+    lfs = uxpNS && uxpNS.storage && uxpNS.storage.localFileSystem;
+  } catch {
+    lfs = null;
+  }
+  if (!lfs || typeof lfs.createSessionToken !== "function") {
+    return { ok: false, error: "uxp.storage.localFileSystem.createSessionToken 不存在（UXP < 7.1？）" };
+  }
+  try {
+    const token = await lfs.createSessionToken(entry);
+    if (!token) return { ok: false, error: "createSessionToken 返回空" };
+    return { ok: true, token: String(token) };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
+/** 当前文档的图层数；拿不到返回 -1（"未知"≠"0"）。 */
+function countLayers() {
+  try {
+    const d = app.activeDocument;
+    if (!d || !d.layers) return -1;
+    return d.layers.length;
+  } catch {
+    return -1;
+  }
+}
+
+/**
+ * 置入一个文件到当前文档（= PS 菜单「文件 › 置入嵌入的对象」）。
+ * @param {object|string} source **必须是 UXP File entry**（或已换好的会话令牌字符串）。
+ *   传裸路径会**立即**返回可读错误 —— 那条路真机实测过，不通（见本节顶部长注释）。
+ * @param {object} [opts] { verify:"change"|"none" }
+ */
+async function placeFile(source, opts) {
+  const o = opts || {};
+  const mode = o.verify || "change";
+
+  if (!source) return { ok: false, verified: "none", error: "没有给文件（需要 UXP File entry）" };
+  if (typeof source === "string") {
+    return {
+      ok: false,
+      verified: "none",
+      noToken: true,
+      error: "batchPlay 不接受裸路径 —— 真机实测报 `invalid file token used`；" +
+        "必须先用 data.entryIn()/文件选择器拿到 Entry，再 sessionTokenFor() 换令牌",
+    };
+  }
+
+  if (!hasDocument()) {
+    return {
+      ok: false, verified: "none", noDocument: true, noToken: false,
+      error: "没有打开的文档 —— 置入需要先有一个目标文档",
+    };
+  }
+
+  const tok = await sessionTokenFor(source);
+  const label = (function () {
+    try {
+      return source.name || source.nativePath || "(entry)";
+    } catch {
+      return "(entry)";
+    }
+  })();
+
+  if (!tok.ok) {
+    return { ok: false, verified: "none", file: label, error: "换会话令牌失败：" + tok.error };
+  }
+
+  const before = docInfo() || {};
+  const layersBefore = countLayers();
+
+  try {
+    await runModal(async () => {
+      await batchPlay([placeDesc(tok.token)], {});
+    }, "Vellum 工具箱：置入素材");
+  } catch (e) {
+    return {
+      ok: false, file: label, via: "placeEvent", verified: "none",
+      layersBefore: layersBefore, error: msg(e),
+    };
+  }
+
+  const after = docInfo() || {};
+  const layersAfter = countLayers();
+  const changed = layersBefore >= 0 && layersAfter >= 0 && layersAfter > layersBefore;
+
+  return {
+    ok: mode === "none" ? true : changed || layersAfter < 0, // 读不到图层数时不判死
+    file: label,
+    via: "placeEvent",
+    verified: layersAfter >= 0 ? "change" : "none",
+    layersBefore: layersBefore,
+    layersAfter: layersAfter,
+    changed: changed,
+    token: tok.token.slice(0, 18) + "…",
+    layer: after.layer || null,
+    docName: after.docName || null,
+  };
+}
+
+/**
+ * 判断某个**绝对路径**能不能变成 Entry（= 直连置入是否可行）。
+ * 只读探测，不改任何文档 —— 用来把"平台给不给这个能力"这件事问清楚，
+ * 而不是靠猜。结果由自检 S22 记录。
+ * @returns {Promise<{ok:boolean, got?:boolean, name?:string, error?:string}>}
+ */
+async function canEntryFromUrl(url) {
+  let lfs = null;
+  try {
+    lfs = uxpNS && uxpNS.storage && uxpNS.storage.localFileSystem;
+  } catch {
+    lfs = null;
+  }
+  if (!lfs || typeof lfs.getEntryWithUrl !== "function") {
+    return { ok: false, error: "getEntryWithUrl 不存在" };
+  }
+  try {
+    const e = await lfs.getEntryWithUrl(url);
+    return { ok: true, got: !!e, name: e ? e.name : null };
+  } catch (e) {
+    return { ok: true, got: false, error: msg(e) };
+  }
+}
+
 /* ------------------------------------------------- 临时文档（自检专用） */
 
 /**
@@ -1075,6 +1253,12 @@ module.exports = {
   /* v0.2.4 新增：文字图层改色 */
   textColorDesc,
   makeTextLayer,
+  /* v0.2.7 新增：置入素材（M2 素材库） */
+  placeFile,
+  placeDesc,
+  sessionTokenFor,
+  canEntryFromUrl,
+  countLayers,
   RASTER_KINDS,
   CONTENT_KINDS,
   KIND_CN,

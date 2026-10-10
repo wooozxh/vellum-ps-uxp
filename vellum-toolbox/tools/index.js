@@ -19,9 +19,10 @@
  */
 
 const palette = require("./palette.js");
+const library = require("./library.js");
 
 /** 已实现的工具（首页可点）。 */
-const tools = [palette];
+const tools = [palette, library];
 
 /**
  * 规划中的工具（首页显示为灰行，点了给提示）。
@@ -29,13 +30,6 @@ const tools = [palette];
  * 名称与副标题按用户 2026-10-10 的指定（「表格生成」「AI-MCP」）。
  */
 const planned = [
-  {
-    id: "assets",
-    title: "素材库",
-    subtitle: "本地与云端素材，可筛选后批量置入",
-    badge: "M2",
-    note: "M2 开工。路线已定：VellumDesk 把镜像写进插件数据目录，插件只读自己的目录。",
-  },
   {
     id: "table",
     title: "表格生成",

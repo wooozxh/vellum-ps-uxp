@@ -132,6 +132,69 @@ async function readBinaryIn(names, file) {
   }
 }
 
+/**
+ * 写子目录里的文本（不存在就创建文件）。
+ * ⚠️ 契约 §八：镜像里插件唯一可写的是 `library/handoff/req.json`。
+ *    本函数只提供能力，**在哪写由调用方负责** —— 别拿它去写镜像内容。
+ * @param {object} [opts] { create:boolean=true } 目录不存在时是否尝试 createFolder
+ *   （UXP 能否 createFolder **尚未验证** —— 契约 §六 的规避方案是由软件侧预建目录，
+ *     所以这里把"建目录失败"当成可降级的正常情况，如实返回而不是抛）
+ * @returns {Promise<{ok:boolean, path?:string, created?:boolean, error?:string}>}
+ */
+async function writeTextIn(names, file, text, opts) {
+  const create = !(opts && opts.create === false);
+  try {
+    const folder = await subfolder(names, create);
+    if (!folder) return { ok: false, error: "子目录不存在且无法创建：" + names.join("/") };
+    let entry;
+    let created = false;
+    try {
+      entry = await folder.getEntry(file);
+    } catch {
+      entry = await folder.createFile(file, { overwrite: true });
+      created = true;
+    }
+    await entry.write(String(text));
+    return { ok: true, path: entry.nativePath || null, created: created };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+/**
+ * 取子目录里某个文件的 **Entry 对象本身**（不是内容）。
+ * 用途：UXP 要把文件交给 `batchPlay` 时，需要的是**会话令牌**，
+ *       而令牌只能由 Entry 换出来（`localFileSystem.createSessionToken(entry)`）。
+ *       字符串路径**不行** —— 真机实测报 `invalid file token used`（见 lib/ps.js placeFile）。
+ * @returns {Promise<object|null>}
+ */
+async function entryIn(names, file) {
+  try {
+    const folder = await subfolder(names, false);
+    if (!folder) return null;
+    return await folder.getEntry(file);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 取子目录里某个文件的**绝对路径**（nativePath）。
+ * 用途：UXP 自己读不了沙箱外的文件，但**可以把绝对路径交给 Photoshop** ——
+ *       PS 的 `placeEvent` 描述符里就是一条 `_path`，由 PS 自己解析（详见 lib/ps.js placeFile）。
+ * @returns {Promise<string|null>}
+ */
+async function nativePathIn(names, file) {
+  try {
+    const folder = await subfolder(names, false);
+    if (!folder) return null;
+    const entry = await folder.getEntry(file);
+    return entry.nativePath || null;
+  } catch {
+    return null;
+  }
+}
+
 /** 文件是否存在。 */
 async function exists(name) {
   try {
@@ -192,4 +255,8 @@ module.exports = {
   subfolder,
   readTextIn,
   readBinaryIn,
+  /* v0.2.7（M2 素材库 UI）新增：写子目录 + 取绝对路径 + 取 Entry */
+  writeTextIn,
+  nativePathIn,
+  entryIn,
 };
