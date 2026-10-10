@@ -7,28 +7,26 @@
 
 ## 一句话说明
 
-给 Photoshop 写 UXP 插件。**具体产品形态尚未确定** —— 这是当前最大的事实，不是遗漏。
+给 Photoshop 写 **UXP 插件** —— **「Vellum 工具箱」**：给公司设计部门用的小工具合集
+（素材/样机插入、品牌调色板、表格工具…），并与 **VellumDesk 素材库**联动。
+
+**形态已定**：**一个插件、两类入口** —— **Panel**（常驻工作台：入口宫格 + 子工具切换）
++ **Command**（菜单里点一下的高频快捷动作）；**vanilla JS + UXP 内置 Spectrum，零构建**。
 
 **仓库**：https://github.com/wooozxh/vellum-ps-uxp （Public）
 
-## ⚠️ 当前阶段：环境与样板都已就绪，形态未定 —— 不要急着写业务代码
+## ⚠️ 当前阶段：M1 立项（外壳 + 调色板），方案已定稿待开工
 
-环境（含自动化反馈闭环）已于 **2026-10-09 打通**：`node tools/doctor.mjs` = **13/15、闭环关键项 5/5**；
-`hello-uxp` 探针插件加载后自检 **7/7** 通过，`report.json` 可被外部脚本读回。
+环境（含自动化反馈闭环）已于 **2026-10-09 打通**，**2026-10-10 复验通过**：
+`node tools/doctor.mjs` = **13/15、闭环关键项 5/5**；`hello-uxp` 自检 **7/7**。
 
-第二个插件 `hello-world`（**一个插件、两个入口**：panel + command）也已跑通，并把反馈通道
-从「自检报告」扩展成「事件流水」—— 用户点按钮的效果会被写进 `boot.log`，AI 能直接读到。
-**所以下一步唯一的前置未决项就是产品形态。**
+- **产品形态与整体方案：已定稿** → `docs/10-产品方案.md`
+- **里程碑**：**M1 外壳 + 调色板**（当前）→ M2 素材库（与 VellumDesk 联动）→ M3 表格工具 → M4 其他
+- **与 VellumDesk 的联动契约**：**`D:\vellum-link\LINK-CONTRACT.md`**（本仓库根目录的 `LINK-CONTRACT.md` 是指针）
+- **联动路线已拍板**：**② 镜像单写**（VellumDesk 把「清单 + 缩略图」写进插件 PluginData，
+  插件只读自己的目录；**不用 HTTP、不起常驻服务、不引入网络权限**）
 
-定形态时需要问清楚三件事：
-
-1. **要解决什么场景？** 谁用、在什么工作流里、现在的痛点是什么。
-2. **Command 还是 Panel？** 一次性动作（菜单里点一下，跑完就结束）vs 常驻面板（一直停在那里）。
-   `hello-world` 已把两种都做出来，可各点一次对比 —— 见 `docs/03-HelloWorld与插件形态.md`。
-3. **要不要上框架？** vanilla JS 起步，还是 React / Svelte / Vue / TypeScript。
-
-**在用户拍板之前，只允许写「验证环境 / 打样板」性质的代码（如 `hello-uxp`、`hello-world`），
-不允许写业务功能。**
+**开工前先读方案（`docs/10`）与联动契约；方案没写到的，先问用户，不要自己拍板。**
 
 ## 工作模式：vibecoding
 
@@ -53,18 +51,21 @@
 | 插件技术 | **UXP**（不是已被弃用的 CEP） |
 | 宿主 | Adobe Photoshop 2026（**v27.2**），`D:\software\adobe\Adobe Photoshop 2026\` |
 | 插件清单 | `manifest.json`，**manifest v5**（权限默认全关，用到什么必须显式声明） |
-| 起步语言 | vanilla JS（是否上框架**未定**） |
+| 起步语言 | **vanilla JS + UXP 内置 Spectrum 组件，零构建**（已定；将来某个工具 UI 顶不住时，按模块平滑升级） |
 | 加载通道 | `@adobe-fixed-uxp/uxp-devtools-cli`（**CLI**，不是 GUI 版 UDT） |
-| 取回运行结果 | 插件写 `report.json` 落盘 → `node tools/report.mjs` 读 |
+| 取回运行结果 | 插件写 `report.json` / `boot.log` 落盘 → `node tools/report.mjs` 读 |
 
 ## 目录
 
 ```
 D:\ps-uxp-dev\
 ├── PROJECT.md / PROGRESS.md / DECISIONS.md / NEXT.md   ← 档案四件套（AI 必读 + 必写）
+├── LINK-CONTRACT.md   ← 联动契约指针（正文在 D:\vellum-link\LINK-CONTRACT.md）
 ├── README.md          ← 给人看的闭环手册（怎么加载、怎么读结果）
 ├── hello-uxp\         ← 自检探针插件（环境验证用，非业务代码）
-├── tools\             ← 闭环脚本：doctor / report / enable-devtools / uxp 包装器
+├── hello-world\       ← 骨架样板：一个插件、两个入口（Panel + Command）
+├── link-probe\        ← 联动能力探针（UXP 能否读本地 HTTP / WS / 图片，已跑通）
+├── tools\             ← 闭环脚本：doctor / report / enable-devtools / uxp 包装器 / linkprobe 服务
 ├── docs\              ← 资料库 + 方案文档（NN-xxx.md 编号）
 ├── official-samples\  ← 官方示例仓库（**独立 git 仓库，不入库**，可重新克隆）
 └── node_modules\      ← 依赖（**不入库**）
@@ -76,7 +77,7 @@ D:\ps-uxp-dev\
 - 不用 **GUI 版 UXP Developer Tool**（CLI 已够，且 GUI 不可脚本化）
 - 不用 **COM + DoJavaScript** 驱动 PS（UXP 插件不是 JSX 脚本，这条根本驱动不了插件本体）
 - 不硬编码绝对路径（整个目录要能随时搬迁）
-- **不在产品形态定下之前写业务代码**
+- 不在方案确认前写业务代码（见下方铁律）
 
 ## 铁律（继承自上一个项目 VellumDesk，已实战验证有效）
 
@@ -104,3 +105,6 @@ D:\ps-uxp-dev\
 4. 报错先贴原文，不要凭猜测修改
 5. 每一步结束时，**环境必须处于「能跑通」的状态**（不要同时改三处，出问题会不知道退回哪步）
 6. **凡是 AI 能自己验证的，就不要让用户去点** —— 这是 vibecoding 的核心
+7. **涉及插件 ↔ VellumDesk 联动时，先读联动契约** `D:\vellum-link\LINK-CONTRACT.md`
+   （本仓库根目录的 `LINK-CONTRACT.md` 是入口指针）。两侧共用的字段名、路径、目录结构**以契约为准**，
+   不要在对话里凭记忆讨论；发现契约与实际代码不符 → **先报告，不要擅自改**。

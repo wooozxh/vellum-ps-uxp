@@ -32,10 +32,16 @@ _tmp/
 _*.tmp
 _*.bak
 
+# 联动探针服务生成的测试图（可随时重生成），不入库
+link-probe/sample/
+
 # ---------- 本地行为开关 ----------
 # 这两个文件存在，就会在每次加载插件时跑一遍自检 / 探针。属本地行为，不入库。
 hello-world/verify.flag
 hello-world/probe-text.flag
+# Vellum 工具箱：verify.flag=跑无痕自检；verify-keep.flag=自检色保留到下一次加载
+vellum-toolbox/verify.flag
+vellum-toolbox/verify-keep.flag
 
 # ---------- 设计稿 / 测试产物 ----------
 # PSD 这类二进制设计文件（含随手存的测试稿）不入库。文件仍留在本地，只是不进 git。
