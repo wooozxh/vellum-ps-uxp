@@ -7,6 +7,10 @@
 *.cmd text eol=crlf
 *.bat text eol=crlf
 
+# VBScript 同属 Windows 脚本宿主 —— references/ 归档的那份 ps-com-check.vbs
+# 是 GBK 编码、供 cscript 执行的诊断脚本，与 .cmd/.bat 同类处理
+*.vbs text eol=crlf
+
 # 二进制，不做换行符转换
 *.png  binary
 *.jpg  binary
