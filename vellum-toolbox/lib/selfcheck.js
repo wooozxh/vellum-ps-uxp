@@ -4474,6 +4474,492 @@ async function run(ctx, deps) {
     rec(S46, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S48: M3b 出稿引擎（真机）—— 模板组复制 N 份 + 每份写自己那行的值
+     为什么只验"引擎"不验"面板"：面板那条链已经由 S41（挂载/几何）覆盖；
+     出稿真正会出事的地方是**引擎**（复制 → 新模态读副本 → 写文字 → 位移），
+     离线那份用的是 mock 的 duplicate 模拟 ⇒ 真机上必须再跑一遍。
+     模板怎么造：`make textLayer` 的层名 = **文字内容**（S45 实测）⇒ 直接建两个内容为
+     「标题」「价格」的文字层，它们的名字就是这两个词，正好当绑定键。
+     判据（全部读回，不看"命令没报错"）：
+       ① 复制出 3 份、名字按规则带行值 ② **每份写的是自己那一行**的值（不是同一行写三遍）
+       ③ **原件一字没动** ④ 副本被网格推开（bounds 相对模板位移 = 计划里的 dx/dy）
+       ⑤ 分段耗时（复制批次 / 写文字 / 移动）—— 用来对账"预估耗时"准不准 */
+  const S48 = "S48 M3b 出稿引擎（真机）：复制 3 份 + 每份写自己那行的值 + 原件不动 + 网格排开";
+  try {
+    const bmod = require("./batch.js");
+    const sc48 = await ps.createScratchDoc({ size: 1000, name: "Vellum 自检临时文档(M3b 出稿)" });
+    if (!sc48 || !sc48.ok) {
+      rec(S48, false, "建临时文档失败：" + ((sc48 && sc48.error) || "未知"));
+    } else {
+      try {
+        await ps.activateDocument(sc48.id);
+        const TPL = "vt-s48-版式";
+        const TGT = "vt-s48-靶";
+        const OTHER = "vt-s48-别的层";
+        /* 靶层与对照组**先造**（在模板之前）：这样它们落在**顶层**、不会混进模板组
+           （第一轮就是因为在建完模板组之后造靶层 ⇒ 靶层跑进了组里、被一起复制进副本，读数全歪）。
+           对照组的作用：证明 move 认的是 `_target` 而不是"当前活动图层" ——
+           第一轮的探针里靶层**恰好就是活动层**，所以那条 ✓ 是无效读数（又是"没有对照组的失败实验"）。 */
+        await ps.runModal(async () => {
+          await ps.batchPlay([
+            ps.textLayerBoxDesc({ text: TGT, box: { left: 300, top: 40, right: 420, bottom: 80 }, sizePt: 18, rgb: { r: 0, g: 0, b: 0 } }),
+            ps.textLayerBoxDesc({ text: OTHER, box: { left: 300, top: 200, right: 420, bottom: 240 }, sizePt: 18, rgb: { r: 0, g: 0, b: 0 } }),
+          ], {});
+        }, "Vellum：S48 造靶层与对照组");
+        await ps.runModal(async () => {
+          await ps.batchPlay([ps.groupMakeDesc(TPL)], {});
+          await ps.batchPlay([
+            ps.textLayerBoxDesc({ text: "标题", box: { left: 40, top: 40, right: 200, bottom: 80 }, sizePt: 18, rgb: { r: 0, g: 0, b: 0 } }),
+            ps.textLayerBoxDesc({ text: "价格", box: { left: 40, top: 100, right: 200, bottom: 140 }, sizePt: 18, rgb: { r: 0, g: 0, b: 0 } }),
+          ], {});
+        }, "Vellum：S48 建模板");
+        /* ⚠️ 跨模态读模板（v0.4.7 / S47 的教训：同一模态里刚建的东西读不全） */
+        const brief = (() => {
+          const b = ps.groupBriefByName(TPL);
+          return b && b.ok ? b.tpl : null;
+        })();
+        if (!brief) throw new Error("读不到模板组（" + ((ps.groupBriefByName(TPL) || {}).error || "?") + "）");
+
+        /* ⚠️ AM `move` 是**新描述符** ⇒ 按纪律**先单条发、读回位移对上了再用**。
+           （DOM `translate()` 对这个组不生效 —— 第一轮实测"调用没报错、副本 bounds 一动不动"。） */
+        await log.appendLog("S48 即将单条验**两个位移原语**（靶层**非活动**、另设对照组）；若卡住请点掉对话框");
+        const findByName = (nm) => {
+          let hit = null;
+          const walk = (arr) => {
+            for (const l of arr || []) {
+              if (hit) return;
+              if (String(l.name) === nm) { hit = l; return; }
+              if (l.layers && l.layers.length) walk(l.layers);
+            }
+          };
+          walk(ps.app.activeDocument.layers);
+          return hit;
+        };
+        const boundsOf = async (nm) => {
+          let r = null;
+          await ps.runModal(async () => {
+            const l = findByName(nm);
+            if (!l) throw new Error("找不到 " + nm);
+            const b = l.bounds;
+            r = { left: b.left, top: b.top, right: b.right, bottom: b.bottom };
+          }, "Vellum：S48 读 " + nm);
+          return r;
+        };
+        const activate = async (nm) => {
+          await ps.runModal(async () => {
+            const l = findByName(nm);
+            if (!l) throw new Error("找不到 " + nm);
+            ps.app.activeDocument.activeLayers = [l];
+          }, "Vellum：S48 选中 " + nm);
+        };
+        /* 一次探针：把**对照组设为活动**，然后对**靶层**（按 _id / 按对象）施加位移。
+           判据要两组读数：靶层必须动 (20,12)、对照组必须**一动不动**。 */
+        const probeMove = async (how) => {
+          const r = { how: how, ok: false };
+          try {
+            await activate(OTHER);                       // 让靶层**不是**活动层
+            const before = await boundsOf(TGT);
+            if (how === "am") {
+              const id = (await (async () => {
+                let id = null;
+                await ps.runModal(async () => { id = findByName(TGT).id; }, "Vellum：S48 取靶层 id");
+                return id;
+              })());
+              await ps.runModal(async () => {
+                await ps.batchPlay([ps.moveByIdCmd(id, 20, 12)], {});
+              }, "Vellum：S48 AM move（靶层非活动）");
+            } else {
+              await ps.runModal(async () => {
+                findByName(TGT).translate(20, 12);
+              }, "Vellum：S48 DOM translate（靶层非活动）");
+            }
+            const after = await boundsOf(TGT);
+            const other = await boundsOf(OTHER);
+            r.targetMoved = !!(before && after && Number(after.left) - Number(before.left) === 20 &&
+              Number(after.top) - Number(before.top) === 12);
+            r.otherUnmoved = !!(other && Number(other.left) === 300 && Number(other.top) === 200);
+            r.ok = r.targetMoved && r.otherUnmoved;
+          } catch (e) {
+            r.error = (e && e.message) || String(e);
+          }
+          return r;
+        };
+        const mAm = await probeMove("am");
+        const mDom = await probeMove("dom");
+        const mprobe = { am: mAm, dom: mDom, ok: mAm.ok || mDom.ok, via: mAm.ok ? "am" : (mDom.ok ? "dom" : null) };
+        /* 探针只是**读数**（目标是"非活动层"时两个原语都不认目标 ⇒ 实现改走"先选中再平移"），
+           不再当判据 —— 网格到底行不行，由后面的**副本 bounds 位移断言**说了算。 */
+
+        const brief2 = (() => {
+          const b = ps.groupBriefByName(TPL);
+          return b && b.ok ? b.tpl : null;
+        })();
+        if (!brief2) throw new Error("move 之后读不到模板组了");
+        /* 绑定按**序号**（真机上 duplicate 会把副本子层改名成「标题 拷贝」⇒ 名字没法配） */
+        const idxOf = (nm) => brief2.textLayers.map((x) => String(x.name)).indexOf(nm);
+        const iTitle = idxOf("标题");
+        const iPrice = idxOf("价格");
+        if (iTitle < 0 || iPrice < 0) throw new Error("模板里的文字层名不是预期的： " + JSON.stringify(brief2.textLayers.map((x) => x.name)));
+
+        const rows = [["开学季", "199"], ["秋季班", "299"], ["寒假营", "399"]];
+        const plan = bmod.planExport({
+          rows: rows, header: ["名称", "价格"],
+          bindings: { 0: iTitle, 1: iPrice },
+          tpl: brief2, tplRect: brief2.rect, cols: 3,
+        });
+        if (!plan.ok) throw new Error("出稿计划没成立：" + plan.error);
+
+        const r = await ps.exportByRows(plan, { tplId: brief.id });   // 默认：逐份"选中 → translate"
+
+        /* 读回：找到 3 份副本 + 各自的两处文字 + 原件的两处文字 */
+        let got = null;
+        await ps.runModal(async () => {
+          const doc = ps.app.activeDocument;
+          const findOne = (nm) => {
+            let hit = null;
+            const walk = (arr) => {
+              for (const l of arr || []) {
+                if (hit) return;
+                if (String(l.name) === nm) { hit = l; return; }
+                if (l.layers && l.layers.length) walk(l.layers);
+              }
+            };
+            walk(doc.layers);
+            return hit;
+          };
+          const textsOf = (g) => {
+            const out = [];
+            const walk = (arr) => {
+              for (const k of arr || []) {
+                if (k.kind === "text") {
+                  /* ⚠️ 只取**内容**：文字图层的名字会跟着内容变（写进"开学季"后名字也成了"开学季"），
+                     拿"名字=内容"当判据会误判。 */
+                  let c = "";
+                  try { c = String(k.textItem.contents); } catch { c = ""; }
+                  out.push(c);
+                }
+                if (k.layers && k.layers.length) walk(k.layers);
+              }
+            };
+            walk(g && g.layers);
+            return out.sort();
+          };
+          const box = (g) => {
+            try { const b = g.bounds; return { l: Math.round(b.left), t: Math.round(b.top) }; } catch { return null; }
+          };
+          const c1 = findOne(plan.copies[0].name);
+          const c2 = findOne(plan.copies[1].name);
+          const c3 = findOne(plan.copies[2].name);
+          const tplG = findOne(TPL);
+          got = {
+            tplName: tplG ? String(tplG.name) : null,
+            tplTexts: textsOf(tplG),
+            tplBox: tplG ? box(tplG) : null,
+            c1: c1 ? { name: String(c1.name), texts: textsOf(c1), box: box(c1) } : null,
+            c2: c2 ? { name: String(c2.name), texts: textsOf(c2) } : null,
+            c3: c3 ? { name: String(c3.name), texts: textsOf(c3) } : null,
+            copyNames: [c1, c2, c3].filter(Boolean).map((x) => String(x.name)),
+          };
+        }, "Vellum：S48 读回");
+
+        const wantName = ["稿件 1 · 开学季", "稿件 2 · 秋季班", "稿件 3 · 寒假营"];
+        const namesOk = got.copyNames.length === 3 && wantName.every((n) => got.copyNames.indexOf(n) >= 0);
+        const has = (arr, v) => !!(arr && arr.indexOf(v) >= 0);
+        const c1ok = has(got.c1 && got.c1.texts, "开学季") && has(got.c1 && got.c1.texts, "199");
+        const c2ok = has(got.c2 && got.c2.texts, "秋季班") && has(got.c2 && got.c2.texts, "299");
+        const c3ok = has(got.c3 && got.c3.texts, "寒假营") && has(got.c3 && got.c3.texts, "399");
+        const tplOk = got.tplTexts.length === 2 && has(got.tplTexts, "标题") && has(got.tplTexts, "价格");
+        const dx0 = got.c1 && got.tplBox ? got.c1.box.l - got.tplBox.l : null;
+        const dy0 = got.c1 && got.tplBox ? got.c1.box.t - got.tplBox.t : null;
+        /* ⚠️ 允许 ±1：bounds 是整数，同一套字形在不同实例上会差 1px（实测 53/92 vs 计划 52/93） */
+        const moveOk = dx0 !== null && Math.abs(dx0 - plan.copies[0].dx) <= 1 &&
+          Math.abs(dy0 - plan.copies[0].dy) <= 1;
+        const judge = r.ok === true && r.copies === 3 && r.writes === 6 && r.moved === 3 &&
+          namesOk && c1ok && c2ok && c3ok && tplOk && moveOk;
+        await log.appendLog("S48 明细：r=" + JSON.stringify({ ok: r.ok, copies: r.copies, writes: r.writes, writesWant: r.writesWant, moved: r.moved }) +
+          " 耗时 dup=" + r.dupMs + "ms step2=" + r.step2Ms + "ms（写 " + r.writesMs + " / 移动 " + r.moveMs + "）" +
+          " 计划预估=" + plan.estimatedMs + "ms　副本名=" + JSON.stringify(got.copyNames) +
+          "　原件=" + JSON.stringify(got.tplTexts) + "　副本1=" + JSON.stringify(got.c1 && got.c1.texts) +
+          "　位移=" + JSON.stringify([dx0, dy0]) + "（须 " + JSON.stringify([plan.copies[0].dx, plan.copies[0].dy]) + "）" +
+          (r.missing && r.missing.length ? "　missing=" + r.missing.slice(0, 3).join("；") : "") +
+          (r.firstError ? "　firstErr=" + r.firstError : "") + (r.error ? "　err=" + r.error : ""));
+
+        rec(
+          S48,
+          judge,
+          "复制 " + r.copies + "/3 份、写 " + r.writes + "/6 处、移动 " + r.moved + "/3" +
+          "　副本名对=" + namesOk + "（" + JSON.stringify(got.copyNames) + "）" +
+          "　第1份=" + JSON.stringify(got.c1 && got.c1.texts) + (c1ok ? " ✓" : " ✗") +
+          "　第2份=" + JSON.stringify(got.c2 && got.c2.texts) + (c2ok ? " ✓" : " ✗") +
+          "　第3份=" + JSON.stringify(got.c3 && got.c3.texts) + (c3ok ? " ✓" : " ✗") +
+          "　**原件**=" + JSON.stringify(got.tplTexts) + (tplOk ? "（没被动过 ✓）" : " ✗ 被改了！") +
+          "　位移=" + JSON.stringify([dx0, dy0]) + (moveOk ? " ✓" : " ✗ 与计划不符") +
+          "　【读数·不进判据】目标是**非活动**层时：AM move=" +
+          (mAm.targetMoved ? "动" : "**不动**") + "/对照组" + (mAm.otherUnmoved ? "不动" : "**动了**") +
+          "、DOM translate=" + (mDom.targetMoved ? "动" : "**不动**") + "/对照组" + (mDom.otherUnmoved ? "不动" : "**动了**") +
+          " ⇒ 两个原语都**只认当前活动层**，实现改走「先选中、再 translate」" +
+          "　耗时：复制批次 " + r.dupMs + "ms / 阶段二 " + r.step2Ms + "ms（写 " + r.writesMs + "、移动 " + r.moveMs + "）" +
+          "、计划预估 " + plan.estimatedMs + "ms" +
+          (r.error ? "　err=" + r.error : "") +
+          "　⇒ " + (judge
+            ? "M3b 引擎在真机上成立：一次 batchPlay 复制 + 一次模态写完文字并排开，原件不动、每份拿到自己那行的值"
+            : "⚠️ 有项没成立 —— 见明细行（每份的值 / 原件是否被动 / 位移是硬条件）")
+        );
+      } finally {
+        try {
+          await ps.closeDocument(sc48.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S48, false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S47: 批量出稿（M3b）开工前的测量 + 单条验证（v0.5.0）
+     M3b 的两个动作在 v0.3.8 / S33 都已验过**能用**：
+       · 复制图层组：`doc.activeLayers=[group]` → `Layer.duplicate()`（DOM）
+       · 换文字：`layer.textItem.contents = 值`（DOM —— 是 `textItem` **唯一**可写属性）
+     **但"能用"≠"够快"**：v0.4.7 刚量出 DOM 写操作在文档变大时会变成 O(文档大小)，
+     而 M3b 恰恰是"复制 N 份 × 每份换 M 处文字"，把它们放进了**规模循环**。
+     ⇒ 开工前先量成本曲线（四分位），并顺手试一条可能让 M3b 全走 AM 的路。
+
+     ① DOM 选择模板组 + `duplicate()` 的成本（四分位 —— 后段明显变慢 ⇒ O(文档层数)）
+     ② DOM 改文字（`textItem.contents`）的成本
+     ③ 副本的文字**独立**（改副本不动原件）——"多份"规模下复验 S33
+     ④ 单条 AM `duplicate`（按 `_id`）能不能成立（若成立：M3b 可以全走 AM 并合批）
+
+     ⚠️ 只作用在自建临时文档上，跑完关掉；④ 是**单条**发、发完读回。 */
+  const S47 = "S47 批量出稿开工前：复制/改文字的**成本曲线** + AM duplicate 能不能用";
+  try {
+    const sc47 = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(M3b 测量)" });
+    if (!sc47 || !sc47.ok) {
+      rec(S47, false, "建临时文档失败：" + ((sc47 && sc47.error) || "未知"));
+    } else {
+      try {
+        await ps.activateDocument(sc47.id);
+        const TNAME = "vt-s47-模板";
+        /* 模板：一个组 + 两个文字层（全部用已验描述符） */
+        await ps.runModal(async () => {
+          await ps.batchPlay([ps.groupMakeDesc(TNAME)], {});
+          await ps.batchPlay([
+            ps.textLayerBoxDesc({ text: "旧-A", box: { left: 20, top: 20, right: 180, bottom: 60 }, sizePt: 16, rgb: { r: 0, g: 0, b: 0 } }),
+            ps.textLayerBoxDesc({ text: "旧-B", box: { left: 20, top: 70, right: 180, bottom: 110 }, sizePt: 16, rgb: { r: 0, g: 0, b: 0 } }),
+          ], {});
+        }, "Vellum：S47 建模板");
+
+        const N = 10;                       // 两条路各复制 10 份（够看出曲线，又不拖时间）
+        const TPL_TEXT = ["旧-A", "旧-B"];   // 模板里两个文字层的初始内容（建层顺序）
+        const findByName = (name) => {
+          let hit = null;
+          const walk = (arr) => {
+            for (const l of arr || []) {
+              if (hit) return;
+              if (l.kind === "group" && String(l.name) === name) { hit = l; return; }
+              if (l.layers && l.layers.length) walk(l.layers);
+            }
+          };
+          walk(ps.app.activeDocument.layers);
+          return hit;
+        };
+        const findById = (id) => {
+          let hit = null;
+          const walk = (arr) => {
+            for (const l of arr || []) {
+              if (hit) return;
+              if (l.id === id) { hit = l; return; }
+              if (l.layers && l.layers.length) walk(l.layers);
+            }
+          };
+          walk(ps.app.activeDocument.layers);
+          return hit;
+        };
+        const textsOf = (grp) => {
+          const kids = (grp && grp.layers) ? grp.layers.filter((l) => l.kind === "text") : [];
+          const out = [];
+          for (const k of kids) {
+            try {
+              out.push({ layer: k, text: String(k.textItem.contents) });
+            } catch {
+              /* 读不到就跳过 */
+            }
+          }
+          return out;
+        };
+        const trunc = (s, n) => String(s === null || s === undefined ? "null" : s).slice(0, n);
+
+        await log.appendLog("S47 开始：两条路各复制 " + N + " 份");
+
+        /* ── A) DOM 路径：每份**三个模态边界**（选中 / 复制 / 改文字）—— 这就是 DOM 实现的样子 ──
+           为什么必须分三个模态：v0.4.7 那轮学过"DOM 是懒的"，这次实测**在同一个 modal 里
+           `duplicate()` 之后立刻读 `copy.layers` 会读到空数组**（第一版就是这么"改文字 0 次"的）。 */
+        const A4 = { sel: 0, dup: 0, txt: 0 };
+        let aCopies = 0;
+        let aWrites = 0;
+        let aErr = null;
+        const tA = Date.now();
+        for (let i = 0; i < N; i++) {
+          let t = Date.now();
+          let grpId = null;
+          try {
+            await ps.runModal(async () => {
+              const g = findByName(TNAME);
+              if (!g) throw new Error("找不到模板组");
+              ps.app.activeDocument.activeLayers = [g];
+              grpId = g.id;
+            }, "Vellum：S47-A 选中模板");
+          } catch (e) {
+            aErr = "选中：" + ((e && e.message) || e);
+            break;
+          }
+          A4.sel += Date.now() - t;
+          t = Date.now();
+          let copyId = null;
+          try {
+            await ps.runModal(async () => {
+              const sel = ps.app.activeDocument.activeLayers[0];
+              if (!sel) throw new Error("没有活动图层");
+              const c = await sel.duplicate();
+              copyId = c ? c.id : null;
+            }, "Vellum：S47-A 复制");
+            aCopies++;
+          } catch (e) {
+            aErr = "复制：" + ((e && e.message) || e);
+            break;
+          }
+          A4.dup += Date.now() - t;
+          t = Date.now();
+          try {
+            await ps.runModal(async () => {
+              const c = copyId === null ? null : findById(copyId);
+              if (!c) throw new Error("复制完读不到副本（copyId=" + copyId + "）");
+              for (const k of textsOf(c)) {
+                k.layer.textItem.contents = "A" + (i + 1) + "-" + trunc(k.text, 3);
+                aWrites++;
+              }
+              c.name = TNAME + " A" + (i + 1);
+            }, "Vellum：S47-A 改文字");
+          } catch (e) {
+            aErr = "改文字：" + ((e && e.message) || e);
+            break;
+          }
+          A4.txt += Date.now() - t;
+        }
+        const msA = Date.now() - tA;
+
+        /* ── B) AM 路径：**一次 batchPlay** 复制 N 份（按 _id），再**一次 DOM 模态**写完所有文字 ── */
+        let tplId = null;
+        await ps.runModal(async () => {
+          const g = findByName(TNAME);
+          tplId = g ? g.id : null;
+        }, "Vellum：S47 取模板 id");
+        await log.appendLog("S47 即将发 AM duplicate × " + N + "（一次 batchPlay，_id=" + tplId + "）");
+        const tB0 = Date.now();
+        let bErr = null;
+        let bCopies = 0;
+        try {
+          const cmds = [];
+          for (let i = 0; i < N; i++) {
+            cmds.push({
+              _obj: "duplicate",
+              _target: [{ _ref: "layer", _id: tplId }],
+              name: TNAME + " B" + (i + 1),
+              _options: { dialogOptions: "dontDisplay" },
+            });
+          }
+          await ps.runModal(async () => {
+            await ps.batchPlay(cmds, {});
+          }, "Vellum：S47-B AM 批量复制");
+        } catch (e) {
+          bErr = (e && e.message) || String(e);
+        }
+        const msBdup = Date.now() - tB0;
+
+        /* 复制完**跨一个新模态**去读（同一个模态里读不到），并把两份的文字一次性写完 */
+        let bWrites = 0;
+        let bTxt0 = Date.now();
+        let bTexts = [];
+        try {
+          await ps.runModal(async () => {
+            const doc = ps.app.activeDocument;
+            const groups = [];
+            const walk = (arr) => {
+              for (const l of arr || []) {
+                if (l.kind === "group" && String(l.name).indexOf(TNAME) === 0) groups.push(l);
+                if (l.layers && l.layers.length) walk(l.layers);
+              }
+            };
+            walk(doc.layers);
+            for (const g of groups) {
+              const nm = String(g.name);
+              if (nm === TNAME) continue;
+              const bn = /B(\d+)$/.exec(nm);
+              if (!bn) continue;
+              bCopies++;
+              const kids = textsOf(g);
+              const after = [];
+              for (let k = 0; k < kids.length; k++) {
+                kids[k].layer.textItem.contents = "B" + bn[1] + "-" + k;
+                bWrites++;
+                /* ⚠️ 读回**写之后**的值（第一版记的是写之前捕获的旧文本 ⇒ 那条读数证明不了写入生效） */
+                after.push(trunc(kids[k].layer.textItem.contents, 6));
+              }
+              bTexts.push(bn[1] + "=" + after.join(","));
+            }
+          }, "Vellum：S47-B 一次写完所有文字");
+        } catch (e) {
+          bErr = (bErr ? bErr + "；" : "") + "写文字：" + ((e && e.message) || e);
+        }
+        const msBtxt = Date.now() - bTxt0;
+
+        /* ── 读回：原件有没有被动过（这是 M3b 的硬条件） ── */
+        let origTexts = [];
+        let aTexts = [];
+        let bTextsBack = [];
+        await ps.runModal(async () => {
+          const tpl = findByName(TNAME);
+          origTexts = textsOf(tpl).map((x) => trunc(x.text, 6));
+          const a1 = findByName(TNAME + " A1");
+          aTexts = textsOf(a1).map((x) => trunc(x.text, 6));
+          bTextsBack = bTexts.slice(0, 4);
+        }, "Vellum：S47 读回");
+
+        const sum = (a) => a.reduce((x, y) => x + y, 0);
+        const quart = (v, n) => v;   // A 路已经分了四段（这里只打印）
+        const origIntact = origTexts.length === 2 && origTexts[0] === TPL_TEXT.slice().reverse()[0] &&
+          origTexts[1] === TPL_TEXT.slice().reverse()[1];
+        const aIndependent = aCopies > 0 && aTexts.length === 2 && aTexts.every((t) => t.indexOf("A1-") === 0);
+        const judge = aCopies === N && aWrites === N * 2 && bCopies === N && bWrites === N * 2 && origIntact;
+
+        rec(
+          S47,
+          judge,
+          "**A) DOM 三步舞步**：" + aCopies + "/" + N + " 份、" + aWrites + "/" + (N * 2) + " 次写文字，总 " + msA + "ms" +
+          "（选中 " + A4.sel + " / 复制 " + A4.dup + " / 改文字 " + A4.txt + "）" +
+          "　**B) AM 一次批量复制**：" + bCopies + "/" + N + " 份、批量 " + msBdup + "ms（" + Math.round(msBdup / Math.max(1, N)) + "ms/份）" +
+          " ⇒ 再**一次模态**写完 " + bWrites + "/" + (N * 2) + " 次文字 " + msBtxt + "ms" +
+          "　‖ 原件=" + JSON.stringify(origTexts) + "（须没被动过：" + JSON.stringify(TPL_TEXT.slice().reverse()) + "）" +
+          "　A1 副本=" + JSON.stringify(aTexts) +
+          "　B 副本样本=" + JSON.stringify(bTextsBack) +
+          (aErr ? "　A 首个错误=" + aErr : "") +
+          (bErr ? "　B 首个错误=" + bErr : "") +
+          "　⇒ " + (judge
+            ? "两条路都能跑；B 路把 " + N + " 份复制压成 **1 次 batchPlay**、" + (N * 2) + " 次写文字压成**一次模态**"
+            : "⚠️ 有项没成立（原件被动过 / 份数或写次数不对）—— M3b 不能开工")
+        );
+      } finally {
+        try {
+          await ps.closeDocument(sc47.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S47, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- S42: 面板整链（免弹窗版，v0.4.2 新增）
      为什么要有它：面板上真正的「导入 CSV」要弹**系统文件选择器** —— 自检点不了、
      自动化也点不了 ⇒ "解码 → 解析 → 预览 → 生成"这条链在真机上一直缺中间一段：
@@ -4878,7 +5364,7 @@ async function run(ctx, deps) {
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.4.7",
+    version: "0.5.0",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

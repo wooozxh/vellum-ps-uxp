@@ -363,6 +363,49 @@ Object.defineProperty(mockApp, "activeDocument", {
   },
 });
 
+/**
+ * 模拟一条 `duplicate`（M3b 出稿唯一的 AM 命令）。
+ * 够真是指：新层的 id **大于调用前的最大 id**（exportByRows 就靠这个"只认新层"），
+ * 并把模板的文字层**克隆**一份（内容独立 ⇒ 才能验"改副本不动原件"）。
+ */
+function simDuplicate(cmd) {
+  const doc = mockApp.documents[0];
+  if (!doc || !cmd._target || typeof cmd._target[0]._id !== "number") return;
+  let tpl = null;
+  const find = (arr) => {
+    for (const l of arr || []) {
+      if (l.id === cmd._target[0]._id) { tpl = l; return; }
+      if (l.layers && l.layers.length) find(l.layers);
+    }
+  };
+  find(doc.layers);
+  if (!tpl) return;
+  let mx = 0;
+  const scan = (arr) => {
+    for (const l of arr || []) {
+      if (typeof l.id === "number" && l.id > mx) mx = l.id;
+      if (l.layers && l.layers.length) scan(l.layers);
+    }
+  };
+  scan(doc.layers);
+  let next = mx + 1;
+  const kids = [];
+  const walkKids = (arr) => {
+    for (const k of arr || []) {
+      if (k.kind === "text") {
+        kids.push({ id: next++, name: k.name, kind: "text", textItem: { contents: k.textItem ? k.textItem.contents : "" } });
+      }
+      if (k.layers && k.layers.length) walkKids(k.layers);
+    }
+  };
+  walkKids(tpl.layers);
+  doc.layers.push({
+    id: next++, name: String(cmd.name === undefined ? tpl.name + " 副本" : cmd.name), kind: "group",
+    layers: kids, moved: null,
+    translate(dx, dy) { this.moved = [dx, dy]; },
+  });
+}
+
 const mockPhotoshop = {
   app: mockApp,
   core: { executeAsModal: async (fn) => fn() },
@@ -371,6 +414,12 @@ const mockPhotoshop = {
       const c = cmds[0];
       sentCalls.push(c);
       if (Array.isArray(cmds) && cmds.length) sentBatches.push(cmds.slice());
+      /* v0.5.0：**按顺序模拟每一条** duplicate（M3b 是一批发 N 条 —— 只处理第一条会少建副本） */
+      for (const cc of (Array.isArray(cmds) ? cmds : [])) {
+        if (cc && cc._obj === "duplicate" && cc._target && cc._target[0] && cc._target[0]._ref === "layer") {
+          simDuplicate(cc);
+        }
+      }
       if (c._obj === "fill") {
         fillCalls.push(c);
         return [];
@@ -383,6 +432,49 @@ const mockPhotoshop = {
       //    都**不能**污染 colorState（否则后面的断言会读到被串味的前景色）。
       if (c._obj === "set" && (prop === "foregroundColor" || prop === "backgroundColor")) {
         colorState[prop] = c.to;
+        return [];
+      }
+      /* v0.5.0：模拟 `duplicate`（M3b 出稿的唯一 AM 命令）。
+         不模拟的话"复制完在新模态里读副本"这条链路在离线**根本测不了**
+         （副本不存在 ⇒ 一份都找不到 ⇒ 断言只会看到 0）。
+         模拟要够真：新层的 id **大于**调用前的最大 id（exportByRows 就是靠这个只认新层），
+         并且把模板的文字层**克隆**一份（文字层内容独立，才能验"改副本不动原件"）。 */
+      if (false && c._obj === "duplicate" && t0 && t0._ref === "layer" && typeof t0._id === "number") {
+        const doc = mockApp.documents[0];
+        let tpl = null;
+        const find = (arr) => {
+          for (const l of arr || []) {
+            if (l.id === t0._id) { tpl = l; return; }
+            if (l.layers && l.layers.length) find(l.layers);
+          }
+        };
+        if (doc) find(doc.layers);
+        if (tpl) {
+          let mx = 0;
+          const scan = (arr) => {
+            for (const l of arr || []) { if (typeof l.id === "number" && l.id > mx) mx = l.id; if (l.layers && l.layers.length) scan(l.layers); }
+          };
+          scan(doc.layers);
+          let next = mx + 1;
+          const cloneText = (src) => {
+            const o = { id: next++, name: src.name, kind: "text", textItem: { contents: src.textItem ? src.textItem.contents : "" } };
+            return o;
+          };
+          const kids = [];
+          const walkKids = (arr) => {
+            for (const k of arr || []) {
+              if (k.kind === "text") kids.push(cloneText(k));
+              if (k.layers && k.layers.length) walkKids(k.layers);
+            }
+          };
+          walkKids(tpl.layers);
+          const copy = {
+            id: next++, name: String(c.name === undefined ? tpl.name + " 副本" : c.name), kind: "group",
+            layers: kids, moved: null,
+            translate(dx, dy) { this.moved = [dx, dy]; },
+          };
+          doc.layers.push(copy);       // 真机上副本落在**同一个父级**
+        }
         return [];
       }
       return [];
@@ -1221,6 +1313,145 @@ async function main() {
         "　⑥ppi：300ppi 时箱高 " + (p300.cells[0].box.bottom - p300.cells[0].box.top) + "（须不变）且 pt=" + p300.cells[0].sizePt + "（须 2.88）" +
         "　⑦表头/行水平对齐各自独立=" + alignOk
     );
+  }
+
+  /* ---- 22h. M3b 批量出稿：计划（纯函数）+ 执行（命令形状与数据流）+ 负对照 ----
+     ⚠️ mock 会**真的模拟 `duplicate`**（新层 id 大于调用前的最大 id、克隆模板的文字层）——
+        否则"复制完在新模态里读副本"这条链路在离线根本测不了。 */
+  try {
+    const bmod = require(path.join(PKG, "lib", "batch.js"));
+    const psm2 = require(path.join(PKG, "lib", "ps.js"));
+
+    const header = ["名称", "价格", "备注"];
+    const rows = [["开学季", "199", "含教材"], ["秋季班", "299", "小班制"], ["", "", "空行"]];
+    const tpl = {
+      name: "版式", id: 500,
+      textLayers: [{ name: "标题", contents: "标题占位", id: 501 }, { name: "价格", contents: "000", id: 502 }],
+      rect: { left: 100, top: 100, right: 300, bottom: 250 },
+    };
+    /* 绑定：第 0 列 → 模板的**第 0 个**文字层（有效）；第 2 列 → 序号 5（越界，该报 warning）；第 1 列没绑 */
+    const bind = { 0: 0, 2: 5 };
+    const plan = bmod.planExport({ rows: rows, header: header, bindings: bind, tpl: tpl, tplRect: tpl.rect, cols: 5 });
+
+    /* 期望值**独立算**（不许读被测模块的中间结果）：
+         有效绑定 = 只有第 0 列 ⇒ 每份 1 处
+         写入：第 1 行 标题=开学季 ✓、第 2 行 标题=秋季班 ✓、第 3 行 标题="" ⇒ **跳过** ⇒ 共 2 次
+         空格子 = 3×1 − 2 = 1（要出 warning）
+         警告 = 绑到不存在的层(1) + 未绑定列(1) + 空格子(1) = 3
+         预估 = 2×60 + 3×19 + 3×40 = 297ms
+         网格：模板 200×150、gap = max(16, round(150×0.08)=12) = 16 ⇒ 步距 216/166
+              第 1/2/3 份 → dx 216/432/648、dy 全 166
+         名字：前两行取到值，第 3 行没有值 ⇒ 只有序号 */
+    const planOk = plan.ok === true && plan.n === 3 && plan.writeCount === 2 && plan.perCopy === 1 &&
+      plan.unbound.length === 1 && plan.unbound[0] === 1 &&
+      plan.warnings.length === 3 && plan.emptyCells === 1 &&
+      plan.copies[0].name === "稿件 1 · 开学季" && plan.copies[1].name === "稿件 2 · 秋季班" &&
+      plan.copies[2].name === "稿件 3" &&
+      plan.copies[0].dx === 216 && plan.copies[1].dx === 432 && plan.copies[2].dx === 648 &&
+      plan.copies[0].dy === 166 && plan.copies[2].dy === 166 &&
+      plan.estimatedMs === 297 && plan.tooMany === false;
+    check(
+      "22h M3b 出稿计划（纯函数）：绑定 / 空格跳过 / 网格 / 命名 / 警告 / 预估（期望值独立算）",
+      planOk,
+      "n=" + plan.n + "（须 3）写入=" + plan.writeCount + "（须 2，第 3 行空值跳过）每份=" + plan.perCopy + "（须 1）" +
+      "　未绑定列=" + JSON.stringify(plan.unbound) + "（须 [1]）　警告 " + plan.warnings.length + "（须 3）" +
+      "　空格 " + plan.emptyCells + "（须 1）" +
+      "　名字=" + JSON.stringify(plan.copies.map((c) => c.name)) +
+      "　网格 dx=" + JSON.stringify(plan.copies.map((c) => c.dx)) + " dy=" + plan.copies[0].dy +
+      "（须 216/432/648 · 166）　预估=" + plan.estimatedMs + "ms（须 297 = 2×60 + 3×19 + 3×40）"
+    );
+
+    /* 闸门 + "一列都没绑" 两条负路 */
+    const big = bmod.planExport({ rows: new Array(201).fill(["x"]), header: ["a"], bindings: { 0: 0 }, tpl: tpl, tplRect: tpl.rect });
+    const none = bmod.planExport({ rows: rows, header: header, bindings: {}, tpl: tpl, tplRect: tpl.rect });
+    const noTpl = bmod.planExport({ rows: rows, header: header, bindings: bind, tpl: null });
+    check(
+      "22h-2 M3b 闸门与拒绝：超份数给 tooMany（不静默截断）/ 一列没绑要拒 / 没模板要拒且说清原因",
+      big.ok === true && big.tooMany === true && none.ok === false && String(none.error).indexOf("标题") >= 0 &&
+        noTpl.ok === false && String(noTpl.error).indexOf("模板") >= 0,
+      "201 行 → tooMany=" + big.tooMany + "（须 true）　一列没绑 → " + JSON.stringify(none.error) +
+      "　没模板 → " + JSON.stringify(noTpl.error)
+    );
+
+    /* ── 执行层（mock 会真的模拟复制，所以整条链路能跑）── */
+    const mkDoc = () => {
+      const tplG = {
+        id: 500, name: "版式", kind: "group",
+        layers: [
+          { id: 501, name: "标题", kind: "text", textItem: { contents: "标题占位" } },
+          { id: 502, name: "价格", kind: "text", textItem: { contents: "000" } },
+        ],
+      };
+      return { id: 950, name: "出稿文档", mode: "RGB", activeLayers: [tplG], layers: [tplG] };
+    };
+    mockApp.documents.length = 0;
+    mockApp.documents.push(mkDoc());
+    sentBatches.length = 0;
+    sentCalls.length = 0;
+
+    const r = await psm2.exportByRows(plan, { tplId: 500 });
+    const batch1 = sentBatches[0] || [];
+    const dupShapeOk = (c) => !!(c && c._obj === "duplicate" && c._target && c._target[0]._ref === "layer" &&
+      typeof c._target[0]._id === "number" && typeof c.name === "string");
+    const moveShapeOk = (c) => !!(c && c._obj === "move" && c._target && c._target[0]._ref === "layer" &&
+      typeof c._target[0]._id === "number" && c.to && c.to._obj === "offset" &&
+      c.to.horizontal && c.to.vertical);
+    const batch2 = sentBatches[1] || [];
+    /* 位移也必须**一次批**、且值等于计划里的 dx/dy（DOM translate 对这个组不生效 ⇒ 走 AM move） */
+    /* 位移是**逐叶层**发的（组当 target 只动一个子层 —— 真机实测）⇒ 3 份 × 每份 2 个文字层 = 6 条 */
+    const moveOk2 = batch2.length === 6 && batch2.every(moveShapeOk) &&
+      batch2[0].to.horizontal._value === plan.copies[0].dx && batch2[0].to.vertical._value === plan.copies[0].dy &&
+      batch2[1].to.horizontal._value === plan.copies[0].dx &&
+      batch2[4].to.horizontal._value === plan.copies[2].dx && batch2[5].to.horizontal._value === plan.copies[2].dx;
+    const dupOk = sentBatches.length === 2 && batch1.length === 3 && batch1.every(dupShapeOk);
+
+    const doc2 = mockApp.documents[0];
+    const pick = (nm) => doc2.layers.filter((l) => l.name === nm)[0];
+    const c1 = pick("稿件 1 · 开学季");
+    const c2 = pick("稿件 2 · 秋季班");
+    const c3 = pick("稿件 3");
+    const txt = (cp, n) => {
+      if (!cp) return "(缺副本)";
+      const l = (cp.layers || []).filter((k) => k.name === n)[0];
+      return l ? String(l.textItem.contents) : "(缺层)";
+    };
+    const tplG = pick("版式");
+    const tplIntact = txt(tplG, "标题") === "标题占位" && txt(tplG, "价格") === "000";
+    const flowOk = dupOk && moveOk2 && r.ok === true && r.copies === 3 && r.writes === 2 &&
+      txt(c1, "标题") === "开学季" && txt(c2, "标题") === "秋季班" &&
+      txt(c3, "标题") === "标题占位" &&          // 空值 ⇒ 保留模板原文
+      txt(c1, "价格") === "000" &&                // 未绑定的列不许被动
+      tplIntact === true;
+    check(
+      "22h-3 M3b 执行：一次 batchPlay 只发 duplicate（按 _id）+ 每份写**自己那一行**的值 + 未绑定列不动 + 原件不动 + 网格位移",
+      dupOk && flowOk,
+      "批次数=" + sentBatches.length + "（须 2：复制 + 位移）　复制命令 " + batch1.length + " 条全按 _id=" + dupOk +
+      "　位移命令 " + batch2.length + "/6（逐叶层）值对=" + moveOk2 +
+      "　copies=" + r.copies + "/3　writes=" + r.writes + "/2　dup=" + r.dupMs + "ms step2=" + r.step2Ms +
+      "ms（写 " + r.writesMs + " / 移动 " + r.moveMs + "）" +
+      "　第1份标题=" + JSON.stringify(txt(c1, "标题")) + "（须 开学季）" +
+      "　第2份标题=" + JSON.stringify(txt(c2, "标题")) + "（须 秋季班）" +
+      "　第3份标题=" + JSON.stringify(txt(c3, "标题")) + "（须保留模板原文）" +
+      "　未绑定列（价格）=" + JSON.stringify(txt(c1, "价格")) + "（须 000 不动）" +
+      "　原件没动=" + tplIntact + "　位移命令 dx=" + JSON.stringify(batch2.map((c) => c.to.horizontal._value))
+    );
+
+    /* 负对照：duplicate 判据不许放过"按名字选层"或漏了名字的 */
+    const poison = [
+      { _obj: "duplicate", _target: [{ _ref: "layer", _name: "版式" }], name: "x" },   // 按名字（没验过）
+      { _obj: "duplicate", _target: [{ _ref: "layer", _id: 500 }], name: "x" },        // 合规（必须命中）
+      { _obj: "duplicate", _target: [{ _ref: "layer", _id: 500 }] },                   // 没给名字
+      { _obj: "make", _target: [{ _ref: "layer" }], name: "x" },                       // 别的命令
+    ];
+    check(
+      "22h-4 M3b 判据自证（负对照）：duplicate 判据只放过「按 _id 且带名字」那一条",
+      poison.filter(dupShapeOk).length === 1,
+      "4 条构造命令里命中 " + poison.filter(dupShapeOk).length + " 条（必须**正好 1**）"
+    );
+
+    mockApp.documents.length = 0;
+  } catch (e) {
+    check("M3b 离线断言（自身抛异常）", false, (e && e.message) || String(e));
   }
 
   /* ---- 23. 素材库：真实挂载 + 镜像缺失时的空态 ----

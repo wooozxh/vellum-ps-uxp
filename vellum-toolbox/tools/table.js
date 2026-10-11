@@ -37,6 +37,7 @@ const log = require("../lib/log.js");
 const store = require("../lib/store.js");
 const csv = require("../lib/csv.js");
 const tbl = require("../lib/table.js");
+const batch = require("../lib/batch.js");
 const ps = require("../lib/ps.js");
 
 const PREF_FILE = "table-pref.json";
@@ -353,6 +354,20 @@ function renderDrawer() {
     }
   )));
 
+  /* v0.5.0：列级设置里也放一份「绑到图层」（与列宽/对齐并列）——同一份状态、两个入口 */
+  const tlD = S.tpl ? S.tpl.textLayers : [];
+  const itemsD = [{ v: "", label: "（不绑定）", dim: true }].concat(
+    tlD.map((x, i) => ({ v: i, label: (i + 1) + ". " + x.name }))
+  );
+  refs.drawer.appendChild(field("绑到图层",
+    chips("vt-tbl-colbind", itemsD, (S.bind || {})[c], (v) => {
+      if (!S.bind) S.bind = {};
+      if (v) S.bind[c] = v; else delete S.bind[c];
+      S.bigOk = false;
+      savePref();
+      renderDrawer();
+      renderBindGroup();
+    })));
   refs.drawer.appendChild(note("对齐是**你选的**，不是按内容猜的 —— 我们不做「数字自动右对齐」那种猜。"));
 }
 
@@ -517,16 +532,182 @@ function updateValignNote() {
 
 function renderBindGroup() {
   const g = refs.g3;
+  if (!g) return;
   dom.clear(g.gb);
-  g.n.textContent = "下一步做";
-  const w = el("div", "tnote");
-  w.appendChild(el("span", null, null,
-    "「按行批量出稿」是把每一行套进**你自己的版式**（列名 ↔ 图层名），一份稿一行数据。"));
-  g.gb.appendChild(w);
-  g.gb.appendChild(note(
-    "技术已经验过：复制图层组 + 只改副本里的文字（副本改了、原件不动）。这一轮先把界面位置留出来，" +
-    "下一次开工做绑定表与出稿。"
-  ));
+  const plan = currentExportPlan();
+  S.exp = plan;
+
+  const shortMs = (ms) => (ms >= 1000 ? Math.round(ms / 100) / 10 + "s" : ms + "ms");
+  /* 底部第二个动作的可用性/文案在这里同步（一处状态，两个入口） */
+  if (refs.btnExp) {
+    refs.btnExp.textContent = plan && plan.ok
+      ? (S.bigOk ? "仍然生成 " + plan.n + " 个（约 " + shortMs(plan.estimatedMs) + "）" : "生成 " + plan.n + " 个稿件")
+      : "批量出稿";
+    refs.btnExp.setAttribute("class", "tbtn " + (plan && plan.ok ? (S.bigOk ? "warn" : "pri") : "off"));
+  }
+
+  /* ── ① 模板 ── */
+  const tplBox = el("div", "tnote", "vt-tbl-tplinfo");
+  if (S.tpl) {
+    const w = Math.round(Math.abs(S.tpl.rect.right - S.tpl.rect.left));
+    const h = Math.round(Math.abs(S.tpl.rect.bottom - S.tpl.rect.top));
+    tplBox.textContent = "将复制「" + S.tpl.name + "」的 " + S.tpl.textLayers.length + " 个文字层（" + w + "×" + h + "px）" +
+      (S.tplAuto ? "　· 跟随画布上选中的组" : "　· 手动指定");
+  } else {
+    tplBox.textContent = "还没有模板：" + (S.tplErr || "先在画布上选中一个图层组") + "（也可以从下面挑一个组）";
+  }
+  g.gb.appendChild(tplBox);
+
+  const gr = ps.listGroups();
+  const gl = (gr && gr.groups) ? gr.groups : [];
+  const gItems = [{ v: "", label: "跟随选中", dim: true }].concat(
+    gl.slice(0, 8).map((x) => ({ v: x.name, label: x.name + (x.textCount ? " · " + x.textCount + " 文字" : "") }))
+  );
+  g.gb.appendChild(field("模板来源", chips("vt-tbl-tplpick", gItems, S.tplName || "", (v) => {
+    S.tplName = v || "";
+    savePref();
+    refreshTemplate().then(() => { if (alive()) renderBindGroup(); });
+  })));
+  const re = btn("重新检测模板", "sm gh", "vt-tbl-tplre");
+  re.setAttribute("style", "margin:0 0 6px");
+  re.onclick = () => { refreshTemplate().then(() => { if (alive()) renderBindGroup(); }); };
+  g.gb.appendChild(re);
+
+  if (!S.tpl) {
+    g.gb.appendChild(note("模板 = 你自己搭好的版式（一个图层组）；**里面的文字图层名就是绑定的目标**。"));
+    return;
+  }
+  if (!S.norm) {
+    g.gb.appendChild(note("先导入 CSV，再回来把列绑到图层。"));
+    return;
+  }
+  if (!S.tpl.textLayers.length) {
+    g.gb.appendChild(note("这个模板组里没有文字层 —— 出稿靠「把值写进文字层」，所以模板里得有文字。"));
+    return;
+  }
+
+  /* ── ② 绑定表：每列一行 ── */
+  /* 🔴 绑的是**序号**不是名字：真机上 `duplicate` 会把副本子层改名（`标题` → `标题 拷贝`），
+     按名字配对会一处都写不上（S48 第一轮实测）。名字只用来显示。 */
+  const items = [{ v: "", label: "（不绑定）", dim: true }].concat(
+    S.tpl.textLayers.map((x, i) => ({
+      v: i, label: (i + 1) + ". " + x.name,
+      title: "模板里这一层现在是：「" + batch.brief(x.contents, 20) + "」",
+    }))
+  );
+  for (let c = 0; c < S.norm.header.length; c++) {
+    const nm = String(S.norm.header[c] || ("第 " + (c + 1) + " 列"));
+    g.gb.appendChild(field(nm.length > 7 ? nm.slice(0, 7) + "…" : nm,
+      chips("vt-tbl-bind-" + c, items, (S.bind || {})[c], (v) => {
+        if (!S.bind) S.bind = {};
+        if (v) S.bind[c] = v; else delete S.bind[c];
+        S.bigOk = false;
+        savePref();
+        renderBindGroup();
+      })));
+  }
+
+  /* ── ③ 警告 + 预估 ── */
+  if (plan && plan.warnings && plan.warnings.length) {
+    const w = el("div", "twarn", "vt-tbl-bindwarn");
+    w.appendChild(el("span", "tdot"));
+    w.appendChild(el("span", null, null, plan.warnings.join("；")));
+    g.gb.appendChild(w);
+  }
+  g.gb.appendChild(note(plan && plan.ok
+    ? batch.describe(plan)
+    : "还不能出稿：" + ((plan && plan.error) || "没有数据或没有模板")));
+  if (plan && plan.ok && S.bigOk) {
+    g.gb.appendChild(note("这份数/写入次数超过闸门（份数 ≤" + plan.limits.rows + "、写入 ≤" + plan.limits.writes +
+      "）—— **再点一次按钮**就真的开始（约 " + shortMs(plan.estimatedMs) + "）。不会静默截断。"));
+  }
+}
+
+/** 一行"可选项芯片"（自绘：不用 `<select>` —— UXP 里外观改不动；也不用浮层 —— 面板会被 overflow 裁掉）。
+    布局交给 inline-block 的文本流（不赌 UXP 的 flex-wrap）。 */
+function chips(id, items, cur, onPick) {
+  const box = el("div", "tchips", id);
+  for (const it of items) {
+    const on = String(it.v) === String(cur === undefined || cur === null ? "" : cur);
+    const c = el("div", "tchip" + (on ? " on" : "") + (it.dim ? " dim" : ""), null, it.label);
+    c.setAttribute("role", "button");
+    if (it.title) c.setAttribute("title", it.title);
+    c.onclick = () => onPick(it.v);
+    box.appendChild(c);
+  }
+  return box;
+}
+
+/** 认模板：**默认跟随画布上选中的图层组**（用户拍板"选中优先"），也能手动指定 */
+async function refreshTemplate() {
+  if (!alive()) return;
+  let r = null;
+  try {
+    r = S.tplName ? ps.groupBriefByName(S.tplName) : ps.activeLayerBrief();
+  } catch (e) {
+    r = { ok: false, error: (e && e.message) || String(e) };
+  }
+  if (!alive()) return;
+  S.tpl = r && r.ok ? r.tpl : null;
+  S.tplErr = r && r.ok ? null : ((r && r.error) || "读不到模板");
+  S.tplAuto = !S.tplName;
+  await log.appendLog("batch tpl " + (S.tpl
+    ? "ok name=" + S.tpl.name + " text=" + S.tpl.textLayers.length + " rect=" + JSON.stringify(S.tpl.rect)
+    : "FAILED " + S.tplErr));
+}
+
+function currentExportPlan() {
+  if (!S || !S.norm || !S.tpl) return null;
+  return batch.planExport({
+    rows: S.norm.body, header: S.norm.header, bindings: S.bind || {},
+    tpl: S.tpl, tplRect: S.tpl.rect, cols: S.gridCols,
+  });
+}
+
+/**
+ * 出稿。**两步**（都是真机验过的原语）：
+ *   ① 一次 batchPlay：AM duplicate × N（副本名一次给好）
+ *   ② 跨一个模态：只认新层 → 逐处写文字 → 网格排开
+ * 超闸门时**先问再出**（第一次点击只是把按钮变成"仍然生成…"，第二次才跑）——
+ * UXP 里没有可靠的 confirm 弹窗，用状态表达比赌对话框稳。
+ */
+async function doExport() {
+  if (!alive()) return;
+  const plan = currentExportPlan();
+  if (!plan || !plan.ok) {
+    setStatus("还不能出稿：" + ((plan && plan.error) || "没有计划"));
+    await log.appendLog("batch export REFUSED why=" + ((plan && plan.error) || "no plan") +
+      " tpl=" + (S.tpl ? S.tpl.name : "-") + " bound=" + Object.keys(S.bind || {}).length);
+    return;
+  }
+  if (plan.tooMany && !S.bigOk) {
+    S.bigOk = true;
+    renderBindGroup();
+    setStatus("份数或写入次数较大（预估 " + (Math.round(plan.estimatedMs / 100) / 10) + "s）—— 再点一次就开始，不静默截断");
+    return;
+  }
+  if (!S.tpl || !S.tpl.id) { setStatus("模板组没有 id —— 重新检测一次"); return; }
+  S.busy = true;
+  const est = Math.round(plan.estimatedMs / 100) / 10;
+  setStatus("正在出稿（" + plan.n + " 份 / " + plan.writeCount + " 处文字，约 " + est + "s）…");
+  await log.appendLog("batch export 开始 n=" + plan.n + " writes=" + plan.writeCount + " tpl=" + S.tpl.name +
+    " 网格 " + plan.cols + " 列 预估=" + plan.estimatedMs + "ms");
+  const t0 = Date.now();
+  const r = await ps.exportByRows(plan, { tplId: S.tpl.id });
+  if (!alive()) return;
+  const ms = Date.now() - t0;
+  S.busy = false;
+  S.bigOk = false;
+  await log.appendLog("batch export " + (r.ok ? "ok" : "FAILED") + " n=" + plan.n + " copies=" + r.copies + "/" + plan.n +
+    " writes=" + r.writes + "/" + r.writesWant + " moved=" + r.moved + " ms=" + ms +
+    " dup=" + r.dupMs + "ms(" + r.dupCount + "条) step2=" + r.step2Ms + "ms（写 " + r.writesMs + " / 移动 " + r.moveMs + "）" +
+    " newLayers=" + r.newLayers +
+    (r.missing && r.missing.length ? " missing=" + r.missing.slice(0, 3).join("；") : "") +
+    (r.firstError ? " firstErr=" + r.firstError : "") + (r.error ? " err=" + r.error : ""));
+  setStatus(r.ok
+    ? "✓ 已生成 " + plan.n + " 个稿件（" + (Math.round(ms / 100) / 10) + "s，预估 " + est + "s）"
+    : "出稿失败：" + (r.error || "见日志"));
+  renderBindGroup();
 }
 
 /** 更新折叠块标题上的摘要（收起也知道现状） */
@@ -540,9 +721,10 @@ function renderGroupSummaries() {
     refs.g1.n.textContent = "无区域";
   }
   refs.g2.n.textContent = "通用 / 表头 / 行";
-  if (S.plan && S.plan.ok) {
-    refs.g3.n.textContent = "下一步做";
-  }
+  const ep = currentExportPlan();
+  refs.g3.n.textContent = ep && ep.ok
+    ? ep.n + " 份 × " + ep.perCopy + " 处"
+    : (S.tpl ? "待绑定" : "待选模板");
 }
 
 /* ==========================================================================
@@ -823,6 +1005,10 @@ async function savePref() {
       regionSource: S.regionSource,
       headerRow: S.headerRow,
       style: S.style,
+      /* v0.5.0 M3b：绑定表与模板指定也是"用户配置"，跟着样式一起记住 */
+      bind: S.bind || {},
+      tplName: S.tplName || "",
+      gridCols: S.gridCols,
     });
   } catch {
     /* 偏好存不上不影响用 */
@@ -849,6 +1035,9 @@ async function loadPref() {
     regionSource: p && p.regionSource === "anchor" ? "anchor" : "selection",
     headerRow: !(p && p.headerRow === false),
     style: style,
+    bind: (p && p.bind) || {},
+    tplName: (p && p.tplName) || "",
+    gridCols: (p && p.gridCols) || 5,
   };
 }
 
@@ -880,7 +1069,13 @@ function build() {
   refs.g3 = makeGroup("按行批量出稿", "vt-tbl-g3", "下一步做");
   [refs.g1, refs.g2, refs.g3].forEach((g) => {
     g.gh.setAttribute("role", "button");
-    g.gh.onclick = () => g.wrap.classList.toggle("closed");
+    g.gh.onclick = () => {
+      g.wrap.classList.toggle("closed");
+      /* 展开「按行批量出稿」时**顺手认一次模板**（用户多半刚在画布上选好了组） */
+      if (g === refs.g3 && !g.wrap.classList.contains("closed")) {
+        refreshTemplate().then(() => { if (alive()) renderBindGroup(); });
+      }
+    };
     body.appendChild(g.wrap);
   });
   refs.estimate = el("p", "tnote", "vt-tbl-estimate", "导入数据后这里会显示预估。");
@@ -895,13 +1090,11 @@ function build() {
   refs.btnGen = btn("生成表格", "pri off", "vt-tbl-gen");
   refs.btnGen.onclick = () => doGenerate();
   foot.appendChild(refs.btnGen);
-  const docs = btn("批量出稿", "", "vt-tbl-docs");
-  docs.setAttribute("style", "margin-left:6px");
-  docs.onclick = () => {
-    if (refs.g3.wrap.classList.contains("closed")) refs.g3.wrap.classList.remove("closed");
-    setStatus("批量出稿还没做 —— 这一轮先落「生成表格」，下一轮做绑定与出稿");
-  };
-  foot.appendChild(docs);
+  /* v0.5.0：第二个动作接上真出稿（可用性/文案由 renderBindGroup 同步） */
+  refs.btnExp = btn("批量出稿", "off", "vt-tbl-docs");
+  refs.btnExp.setAttribute("style", "margin-left:6px");
+  refs.btnExp.onclick = () => doExport();
+  foot.appendChild(refs.btnExp);
   wrap.appendChild(foot);
 
   return wrap;
@@ -924,6 +1117,9 @@ async function mount(container, context) {
     region: null, regionError: null,
     openCol: -1, tab: "g",
     plan: null, busy: false,
+    /* M3b：模板 + 绑定 + 出稿计划 */
+    tpl: null, tplErr: null, tplAuto: true, tplName: pref.tplName,
+    bind: pref.bind, gridCols: pref.gridCols, exp: null, bigOk: false,
   };
 
   root = build();

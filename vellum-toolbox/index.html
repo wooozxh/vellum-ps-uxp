@@ -1573,6 +1573,21 @@
         font-size: 11px; color: var(--vt-warn); line-height: 1.55; margin-bottom: 8px; }
       .tdot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin: 5px 6px 0 0; }
 
+      /* v0.5.0 M3b：绑定用的"芯片组"（自绘 —— 不用 <select>（UXP 里外观改不动）、
+         也不用浮层（面板在 .tbl-body 里会被 overflow 裁掉））。
+         布局交给 inline-block 的文本流，不赌 UXP 的 flex-wrap。 */
+      .tchips { margin: 2px 0; }
+      .tchip { display: inline-block; padding: 0 7px; height: 20px; line-height: 19px; box-sizing: border-box;
+        border: 1px solid var(--vt-line); border-radius: 3px; background: var(--vt-sink);
+        color: var(--vt-tx2); font-size: 11px; margin: 0 4px 4px 0; max-width: 148px;
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      .tchip:hover { background: var(--vt-raised); color: var(--vt-tx); }
+      .tchip.on { background: var(--vt-ac); border-color: var(--vt-ac); color: #fff; }
+      .tchip.dim { color: var(--vt-tx3); }
+      /* "仍然生成…"那个状态：用警示色，但仍然是同一个按钮（不弹对话框） */
+      .tbtn.warn { background: rgba(232,182,94,.92); border-color: rgba(232,182,94,.92); color: #1a1a1a; }
+      .tbtn.warn:hover { background: #e8b65e; border-color: #e8b65e; }
+
       .ttabs { display: flex; border-bottom: 1px solid var(--vt-line); margin-bottom: 8px; }
       .ttabs > div { padding: 5px 9px; font-size: 11.5px; color: var(--vt-tx3); border-bottom: 2px solid transparent; margin-bottom: -1px; }
       .ttabs > div.on { color: var(--vt-tx); border-bottom-color: var(--vt-ac); }

@@ -2890,6 +2890,314 @@ async function buildTable(plan, opts) {
   return out;
 }
 
+/* =============================================================== M3b 批量出稿
+ * 「按行批量出稿」= 把模板组复制 N 份 + 把每一行的值写进副本里的对应文字层。
+ *
+ * 这里的形状全部由真机实测决定（S47，见 docs/45 §一）：
+ *   · 复制走 **AM `duplicate` 按 `_id`**（17–19ms/份，一次 batchPlay 全发）；
+ *     DOM 那套（选中 → `Layer.duplicate()`）要 95ms/份、每份还要 3 个模态边界。
+ *   · 写文字只能走 DOM `textItem.contents`（≈60ms/次）—— **M3b 的大头**（预估耗时要显示给用户）。
+ *   · 🔴 **`duplicate` 之后必须跨一个模态边界才读得到副本的子层**：同一个模态里读
+ *     `copy.layers` 得到**空数组**（S47 第一版就因此"改文字 0 次"）。
+ *   · 副本名由 `duplicate` 的 `name` 参数直接给（S47 实测**生效**；DOM 那条路才需要额外改名）。
+ */
+
+/** 只读：把一个图层对象整理成"模板候选"读本（只有组才有 textLayers）。 */
+function layerBrief(l) {
+  if (!l) return null;
+  const out = {
+    id: l.id, name: String(l.name || ""), kind: String(l.kind || ""),
+    isGroup: l.kind === "group", textLayers: [], rect: null,
+  };
+  if (out.isGroup) {
+    const walk = (arr) => {
+      for (const k of arr || []) {
+        if (k.kind === "text") {
+          let c = "";
+          try { c = String(k.textItem.contents); } catch { c = ""; }
+          out.textLayers.push({ id: k.id, name: String(k.name || ""), contents: c });
+        }
+        if (k.layers && k.layers.length) walk(k.layers);
+      }
+    };
+    try { walk(l.layers); } catch { /* 忽略 */ }
+  }
+  try {
+    const b = l.bounds;
+    if (b) out.rect = { left: b.left, top: b.top, right: b.right, bottom: b.bottom };
+  } catch { /* 忽略 */ }
+  return out;
+}
+
+/** 只读：当前**选中的**图层 —— 模板的默认来源。不是组就如实说（不硬猜）。 */
+function activeLayerBrief() {
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+  try {
+    const doc = app.activeDocument;
+    const l = doc.activeLayers && doc.activeLayers[0];
+    if (!l) return { ok: false, error: "没有选中的图层" };
+    const b = layerBrief(l);
+    if (!b.isGroup) {
+      return { ok: false, brief: b, error: "选中的是「" + b.name + "」（" + b.kind + "），不是图层组" };
+    }
+    return { ok: true, tpl: b };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
+/** 只读：按名字找一个图层组（下拉选模板时用） */
+function groupBriefByName(name) {
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+  let hit = null;
+  const walk = (arr) => {
+    for (const l of arr || []) {
+      if (hit) return;
+      if (l.kind === "group" && String(l.name) === String(name)) { hit = l; return; }
+      if (l.layers && l.layers.length) walk(l.layers);
+    }
+  };
+  try {
+    walk(app.activeDocument.layers);
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+  if (!hit) return { ok: false, error: "找不到图层组「" + name + "」" };
+  return { ok: true, tpl: layerBrief(hit) };
+}
+
+/** 只读：文档里所有图层组（给"模板"下拉用） */
+function listGroups() {
+  const out = [];
+  try {
+    const walk = (arr, depth) => {
+      for (const l of arr || []) {
+        if (l.kind === "group") {
+          const b = layerBrief(l);
+          out.push({ id: b.id, name: b.name, textCount: b.textLayers.length, depth: depth });
+          walk(l.layers, depth + 1);
+        } else if (l.layers && l.layers.length) {
+          walk(l.layers, depth);
+        }
+      }
+    };
+    walk(app.activeDocument.layers, 0);
+    return { ok: true, groups: out };
+  } catch (e) {
+    return { ok: false, error: msg(e), groups: [] };
+  }
+}
+
+/** 只读：文档里最大的图层 id —— 复制之后**只认新层**（否则重跑会抓到上一次的副本，名字撞车） */
+function maxLayerId() {
+  let mx = 0;
+  try {
+    const walk = (arr) => {
+      for (const l of arr || []) {
+        if (typeof l.id === "number" && l.id > mx) mx = l.id;
+        if (l.layers && l.layers.length) walk(l.layers);
+      }
+    };
+    walk(app.activeDocument.layers);
+  } catch { /* 忽略 */ }
+  return mx;
+}
+
+/**
+ * `move` 命令：把图层按**偏移**移动（AM，可合批）。
+ * 🔴 为什么不用 DOM `Layer.translate()`：S48 实测**在这个组上没生效** —— `translate()` 调用
+ * 不抛错、`moved` 计数也在涨，但**副本 bounds 一动不动**（位移实测 [0,0]）。
+ * 又一次「没报错 ≠ 生效」⇒ 改成走 AM 的 `move`（并且能跟复制一样合批）。
+ * ⚠️ 形状按纪律**单条验过**（S48 先单独发一条、读回 bounds 位移对上了才用）。
+ */
+function moveByIdCmd(id, dx, dy) {
+  return {
+    _obj: "move",
+    _target: [{ _ref: "layer", _id: id }],
+    to: {
+      _obj: "offset",
+      horizontal: { _unit: "pixelsUnit", _value: Math.round(dx) || 0 },
+      vertical: { _unit: "pixelsUnit", _value: Math.round(dy) || 0 },
+    },
+  };
+}
+
+/** `duplicate` 命令（按 `_id`；`name` 实测生效） */
+function dupLayerByIdCmd(id, name) {
+  const c = {
+    _obj: "duplicate",
+    _target: [{ _ref: "layer", _id: id }],
+    _options: { dialogOptions: "dontDisplay" },
+  };
+  if (name) c.name = String(name);
+  return c;
+}
+
+/**
+ * 出稿：**两步**（都是已验原语）。
+ *   ① 一次 `batchPlay`：AM duplicate × N（副本名一次给好）
+ *   ② **跨一个模态**：只认"复制前最大 id 之上"的新层 → 逐处写文字 → 网格位移
+ * @param {object} plan `lib/batch.js` planExport 的结果
+ * @param {object} opts `{ tplId }`
+ */
+async function exportByRows(plan, opts) {
+  const o = opts || {};
+  /* 位移走哪条路：`am`（一批 move 命令）/ `dom`（逐叶层 `translate()`）。
+     S48 会**两个都单条验**再决定（AM move 拿组当 target 只动一个子层，所以这里是逐叶层发）。 */
+  const moveVia = o.moveVia === "am" ? "am" : "dom";   // 默认走"选中+translate"（AM move 不认目标）
+  const out = {
+    ok: false, dupMs: 0, dupCount: 0, step2Ms: 0, writesMs: 0, moveMs: 0,
+    copies: 0, newLayers: 0, writes: 0, writesWant: 0, moved: 0, leafMoves: 0, moves: null,
+    missing: [], firstError: null, error: null,
+  };
+  if (!plan || !plan.ok) { out.error = (plan && plan.error) || "没有可用的计划"; return out; }
+  if (!hasDocument()) { out.error = "没有打开的文档"; return out; }
+  if (!o.tplId) { out.error = "没有模板组 id（先在画布上选中一个图层组）"; return out; }
+
+  out.writesWant = plan.writeCount;
+  const moves = [];
+  out.moves = moves;
+  const idBefore = maxLayerId();
+
+  /* ① 复制：**一次** batchPlay（N 条命令） */
+  const cmds = plan.copies.map((cp) => dupLayerByIdCmd(o.tplId, cp.name));
+  out.dupCount = cmds.length;
+  const t0 = Date.now();
+  try {
+    await runModal(async () => {
+      await batchPlay(cmds, {});
+    }, "Vellum 工具箱：复制 " + plan.n + " 份（" + cmds.length + " 条命令）");
+  } catch (e) {
+    out.dupMs = Date.now() - t0;
+    out.error = "复制失败：" + msg(e);
+    return out;
+  }
+  out.dupMs = Date.now() - t0;
+
+  /* ② **新的模态**里读副本 + 写文字 + 移动 */
+  let tWrite = 0;
+  let tMove = 0;
+  const t1 = Date.now();
+  try {
+    await runModal(async () => {
+      const doc = app.activeDocument;
+      const amMoveCmds = [];
+      const fresh = {};           // 名字 → 图层（**只要新层**：id > idBefore）
+      const parents = {};         // 名字 → 它在哪个组（失败时好指认）
+      const walkNew = (arr, owner) => {
+        for (const l of arr || []) {
+          const nm = String(l.name || "");
+          if (typeof l.id === "number" && l.id > idBefore && fresh[nm] === undefined) {
+            fresh[nm] = l;
+            parents[nm] = owner;
+          }
+          if (l.layers && l.layers.length) walkNew(l.layers, nm);
+        }
+      };
+      walkNew(doc.layers, "(顶层)");
+      out.newLayers = Object.keys(fresh).length;
+
+      for (const cp of plan.copies) {
+        const g = fresh[cp.name];
+        if (!g) {
+          out.missing.push("副本「" + cp.name + "」（复制完没找到新层）");
+          continue;
+        }
+        out.copies++;
+        /* 副本内部的文字层 —— 按**顺序**收集。
+           🔴 为什么不用名字：真机上 `duplicate` 会把副本子层改名（`标题` → `标题 拷贝`），
+           按名字配对会**一处都写不上**（S48 第一轮实测 0/6）。副本的子层顺序与模板一致 ⇒ 用序号。 */
+        const inner = [];
+        const collect = (arr) => {
+          for (const k of arr || []) {
+            if (k.kind === "text") inner.push(k);
+            if (k.layers && k.layers.length) collect(k.layers);
+          }
+        };
+        collect(g.layers);
+        for (let i = 0; i < plan.writes.length; i++) {
+          const wr = plan.writes[i];
+          if (wr.copy !== cp.index) continue;
+          const target = inner[wr.layerIndex];
+          if (!target) {
+            out.missing.push("副本 " + cp.index + " 的第 " + wr.layerIndex + " 个文字层（" + wr.layerName + "）");
+            continue;
+          }
+          const tw = Date.now();
+          try {
+            target.textItem.contents = wr.value;
+            out.writes++;
+          } catch (e) {
+            if (!out.firstError) out.firstError = "写「" + wr.layerName + "」：" + msg(e);
+          }
+          tWrite += Date.now() - tw;
+        }
+        if (cp.dx !== 0 || cp.dy !== 0) moves.push({ id: g.id, name: cp.name, dx: cp.dx, dy: cp.dy });
+        out.moved++;
+      }
+    }, "Vellum 工具箱：写 " + plan.n + " 份的文字（" + plan.writeCount + " 处）");
+  } catch (e) {
+    out.error = "写文字失败：" + msg(e);
+  }
+  out.step2Ms = Date.now() - t1;
+
+  /* ③ 网格排开：**逐份"选中 → translate"**。
+     🔴 S48 实测（带对照组的单条探针）：**两个位移原语都只作用于"当前活动图层"** ——
+       AM `move` 按 `_id` 不认目标、DOM `translate()` 对**非活动**的对象也不起作用
+       （第一轮那条"AM move ✓"是**无效读数**：靶层恰好就是活动层，没有对照组）。
+     ⇒ 只能"先选中它、再移它"。DOM 写的代价随文档大小涨（v0.4.7 的教训）⇒ 一份只花 2 次写，可接受。 */
+  if (moves.length) {
+    const t3 = Date.now();
+    for (const mv of moves) {
+      try {
+        let layer = null;
+        await runModal(async () => {
+          const doc = app.activeDocument;
+          const w = (arr) => {
+            for (const l of arr || []) {
+              if (layer) return;
+              if (l.id === mv.id) { layer = l; return; }
+              if (l.layers && l.layers.length) w(l.layers);
+            }
+          };
+          w(doc.layers);
+          if (!layer) throw new Error("找不到副本 " + mv.name);
+          doc.activeLayers = [layer];
+        }, "Vellum 工具箱：选中 " + mv.name);
+        await runModal(async () => {
+          if (typeof layer.translate === "function") layer.translate(mv.dx, mv.dy);
+          else throw new Error("这个 UXP 版本的图层没有 translate()");
+        }, "Vellum 工具箱：移动 " + mv.name);
+      } catch (e) {
+        if (!out.firstError) out.firstError = "移动 " + mv.name + "：" + msg(e);
+      }
+    }
+    out.moveMs = Date.now() - t3;
+  }
+  /* 旧的逐叶层 AM move 路子留作**备用**（moveVia==="am"）—— 但如上，它不认目标，默认不用。 */
+  if (moveVia === "am" && amMoveCmds.length) {
+    const tm0 = Date.now();
+    try {
+      await runModal(async () => {
+        await batchPlay(amMoveCmds, {});
+      }, "Vellum 工具箱：批量位移（备用路）");
+    } catch (e) {
+      if (!out.firstError) out.firstError = "批量位移：" + msg(e);
+    }
+    out.moveMs += Date.now() - tm0;
+  }
+  out.writesMs = tWrite;
+  out.moveMs = tMove;
+  if (!out.error) {
+    out.ok = out.copies === plan.n && out.writes === plan.writeCount;
+    if (!out.ok) {
+      out.error = "有 " + (plan.n - out.copies) + " 份副本没找到、" +
+        (plan.writeCount - out.writes) + " 处文字没写成功";
+    }
+  }
+  return out;
+}
+
 /* --------------------------------------------------------------- 其他 */
 
 /** 当前是否打开了文档（调色板不依赖它，但别的工具要）。 */
@@ -2987,6 +3295,15 @@ module.exports = {
   readTextKeyDesc,
   summarizeTextKey,
   countLayersDeep,
+  /* v0.5.0 追加：M3b 批量出稿 */
+  layerBrief,
+  activeLayerBrief,
+  groupBriefByName,
+  listGroups,
+  maxLayerId,
+  dupLayerByIdCmd,
+  moveByIdCmd,
+  exportByRows,
   groupMakeDesc,
   makeGroup,
   duplicateActiveLayer,
