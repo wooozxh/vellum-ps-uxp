@@ -2032,15 +2032,25 @@ function textItemProbe() {
 }
 
 /** DOM 可写的 textItem 属性名（自检 S32 会逐个试写并读回）。 */
-const TEXT_ITEM_WRITABLE = ["contents", "fontSize", "justification", "leading", "tracking", "color"];
+const TEXT_ITEM_WRITABLE = ["contents", "fontSize", "font", "justification", "leading", "tracking", "color"];
 
 /**
  * 试写活动文字图层的 `textItem[prop]` 并**读回**。
+ *
+ * ⚠️ 两条自我防守（第一版就是被这两个洞骗过，读数"看着通过"其实什么都没验证）：
+ *   ① **原值读不到就不试** —— 第一版拿 `undefined` 去往返，`undefined === undefined`
+ *      直接算通过（"读到自己设的输入"式假阳性）。
+ *   ② **读回不含 undefined** —— 写进一个不存在访问器的属性不会抛错，只会静默
+ *      在**那个临时包装对象**上挂个 JS 属性；重新取 `textItem` 又是一张新包装 ⇒
+ *      读回 undefined。所以"写成功 + 读回 undefined"必须判失败，不能判通过。
  * @returns {Promise<{prop:string, ok:boolean, set?:any, got?:any, error?:string}>}
  */
 async function trySetTextItem(prop, value) {
   if (TEXT_ITEM_WRITABLE.indexOf(prop) < 0) {
     return { prop: prop, ok: false, error: "不在白名单（不拿面板去试任意属性）" };
+  }
+  if (value === undefined || value === null) {
+    return { prop: prop, ok: false, error: "原值读不到 ⇒ 没试（不许拿 undefined 往返当成功）" };
   }
   try {
     await runModal(async () => {
@@ -2054,7 +2064,7 @@ async function trySetTextItem(prop, value) {
   } catch (e) {
     return { prop: prop, ok: false, error: msg(e) };
   }
-  let got = null;
+  let got;
   try {
     const doc = app.activeDocument;
     const ti = doc.activeLayers[0].textItem;
@@ -2062,10 +2072,291 @@ async function trySetTextItem(prop, value) {
   } catch (e) {
     return { prop: prop, ok: false, error: "写完了但读不回：" + msg(e) };
   }
-  const flat = (v) => (typeof v === "object" && v !== null ? JSON.stringify(v) : v);
+  if (got === undefined || got === null) {
+    return { prop: prop, ok: false, set: String(value), got: "undefined", error: "写进去了但读回 undefined ⇒ 这个属性没接上（静默无效）" };
+  }
+  const flat = (v) => (typeof v === "object" && v !== null ? JSON.stringify(v) : String(v));
   const a = flat(value);
   const b = flat(got);
-  return { prop: prop, ok: String(a) === String(b), set: a, got: b };
+  return { prop: prop, ok: a === b, set: a, got: b, error: a === b ? null : "读回与写入不一致" };
+}
+
+/* ---------------------------------------------------------------------------
+ * 文字样式：**建层时给**（官方样例的 textStyle） vs **建完再改**（AM `set textStyle`）
+ * ---------------------------------------------------------------------------
+ * S32 第一轮实测：PS 27.2 / UXP 9.0.2 的 `layer.textItem` **只有 `contents` 接上了**
+ * （fontSize / font / justification / leading / tracking 读回全是 undefined）⇒
+ * 「字体/字号/对齐/行距」不能指望 DOM，得走 AM。
+ *
+ * AM 那条路的**模板是已验证过的** `textColorDesc()`（v0.2.4，真机 18/19 通过）：
+ *   { _obj:"set",
+ *     _target:[ {_ref:"property", _property:"textStyle"},
+ *               {_ref:"textLayer", _enum:"ordinal", _value:"targetEnum"} ],
+ *     to:{ _obj:"textStyle", color:{RGBColor} } }
+ * 这里把它**泛化**成"能塞任意 textStyle 字段"，字段本身由调用方给
+ * —— ⚠️ 枚举值（如 justification）**不在这里猜**，由探针读回后按读到的枚举族名传进来。
+ */
+
+/**
+ * 把一组 textStyle 字段包成 `set` 描述符（纯函数，可离线断言）。
+ * @param {object} style { color?:{r,g,b}, sizePt?:number, fontName?:string,
+ *                         tracking?:number, leadingPt?:number, justification?:{cls,value} }
+ */
+function textStyleDesc(style) {
+  const s = style || {};
+  const to = { _obj: "textStyle" };
+  if (s.color) {
+    to.color = {
+      _obj: "RGBColor",
+      red: clamp255(s.color.r), grain: clamp255(s.color.g), blue: clamp255(s.color.b),
+    };
+  }
+  if (s.sizePt !== undefined && s.sizePt !== null) {
+    to.size = { _unit: "pointsUnit", _value: Number(s.sizePt) };
+  }
+  if (s.fontName) to.fontName = String(s.fontName);
+  if (s.tracking !== undefined && s.tracking !== null) to.tracking = Number(s.tracking);
+  if (s.leadingPt !== undefined && s.leadingPt !== null) {
+    to.leading = { _unit: "pointsUnit", _value: Number(s.leadingPt) };
+  }
+  if (s.justification && s.justification.cls && s.justification.value) {
+    to.justification = { _enum: String(s.justification.cls), _value: String(s.justification.value) };
+  }
+  return {
+    _obj: "set",
+    _target: [
+      { _ref: "property", _property: "textStyle" },
+      { _ref: "textLayer", _enum: "ordinal", _value: "targetEnum" },
+    ],
+    to: to,
+    _options: { dialogOptions: "dontDisplay" },
+  };
+}
+
+/** 给活动文字图层套一组样式（非破坏性：改完仍是文字图层）。 */
+async function applyTextStyle(style) {
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+  try {
+    await runModal(async () => {
+      await batchPlay([textStyleDesc(style)], {});
+    }, "Vellum 工具箱：改文字样式");
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+  return { ok: true };
+}
+
+/**
+ * 段落样式（`paragraphStyle`）的 `set` —— 框文本的**对齐**在这一层。
+ * 🔴 依据（真机读回来的，不是猜的）：`textKey` 里 `textStyle` **没有** justification，
+ *    对齐字段叫 **`align`**、枚举族 **`alignmentType`**、默认值 `left`，
+ *    它位于 `paragraphStyleRange[].paragraphStyle` 里。
+ *    属性名 `paragraphStyle` 与已验证的 `textStyle`（v0.2.4）同一套 `_property` 写法。
+ */
+function paragraphStyleDesc(style) {
+  const s = style || {};
+  const to = { _obj: "paragraphStyle" };
+  if (s.align && s.align.cls && s.align.value) {
+    to.align = { _enum: String(s.align.cls), _value: String(s.align.value) };
+  }
+  return {
+    _obj: "set",
+    _target: [
+      { _ref: "property", _property: "paragraphStyle" },
+      { _ref: "textLayer", _enum: "ordinal", _value: "targetEnum" },
+    ],
+    to: to,
+    _options: { dialogOptions: "dontDisplay" },
+  };
+}
+
+/** 给活动文字图层套段落样式（对齐）。 */
+async function applyParagraphStyle(style) {
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+  try {
+    await runModal(async () => {
+      await batchPlay([paragraphStyleDesc(style)], {});
+    }, "Vellum 工具箱：改段落样式");
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+  return { ok: true };
+}
+
+/**
+ * 把**从文本图层读回来的 `textKey` 描述符**改一处再写回去。
+ *
+ * 为什么这么写（而不是自己拼一个 set 描述符）：
+ *   段落级的对齐/行距（`paragraphStyle`）**没有官方样例可抄**，手拼属于本项目铁律里的
+ *   "禁止猜"。而 PS 自己 `get textKey` 吐出来的结构就是**权威的命令形状** ——
+ *   在它上面改一个字段再送回，等于"照抄录制"，不引入任何我编的键名。
+ * @param {object} tkDesc `readTextKeyDesc()` 拿到的 `raw`（含 textKey 那一层）
+ */
+function textLayerSetDesc(tkDesc) {
+  return {
+    _obj: "set",
+    _target: [{ _ref: "textLayer", _enum: "ordinal", _value: "targetEnum" }],
+    to: tkDesc,
+    _options: { dialogOptions: "dontDisplay" },
+  };
+}
+
+/** 把改过的 textKey 描述符写回活动文字图层。 */
+async function applyTextLayerDesc(tkDesc) {
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+  if (!tkDesc) return { ok: false, error: "没有描述符" };
+  try {
+    await runModal(async () => {
+      await batchPlay([textLayerSetDesc(tkDesc)], {});
+    }, "Vellum 工具箱：写回文字图层描述符");
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+  return { ok: true };
+}
+
+/**
+ * 读回活动文字图层的 `textKey` 描述符（AM `get`）。
+ * 用途有两个，都很关键：
+ *   ① **钉死命令形状** —— 先把 PS 自己吐出来的键名/枚举族名看清楚，再决定怎么写；
+ *   ② 判据 —— "字号/颜色/对齐到底生效没有"必须**读回**验证，不能只看"命令没报错"。
+ * @returns {Promise<{ok:boolean, raw?:object, error?:string, bytes?:number}>}
+ */
+async function readTextKeyDesc() {
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+  let raw = null;
+  let err = null;
+  try {
+    await runModal(async () => {
+      try {
+        const res = await batchPlay(
+          [
+            {
+              _obj: "get",
+              _target: [
+                { _property: "textKey" },
+                { _ref: "layer", _enum: "ordinal", _value: "targetEnum" },
+              ],
+              _options: { dialogOptions: "dontDisplay" },
+            },
+          ],
+          {}
+        );
+        raw = res && res[0] ? res[0] : null;
+      } catch (e) {
+        err = msg(e);
+      }
+    }, "Vellum 工具箱：读文字图层描述符");
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+  if (err) return { ok: false, error: err };
+  if (!raw) return { ok: false, error: "batchPlay 没返回东西" };
+  let bytes = 0;
+  try {
+    bytes = JSON.stringify(raw).length;
+  } catch {
+    bytes = -1;
+  }
+  return { ok: true, raw: raw, bytes: bytes };
+}
+
+/**
+ * 从 `textKey` 描述符里抽出我们关心的那几项（**只读、不猜**）。
+ * 键名拿不到就如实返回 null，让调用方知道"这一项没读到"，而不是编一个默认值。
+ */
+function summarizeTextKey(raw) {
+  const out = {
+    keys: [], styleKeys: [], contents: null, size: null, color: null,
+    justification: null, leading: null, font: null, shapeChar: null,
+    paragraphStyleKeys: [], paragraphJustification: null, paragraphAlign: null,
+    paragraphLeadingType: null, paragraphDump: null,
+  };
+  try {
+    const tk = raw && raw.textKey ? raw.textKey : raw;
+    if (!tk) return out;
+    out.keys = Object.keys(tk);
+    out.contents = typeof tk.textKey === "string" ? tk.textKey : null;
+    const ranges = tk.textStyleRange || [];
+    const r0 = ranges[0];
+    if (r0 && r0.textStyle) {
+      const st = r0.textStyle;
+      out.styleKeys = Object.keys(st);
+      out.size = st.size && st.size._value !== undefined ? st.size._value : null;
+      out.color = st.color ? ps_color(st.color) : null;
+      out.justification = st.justification
+        ? { cls: st.justification._enum || null, value: st.justification._value || null }
+        : null;
+      out.leading = st.leading && st.leading._value !== undefined ? st.leading._value : null;
+      out.font = st.fontName || null;
+    }
+    const shapes = tk.textShape || [];
+    if (shapes[0]) {
+      const sh = shapes[0];
+      out.shapeChar = sh.char && sh.char._value ? sh.char._value : null;
+      if (sh.bounds) {
+        out.shapeBounds = {
+          left: sh.bounds.left, top: sh.bounds.top,
+          right: sh.bounds.right, bottom: sh.bounds.bottom,
+        };
+      }
+    }
+    /* 段落级属性（**框文本的对齐/行距就在这一层**）——
+       S32 第二轮读回来的 `textStyle` 里**没有 justification、也没有 leading**
+       （只有 autoLeading / baselineShift）⇒ 说明它们不在字符样式里。
+       这里把段落样式整个列出来，用"读到的键名"决定下一步怎么写，不猜。 */
+    const pr = tk.paragraphStyleRange || [];
+    out.paragraphRanges = pr.length;
+    if (pr[0] && pr[0].paragraphStyle) {
+      const ps = pr[0].paragraphStyle;
+      out.paragraphStyleKeys = Object.keys(ps);
+      out.paragraphJustification = ps.justification
+        ? { cls: ps.justification._enum || null, value: ps.justification._value || null }
+        : null;
+      /* 🔴 第三轮真机读数：`justification` 在段落样式里**并不存在**，真正的对齐字段叫
+         **`align`**（同层还有 firstLineIndent / startIndent / endIndent / leadingType …）。
+         这条是"读回来的"，不是猜的 —— 也正是"先钉死命令形状再动手"的价值。 */
+      out.paragraphAlign = ps.align
+        ? { cls: ps.align._enum || null, value: ps.align._value || null }
+        : null;
+      out.paragraphLeadingType = ps.leadingType
+        ? { cls: ps.leadingType._enum || null, value: ps.leadingType._value || null }
+        : null;
+      try {
+        out.paragraphDump = JSON.stringify(ps).slice(0, 700);
+      } catch {
+        out.paragraphDump = "(序列化失败)";
+      }
+    }
+  } catch {
+    /* 结构不认识就返回已抽到的部分 */
+  }
+  return out;
+}
+
+/** 内部小工具：RGBColor 描述符 → {r,g,b}（grain/green 两种键名都认）。 */
+function ps_color(c) {
+  if (!c) return null;
+  const g = c.grain !== undefined ? c.grain : c.green;
+  if (typeof c.red !== "number" || typeof g !== "number" || typeof c.blue !== "number") return null;
+  return { r: Math.round(c.red), g: Math.round(g), b: Math.round(c.blue) };
+}
+
+/** 文档里**递归**数图层总数（顶层 `doc.layers.length` 数不到组里的子层）。 */
+function countLayersDeep() {
+  let n = 0;
+  try {
+    const walk = (arr) => {
+      for (const l of arr || []) {
+        n++;
+        if (l.layers && l.layers.length) walk(l.layers);
+      }
+    };
+    walk(app.activeDocument.layers);
+    return n;
+  } catch {
+    return -1;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2296,6 +2587,16 @@ module.exports = {
   textItemProbe,
   trySetTextItem,
   TEXT_ITEM_WRITABLE,
+  /* v0.3.8 追加：文字样式的 AM 路径（DOM 只接了 contents）+ 读回 textKey + 递归计数 */
+  textStyleDesc,
+  applyTextStyle,
+  textLayerSetDesc,
+  applyTextLayerDesc,
+  paragraphStyleDesc,
+  applyParagraphStyle,
+  readTextKeyDesc,
+  summarizeTextKey,
+  countLayersDeep,
   groupMakeDesc,
   makeGroup,
   duplicateActiveLayer,

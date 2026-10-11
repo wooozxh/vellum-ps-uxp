@@ -146,6 +146,25 @@
  *   · S20e"收窄"只能挑**有素材**的项目（0 素材的项目点下去网格会变空态块，量不到）；
  *     并新增断言"**空项目也必须出现在选项里**"（这正是 `projectOptions()` 读原始 `projects[]` 的理由）。
  *
+ *   v0.3.8 新增（**M3「表格生成」地基探针** —— 本轮只加探针，不动 M1/M2 业务代码）：
+ *   目标：开工前先把 5 个"决定架构"的问题用**真机证据**钉死（不许猜）。
+ *   S31 矢量线条 = **矩形形状图层**（`contentLayer` + `shape:rectangle`）。
+ *       描述符来源 = Adobe 社区一份 **ScriptListener 录制输出**（不是手拼）。
+ *       判据：基准（已知可用的内容图层建法）成功 + `kind === "solidColor"` +
+ *       图层 bounds 命中目标矩形 + 线内取样色命中（两条独立读数）。
+ *   S32 文字图层精细参数 —— 建层走 **Adobe 官方样例**的**框文本**描述符
+ *       （`char:box` + `bounds`，表格每格要的就是它）；字体/字号/对齐/行距/颜色
+ *       改走 **UXP DOM `layer.textItem`**，逐项试写并**读回**，另配"一定不存在"的
+ *       属性名当对照，防止把"读到自己设的输入"误当成"能力存在"。
+ *   S33 **批量出稿的形态**（架构级）—— ① 查 `dataSets`/`variables` 这些
+ *       "变量 + 数据组"接口在 UXP 侧到底有没有（配对照项）；② 同时实测替代路径
+ *       **复制图层组 + 逐组换文字**，判据是"**副本变了 且 原件没变**"。
+ *   S34 图层规模 —— 实测 N 个框文本图层的**单层成本**（不可能真建 2000 层，
+ *       那是拿用户机器做压力测试），并比 **逐条循环 vs 一次 batchPlay 批量**。
+ *   S35 CSV 输入侧 —— 文件选择器只能验"API 在不在"（真弹窗自检点不了，如实标注）；
+ *       能测的是解码：utf-8 / **GBK、GB18030**（用写死的已知答案 `D6 D0 CE C4` = "中文"），
+ *       外加**负对照**（伪造编码名必须抛，否则前两项的通过没有意义）+ CSV 往返。
+ *
  *   版本状态（v0.2.4）：S17 建的「纯色填充图层」改色**仍未解决**（已知限制，非回归），
  *   而**形状图层改色正常**（用户 2026-10-10 真机确认，日志 via=contentColorA）。
  *
@@ -2946,12 +2965,681 @@ async function run(ctx, deps) {
     rec(S30, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S31: 矢量线条 = 矩形形状图层（v0.3.8 新增，M3 地基）
+     🔴 表格框线要「矢量 + 可继续编辑」⇒ 不能用像素图层画线。
+        而 UXP 里**没有建形状图层的 DOM API** ⇒ 必须走 batchPlay，且描述符**不许手拼**。
+        来源 = Adobe 社区一份 **ScriptListener 录制输出**（见 lib/ps.js rectShapeMakeDesc 顶部注释）。
+
+     判据分档（先造"必定成功"的基准把变量分开）：
+       ① **基准**：已知可用的内容图层建法（makeSolidColorLayer）—— 基准失败 ⇒ 本条**无结论**
+       ② 目标：细矩形形状图层建出来了，且 `kind === "solidColor"`（矢量，不是 pixel）
+       ③ 两条**互相独立**的读数：图层 bounds 命中目标矩形（±1px）＋ 线内取样色 = 目标色（±25）
+     ⚠️ 只作用在自建临时文档上，跑完不保存关掉。 */
+  const S31 = "S31 矢量线条 = 矩形形状图层（contentLayer + shape:rectangle；kind=solidColor 才算矢量）";
+  try {
+    const SIDE = 400;
+    const sc31 = await ps.createScratchDoc({ size: SIDE, name: "Vellum 自检临时文档(线条)" });
+    if (!sc31 || !sc31.ok) {
+      rec(S31, false, "建临时文档失败：" + ((sc31 && sc31.error) || "未知"));
+    } else {
+      try {
+        // ① 基准：已知能建出来的内容图层（不是本次要验的东西，只用来把变量分开）
+        const n0 = ps.countLayers();
+        await ps.makeSolidColorLayer({ r: 10, g: 200, b: 120 });
+        const n1 = ps.countLayers();
+        const baseOk = n0 >= 0 && n1 > n0;
+
+        // ② 目标：一条 320×4 的横线（表格线就长这样）
+        const line = { left: 40, top: 100, right: 360, bottom: 104 };
+        const want = { r: 230, g: 0, b: 18 };
+        const mk = await ps.makeRectShapeLayer(line, want, {});
+        const li = mk.ok ? ps.layerInfo() : null;
+        const kindOk = !!(li && li.ok && li.kind === "solidColor");
+        const bb = ps.readActiveLayerBounds();
+        const hitRect = !!(mk.ok && bb.ok &&
+          Math.abs(bb.bounds.left - line.left) <= 1 &&
+          Math.abs(bb.bounds.top - line.top) <= 1 &&
+          Math.abs(bb.bounds.right - line.right) <= 1 &&
+          Math.abs(bb.bounds.bottom - line.bottom) <= 1);
+        // ③ 线内取色（避开抗锯齿边缘）
+        const sample = mk.ok
+          ? await ps.sampleRectAvgColor({ left: 200, top: 101, right: 260, bottom: 103 })
+          : { ok: false, error: "没建出图层" };
+        const wantHex = ps.rgbToHex(want);
+        const hitColor = !!(sample.ok && sample.rgb &&
+          Math.abs(sample.rgb.r - want.r) <= 25 &&
+          Math.abs(sample.rgb.g - want.g) <= 25 &&
+          Math.abs(sample.rgb.b - want.b) <= 25);
+
+        if (!baseOk) {
+          rec(S31, true, "【无结论】基准（已知可用的内容图层建法）就失败了（" + n0 + "→" + n1 + "）" +
+            " ⇒ 本次读数不能下任何结论　attempts=[" + ((mk.attempts || []).join(" ")) + "]");
+        } else {
+          // 取样能力本身不可用时，不拿它判死（如实标注"这一半没测"）
+          const judge = kindOk && hitRect && (!sample.ok ? true : hitColor);
+          rec(
+            S31,
+            judge,
+            "基准=内容图层建成（" + n0 + "→" + n1 + "）" +
+            "　形状写法=" + (mk.via || "-") +
+            "　kind=" + ((li && li.kind) || "-") + "（须 solidColor；是 pixel 就说明画成像素了）" +
+            "　bounds=" + (bb.ok
+              ? [Math.round(bb.bounds.left), Math.round(bb.bounds.top), Math.round(bb.bounds.right), Math.round(bb.bounds.bottom)].join(",")
+              : "-") +
+            "（须 " + [line.left, line.top, line.right, line.bottom].join(",") + "）" +
+            "　线内取色=" + (sample.ok ? sample.hex + "✓判" : "取不到（" + (sample.error || "?") + "）不判") +
+            "（须 " + wantHex + "，±25）" +
+            "　attempts=[" + ((mk.attempts || []).join(" ")) + "]" +
+            (mk.error ? "　err=" + mk.error : "") +
+            "　⇒ " + (judge
+              ? "表格框线可做成**矢量形状图层**（每格线一层，可继续编辑）"
+              : "⚠️ 未成立：见 attempts（两条候选都失败 ⇒ 换路）")
+          );
+        }
+      } finally {
+        try {
+          await ps.closeDocument(sc31.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S31, false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S32: 文字图层精细参数（v0.3.8 新增，M3 地基）
+     表格每格一个文字框，需要 **字体 / 对齐 / 行距 / 颜色**，而现有 `makeTextLayer`
+     只给了内容/字号/位置 ⇒ 得先问清楚"这些参数归谁管"。
+
+     两半分开问：
+       ① 建层：走 **Adobe 官方样例**的框文本描述符（`char:box` + `bounds` + fontName/size/color）
+          ⇒ 判据 `kind === "text"`（建出来的是真文字图层，不是像素）
+       ② 精细参数：**UXP DOM 的 `layer.textItem`** 能不能读、能不能写（逐个试写并**读回**）
+          配一个"一定不存在"的属性名当对照，防止把"读到自己设的输入"当成"能力存在"
+     ⚠️ 只作用在自建临时文档上，跑完关掉。 */
+  const S32 = "S32 文字图层样式 —— 建层用官方框文本描述符；样式走 AM（DOM 只接了 contents）";
+  try {
+    const sc32 = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(文字)" });
+    if (!sc32 || !sc32.ok) {
+      rec(S32, false, "建临时文档失败：" + ((sc32 && sc32.error) || "未知"));
+    } else {
+      try {
+        const mk32 = await ps.makeTextLayerBox({
+          text: "单元格 A1",
+          box: { left: 40, top: 60, right: 360, bottom: 120 },
+          sizePt: 24,
+          rgb: { r: 20, g: 20, b: 20 },
+        });
+        const li32 = ps.layerInfo();
+        const kindOk = !!(li32.ok && li32.kind === "text");
+
+        /* ① 读回 textKey —— 先看清 PS 自己吐出来的键名与枚举族名（这就是"钉死命令形状"），
+              再谈怎么改。顺带验证"建层时给的 size/color 到底生效没有"。 */
+        const tk0 = await ps.readTextKeyDesc();
+        const s0 = tk0.ok ? ps.summarizeTextKey(tk0.raw) : null;
+
+        /* ② DOM 的 textItem 能控什么（逐个试写并读回；原值读不到就不试） */
+        const pr = ps.textItemProbe();
+        const tries = [];
+        if (pr.textItemExists) {
+          tries.push(await ps.trySetTextItem("contents", "M3 探针"));
+          tries.push(await ps.trySetTextItem("fontSize", 36));
+          tries.push(await ps.trySetTextItem("leading", 40));
+          tries.push(await ps.trySetTextItem("tracking", 120));
+          tries.push(await ps.trySetTextItem("justification", (require("photoshop").constants || {}).Justification
+            ? require("photoshop").constants.Justification.CENTER
+            : undefined));
+        }
+
+        /* ③ AM 改样式：字号 + 颜色（用 v0.2.4 已验证的 `set textStyle` 模板泛化而来） */
+        const wantSize = 40;
+        const wantRgb = { r: 230, g: 0, b: 18 };
+        const st = await ps.applyTextStyle({ sizePt: wantSize, color: wantRgb });
+        const tk1 = await ps.readTextKeyDesc();
+        const s1 = tk1.ok ? ps.summarizeTextKey(tk1.raw) : null;
+        const sizeOk = !!(st.ok && s1 && Math.abs(Number(s1.size) - wantSize) < 0.6);
+        const colorOk = !!(st.ok && s1 && s1.color &&
+          Math.abs(s1.color.r - wantRgb.r) <= 2 &&
+          Math.abs(s1.color.g - wantRgb.g) <= 2 &&
+          Math.abs(s1.color.b - wantRgb.b) <= 2);
+
+        /* ④ 对齐：**枚举族名只能从读回的描述符里拿**（不猜）。
+              第二轮读数已确认 justification / leading **不在 textStyle 里**
+              （textStyle 只有 autoLeading / baselineShift）⇒ 去段落层找：
+              命中就"把读回来的描述符改一个字段再写回"（描述符形状是 PS 自己给的，不是手拼）。 */
+        let justTried = false;
+        let justOk = false;
+        let justNote = "段落样式里既没有 align 也没有 justification ⇒ 没试（不猜枚举族名）。" +
+          "下一步：在 PS 里录一个「居中对齐」的动作 → 动作面板「复制为 JavaScript」";
+        const pj = (s1 && (s1.paragraphAlign || s1.paragraphJustification)) || null;
+        const pjField = s1 && s1.paragraphAlign ? "align" : "justification";
+        if (pj && pj.cls) {
+          justTried = true;
+          /* 两条候选，按序试并分别读数（"命令没报错但值没变"是最难查的一类 ⇒ 必须读回）：
+             A 把**读回来的整份 textKey**改一个字段再写回（描述符形状是 PS 自己给的）
+             B 直接 `set` `_property:"paragraphStyle"`，只带 align 一个字段
+                （属性名与已验证的 textStyle 同一套写法；字段名/枚举族是读回来的） */
+          let mutated = null;
+          let mutateErr = null;
+          try {
+            mutated = JSON.parse(JSON.stringify(tk1.raw));
+            const tkDesc = mutated.textKey ? mutated.textKey : mutated;
+            const ranges = tkDesc.paragraphStyleRange || [];
+            if (!ranges[0] || !ranges[0].paragraphStyle) {
+              throw new Error("读回的描述符里没有 paragraphStyle 可改");
+            }
+            ranges[0].paragraphStyle[pjField] = { _enum: pj.cls, _value: "center" };
+          } catch (e) {
+            mutateErr = (e && e.message) || String(e);
+          }
+          const parts = [];
+          if (mutateErr) {
+            parts.push("A·改描述符失败(" + mutateErr + ")");
+          } else {
+            const wA = await ps.applyTextLayerDesc(mutated);
+            const tkA = await ps.readTextKeyDesc();
+            const sA = tkA.ok ? ps.summarizeTextKey(tkA.raw) : null;
+            const gA = sA && (sA.paragraphAlign || sA.paragraphJustification);
+            const okA = !!(wA.ok && gA && gA.value === "center");
+            parts.push("A·写回整份 textKey=" + (okA ? "✓" : "✗ 实得 " + ((gA && gA.value) || "?")));
+            if (okA) justOk = true;
+          }
+          if (!justOk) {
+            const wB = await ps.applyParagraphStyle({ align: { cls: pj.cls, value: "center" } });
+            const tkB = await ps.readTextKeyDesc();
+            const sB = tkB.ok ? ps.summarizeTextKey(tkB.raw) : null;
+            const gB = sB && (sB.paragraphAlign || sB.paragraphJustification);
+            const okB = !!(wB.ok && gB && gB.value === "center");
+            parts.push("B·set paragraphStyle=" + (okB ? "✓" : "✗ 实得 " + ((gB && gB.value) || "?") +
+              (wB.error ? "(" + wB.error + ")" : "")));
+            if (okB) justOk = true;
+          }
+          justNote = "字段 " + pjField + "·枚举族=" + pj.cls + "（原值 " + pj.value + "）→ 试 center： " +
+            parts.join("　") + (justOk ? " ⇒ 对齐可设 ✓" : " ⇒ **对齐仍未打通**");
+        }
+
+        const contentsOk = !!(tries.some((t) => t.prop === "contents" && t.ok));
+        const bad = tries.filter((t) => !t.ok);
+        // 判据 = 建的是真文字层 + 后期能换文字（批量出稿的命脉）+ 字号/颜色改得动
+        const judge = kindOk && contentsOk && sizeOk && colorOk;
+
+        rec(
+          S32,
+          judge,
+          "建层=" + (mk32.ok ? "成功" : "失败(" + (mk32.error || "?") + ")") +
+          "　kind=" + ((li32 && li32.kind) || "-") + "（须 text）" +
+          "　‖ 建层后 textKey 读回" + (tk0.ok ? "（" + tk0.bytes + "B）" : "失败:" + tk0.error) +
+          "　textKey 顶层键=[" + ((s0 && s0.keys) || []).join(",") + "]" +
+          "　textStyle 键=[" + ((s0 && s0.styleKeys) || []).join(",") + "]" +
+          "　建层给定 24pt→读回 " + ((s0 && s0.size) || "?") +
+          "　建层给定 #141414→读回 " + (s0 && s0.color ? ps.rgbToHex(s0.color) : "?") +
+          "　框文本 char=" + ((s0 && s0.shapeChar) || "?") +
+          "　段落样式键=[" + ((s0 && s0.paragraphStyleKeys) || []).join(",") + "]" +
+          "　段落对齐字段=" + (s0 && (s0.paragraphAlign || s0.paragraphJustification)
+            ? (s0.paragraphAlign ? "align" : "justification") + ":" +
+              (s0.paragraphAlign || s0.paragraphJustification).value
+            : "无") +
+          "　段落行距类型=" + (s0 && s0.paragraphLeadingType
+            ? s0.paragraphLeadingType.cls + ":" + s0.paragraphLeadingType.value : "无") +
+          "　‖ DOM textItem：存在=" + pr.textItemExists +
+          "　能读的=[" + (pr.keys || []).join(",") + "]" +
+          "　对照·__vellumNotARealThing=" + pr.notARealThing +
+          "　contents 可写=" + contentsOk +
+          (bad.length ? "　DOM 未通过=[" + bad.map((t) => t.prop).join(",") + "]" : "") +
+          "　‖ AM 改样式：目标 " + wantSize + "pt → 读回 " + ((s1 && s1.size) || "?") +
+          "（" + (sizeOk ? "✓" : "✗") + "）　目标 " + ps.rgbToHex(wantRgb) +
+          " → 读回 " + (s1 && s1.color ? ps.rgbToHex(s1.color) : "?") + "（" + (colorOk ? "✓" : "✗") + "）" +
+          "　‖ 对齐：" + justNote +
+          "　⇒ " + (judge
+            ? "字号/颜色/排版能改（AM），文字内容能换（DOM）" +
+              (justTried ? (justOk ? "，对齐也能设" : "，**对齐还没打通**") : "，对齐那项待定")
+            : "⚠️ 未成立 —— 分段读数见上（哪些能、哪些不能，不要一概而论）")
+        );
+      } finally {
+        try {
+          await ps.closeDocument(sc32.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S32, false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S33: 批量出稿的地基（v0.3.8 新增，M3 **架构级**问题）
+     用户记的是"把表格的列绑定到图层，按行批量生成稿件"。
+     PS 的「变量 + 数据组」是 **ExtendScript 侧**的东西，UXP 侧大概率没有 ⇒ 先查清楚。
+     查不清就别把架构压在它上面 ⇒ 同时实测**替代路径**：复制图层组 + 逐组换文字。
+
+     两部分：
+       ① 能力存在性（`doc.dataSets` / `doc.variables` …）—— 配"一定不存在"的对照属性名
+       ② 实操：建组 → 组里两个文字层 → **复制组** → 只改副本组里的文字
+          ⇒ 判据是 **副本变了 + 原件没变**（这两条一起才叫"逐组换文字"） */
+  const S33 = "S33 批量出稿地基 —— 变量/数据组 API 是否存在 + 复制图层组并逐组换文字";
+  try {
+    const sc33 = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(批量)" });
+    if (!sc33 || !sc33.ok) {
+      rec(S33, false, "建临时文档失败：" + ((sc33 && sc33.error) || "未知"));
+    } else {
+      try {
+        /* ① 能力存在性 —— 注意必须配对照，否则"读到了个 undefined"会被误读成"存在" */
+        const surf = {};
+        const probeProp = (label, fn) => {
+          try {
+            const v = fn();
+            surf[label] = v === undefined ? "undefined" : (v === null ? "null" : typeof v);
+          } catch (e) {
+            surf[label] = "抛异常";
+          }
+        };
+        try {
+          const d = ps.app.activeDocument;
+          probeProp("doc.dataSets", () => d.dataSets);
+          probeProp("doc.variables", () => d.variables);
+          probeProp("doc.layerComps", () => d.layerComps);
+          probeProp("app.variables", () => ps.app.variables);
+          probeProp("对照·__vellumNotARealThing", () => d.__vellumNotARealThing);
+        } catch (e) {
+          surf.top = String((e && e.message) || e);
+        }
+
+        /* ② 复制图层组 + 逐组换文字 */
+        /* ⚠️ 计数必须**递归**：组里的文字层不会让 `doc.layers.length` 变（第一版就栽在这，
+           读数写着"组内两个文字层=false"，其实两层都在 —— 是判据口径错，不是平台不行）。 */
+        const deepBefore = ps.countLayersDeep();
+        const grp = await ps.makeGroup("稿件 1");
+        const tA = await ps.makeTextLayerBox({
+          text: "旧值-A", box: { left: 40, top: 60, right: 200, bottom: 100 },
+          sizePt: 18, rgb: { r: 0, g: 0, b: 0 },
+        });
+        const tB = await ps.makeTextLayerBox({
+          text: "旧值-B", box: { left: 210, top: 60, right: 360, bottom: 100 },
+          sizePt: 18, rgb: { r: 0, g: 0, b: 0 },
+        });
+        const deepAfter = ps.countLayersDeep();
+        const bothPlaced = deepAfter - deepBefore === 3; // 组 + 两个文字层
+        const nG = ps.countLayers();
+
+        /** 列出所有文字层：{组名, 图层名, 内容} —— 用来判"副本变了、原件没变"。 */
+        const listCells = () => {
+          const out = [];
+          const walk = (arr, parent) => {
+            for (const l of arr || []) {
+              const isGrp = l.kind === "group";
+              if (isGrp) walk(l.layers, l);
+              else {
+                let c = null;
+                try {
+                  c = l.textItem ? l.textItem.contents : null;
+                } catch {
+                  c = null;
+                }
+                if (c !== null && c !== undefined) {
+                  out.push({ group: parent ? String(parent.name) : "(根)", name: String(l.name), contents: String(c) });
+                }
+              }
+            }
+          };
+          try {
+            walk(ps.app.activeDocument.layers, null);
+          } catch {
+            /* 忽略 */
+          }
+          return out;
+        };
+
+        // 选中组（DOM：activeLayers 可赋值 —— 这条本身也是能力读数）
+        let selErr = null;
+        try {
+          await ps.runModal(async () => {
+            const d = ps.app.activeDocument;
+            let g = null;
+            const walk = (arr) => {
+              for (const l of arr || []) {
+                if (l.kind === "group" && String(l.name).indexOf("稿件 1") >= 0) {
+                  g = l;
+                  return;
+                }
+                if (!g && l.layers && l.layers.length) walk(l.layers);
+              }
+            };
+            walk(d.layers);
+            if (!g) throw new Error("找不到刚建的组");
+            d.activeLayers = [g];
+          }, "Vellum 工具箱：选中图层组");
+        } catch (e) {
+          selErr = (e && e.message) || String(e);
+        }
+        const dup = selErr ? { ok: false, error: "选中组失败：" + selErr } : await ps.duplicateActiveLayer();
+        const nD = ps.countLayers();
+
+        // 找到**副本组**里的文字层（副本组名通常带"副本"），只改它
+        let changed = null;
+        let editErr = null;
+        if (dup.ok) {
+          try {
+            await ps.runModal(async () => {
+              const d = ps.app.activeDocument;
+              let target = null;
+              for (const l of d.layers) {
+                if (l.kind !== "group") continue;
+                if (String(l.name).indexOf("稿件 1") < 0) continue;
+                if (String(l.name) === "稿件 1") continue; // 排除原件
+                const kids = l.layers || [];
+                for (const k of kids) {
+                  let c = null;
+                  try {
+                    c = k.textItem ? k.textItem.contents : null;
+                  } catch {
+                    c = null;
+                  }
+                  if (String(c) === "旧值-A") {
+                    target = k;
+                    break;
+                  }
+                }
+                if (target) break;
+              }
+              if (!target) throw new Error("副本组里找不到内容为「旧值-A」的文字层");
+              d.activeLayers = [target];
+              target.textItem.contents = "新值-A";
+            }, "Vellum 工具箱：改副本组里的文字");
+          } catch (e) {
+            editErr = (e && e.message) || String(e);
+          }
+          const cells = listCells();
+          const origGroup = cells.filter((c) => c.group === "稿件 1" && c.contents === "旧值-A");
+          const dupGroup = cells.filter((c) => c.group !== "稿件 1" && c.group.indexOf("稿件 1") >= 0);
+          const dupChanged = dupGroup.some((c) => c.contents === "新值-A");
+          const origIntact = origGroup.length > 0;
+          changed = {
+            ok: dupChanged && origIntact,
+            dupChanged: dupChanged,
+            origIntact: origIntact,
+            groups: cells.map((c) => c.group + ":" + c.contents).join("｜"),
+          };
+        }
+
+        const judge = !!(grp.ok && bothPlaced && dup.ok && changed && changed.ok);
+        rec(
+          S33,
+          judge,
+          "① 变量/数据组 API：" + JSON.stringify(surf) +
+          "（对照项若也是 undefined ⇒ 这些读数只说明「没暴露」，不说明「有」）" +
+          "　‖　② 建组=" + grp.ok + "　组内两个文字层=" + bothPlaced +
+          "（递归计数 " + deepBefore + "→" + deepAfter + "，须 +3）" +
+          "　选中组=" + (selErr ? "✗" + selErr : "✓") +
+          "　复制组=" + (dup.ok ? "✓（图层 " + nG + "→" + nD + "）" : "✗" + dup.error) +
+          "　逐组换文字=" + (changed ? (changed.ok ? "✓" : "✗") : "✗" + (editErr || "未执行")) +
+          "　副本改了=" + (changed ? changed.dupChanged : "-") +
+          "　原件未变=" + (changed ? changed.origIntact : "-") +
+          "　[cells " + (changed ? changed.groups : "-") + "]" +
+          (editErr ? "　editErr=" + editErr : "") +
+          "　⇒ " + (judge
+            ? "**复制图层组 + 逐组换文字**这条路成立（批量出稿不必依赖变量/数据组）"
+            : "⚠️ 未成立 —— 见上面分段读数，别一概而论")
+        );
+      } finally {
+        try {
+          await ps.closeDocument(sc33.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S33, false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S34: 图层规模（v0.3.8 新增，M3 上限策略的依据）
+     6 行 × 5 列 ≈ 60 层；200 行 × 10 列 = 2000+ 层。**不可能真建 2000 层去试**
+     （会拖死 PS，也是拿用户机器做压力测试）⇒ 实测**单层成本**，再据此定上限策略。
+
+     同时比**两种发命令的方式**（这决定实现方式，不是微优化）：
+       A：每条描述符各自一个 runModal 循环
+       B：N 条描述符塞进**一次** batchPlay（batchPlay 本来就接受数组）
+     ⚠️ 只作用在自建临时文档上，跑完关掉。 */
+  const S34 = "S34 图层规模 —— N 个框文本图层实测耗时；单条循环 vs 一次 batchPlay 批量";
+  try {
+    const N = 15;
+    const sc34 = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(规模)" });
+    if (!sc34 || !sc34.ok) {
+      rec(S34, false, "建临时文档失败：" + ((sc34 && sc34.error) || "未知"));
+    } else {
+      try {
+        const boxOf = (i) => ({ left: 20, top: 20 + (i % 18) * 20, right: 220, bottom: 40 + (i % 18) * 20 });
+        const nA0 = ps.countLayers();
+
+        const tA = Date.now();
+        let failA = 0;
+        for (let i = 0; i < N; i++) {
+          const r = await ps.makeTextLayerBox({ text: "A" + i, box: boxOf(i), sizePt: 12, rgb: { r: 0, g: 0, b: 0 } });
+          if (!r.ok) failA++;
+        }
+        const msA = Date.now() - tA;
+        const nA1 = ps.countLayers();
+
+        const descs = [];
+        for (let i = 0; i < N; i++) {
+          descs.push(ps.textLayerBoxDesc({ text: "B" + i, box: boxOf(i), sizePt: 12, rgb: { r: 0, g: 0, b: 0 } }));
+        }
+        const tB = Date.now();
+        let batchErr = null;
+        try {
+          await ps.runModal(async () => {
+            await ps.batchPlay(descs, {});
+          }, "Vellum 工具箱：批量新建文字图层");
+        } catch (e) {
+          batchErr = (e && e.message) || String(e);
+        }
+        const msB = Date.now() - tB;
+        const nB1 = ps.countLayers();
+
+        const addedA = nA1 - nA0;
+        const addedB = nB1 - nA1;
+        const perA = msA / N;
+        const perB = msB / N;
+        const judge = addedA === N && addedB === N && !batchErr;
+        // 外推值只做**读数**，不拿来当判据（外推不是实测）
+        const extA = Math.round((perA * 2000) / 1000);
+        const extB = Math.round((perB * 2000) / 1000);
+
+        rec(
+          S34,
+          judge,
+          "N=" + N +
+          "　A·逐条循环：+" + addedA + " 层　" + msA + "ms（" + perA.toFixed(1) + "ms/层，失败 " + failA + "）" +
+          "　B·一次 batchPlay：+" + addedB + " 层　" + msB + "ms（" + perB.toFixed(1) + "ms/层）" +
+          (batchErr ? "　batchErr=" + batchErr : "") +
+          "　‖ 外推 2000 层≈ A " + extA + "s / B " + extB + "s（**外推不是实测**，只用来定上限策略）" +
+          "　⇒ " + (judge
+            ? "批量塞进一次 batchPlay " + (msB < msA ? "**明显更快**（" + (msA / msB).toFixed(1) + "×）" : "没有更快") +
+              " ⇒ 实现按批量发命令，并按实测成本定行数上限"
+            : "⚠️ 有层没建出来 —— 见上面数字")
+        );
+      } finally {
+        try {
+          await ps.closeDocument(sc34.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S34, false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S35: CSV 输入侧（v0.3.8 新增，M3 输入侧）
+     ⚠️ 文件选择器**会弹系统对话框，自检里点不了** ⇒ 只能验"API 在不在"，
+        并如实标注"真弹窗没测"。真正能测、也是真正会坑人的是**解码**那半边。
+
+     判据用**已知答案**（不是"没报错"），并且先造基准把变量分开：
+       ① 基准：把 GBK 字节 `D6 D0 CE C4`（"中文"的 GBK 编码，**写死的已知答案**）
+          以**二进制**写进 PluginData，再用 `read({format:binary})` 读回**逐字节比对**
+          —— 基准不成立 ⇒ 本条**无结论**（后面的解码读数都不可信）
+       ② 决定性实验：同一个文件用 `read()`（**文本模式**）读回，看到底得到什么 ——
+          解出「中文,A」⇒ 宿主按系统代码页解码，中文 CSV 有原路；
+          乱码 ⇒ 文本模式不可靠，得自带解码表（架构要另想办法）
+       ③ `TextDecoder` 在几个可能的位置（global / window / globalThis）都找一遍（配负对照：
+          伪造属性名必须"找不到"，否则分不清"没有"和"我没找对地方"）
+       ④ utf-8 CSV 往返：BOM + 字段内逗号 + 字段内换行，必须**逐字相同** */
+  const S35 = "S35 CSV 输入侧 —— 文件选择器 API + GBK 文件到底能不能解（含二进制基准）+ utf-8 往返";
+  try {
+    const fs2 = (() => {
+      try {
+        return require("uxp").storage.localFileSystem;
+      } catch {
+        return null;
+      }
+    })();
+    const formats2 = (() => {
+      try {
+        return require("uxp").storage.formats || {};
+      } catch {
+        return {};
+      }
+    })();
+    const hasOpen = !!(fs2 && typeof fs2.getFileForOpening === "function");
+
+    /* ③ TextDecoder 位置探测（"一种读数都没有"不能算"测过了"） */
+    const loc = {};
+    try {
+      loc["global.TextDecoder"] = typeof TextDecoder;
+      loc["window.TextDecoder"] = typeof window !== "undefined" ? typeof window.TextDecoder : "(无 window)";
+      loc["globalThis.TextDecoder"] =
+        typeof globalThis !== "undefined" ? typeof globalThis.TextDecoder : "(无 globalThis)";
+      loc["对照·__notARealDecoder"] =
+        typeof globalThis !== "undefined" ? typeof globalThis.__notARealDecoder : "undefined";
+    } catch (e) {
+      loc.err = String((e && e.message) || e);
+    }
+    const TD = (function () {
+      try {
+        if (typeof TextDecoder === "function") return TextDecoder;
+      } catch {
+        /* 继续找 */
+      }
+      try {
+        if (typeof globalThis !== "undefined" && typeof globalThis.TextDecoder === "function") {
+          return globalThis.TextDecoder;
+        }
+      } catch {
+        /* 没有就算了 */
+      }
+      return null;
+    })();
+    const bogus = TD
+      ? (function () {
+          try {
+            const t = new TD("vt-not-an-encoding");
+            return { threw: false, text: t.decode(new Uint8Array([0x41])) };
+          } catch (e) {
+            return { threw: true };
+          }
+        })()
+      : { threw: false, error: "没有 TextDecoder" };
+    const gbkViaTD = TD
+      ? (function () {
+          try {
+            return { ok: true, text: new TD("gbk").decode(new Uint8Array([0xd6, 0xd0, 0xce, 0xc4])) };
+          } catch (e) {
+            return { ok: false, error: (e && e.message) || String(e) };
+          }
+        })()
+      : { ok: false, error: "没有 TextDecoder" };
+
+    /* ① 基准 + ② 文本模式读同一文件 */
+    const GBK = [0xd6, 0xd0, 0xce, 0xc4, 0x2c, 0x41]; // "中文,A"
+    let base = { ok: false, error: "未执行" };
+    let textMode = { ok: false, text: null, error: null };
+    try {
+      const folder = await data.getDataFolder();
+      let entry;
+      try {
+        entry = await folder.getEntry("m3-gbk-probe.csv");
+      } catch {
+        entry = await folder.createFile("m3-gbk-probe.csv", { overwrite: true });
+      }
+      const u8 = new Uint8Array(GBK.length);
+      for (let i = 0; i < GBK.length; i++) u8[i] = GBK[i];
+      await entry.write(u8.buffer);
+
+      if (!formats2.binary) {
+        base = { ok: false, error: "storage.formats.binary 不存在 ⇒ 读不回字节，基准不成立" };
+      } else {
+        const back = await entry.read({ format: formats2.binary });
+        const b8 = new Uint8Array(back);
+        const same = b8.length === GBK.length && GBK.every((v, i) => b8[i] === v);
+        base = {
+          ok: same,
+          byteLength: b8.length,
+          hex: Array.prototype.slice.call(b8).map((v) => v.toString(16).padStart(2, "0")).join(" "),
+          error: same ? null : "读回的字节与写入的不一致",
+        };
+      }
+      try {
+        const t = await entry.read();
+        textMode = { ok: true, text: typeof t === "string" ? t : String(t) };
+      } catch (e) {
+        textMode = { ok: false, error: (e && e.message) || String(e) };
+      }
+    } catch (e) {
+      base = { ok: false, error: "基准实验抛异常：" + ((e && e.message) || e) };
+    }
+
+    /* ④ utf-8 CSV 往返 */
+    const csvFixture = "\uFEFF" + [
+      "名称,价格,备注",
+      "\"图一,终稿\",1.20,\"第一行\n第二行\"",
+      "图二 (2),3.40,普通",
+    ].join("\r\n");
+    let rt = { ok: false, error: "未执行" };
+    try {
+      await data.writeText("m3-selftest.csv", csvFixture);
+      const back = await data.readText("m3-selftest.csv", null);
+      rt = { ok: back === csvFixture, len: back === null ? -1 : String(back).length };
+    } catch (e) {
+      rt = { ok: false, error: (e && e.message) || e };
+    }
+
+    const textModeIsGbk = !!(textMode.ok && textMode.text === "中文,A");
+    /* 判据只用**该稳的**那几项：
+       · "文本模式能不能解 GBK"是**平台事实**（答"不能"也不是 bug）⇒ 只作读数，不判生死
+       · 基准（二进制往返）必须先成立，否则整条无结论 */
+    const judge = base.ok === true && rt.ok === true && hasOpen === true &&
+      (TD ? bogus.threw === true : true);
+
+    rec(
+      S35,
+      judge,
+      "getFileForOpening=" + (hasOpen ? "有（⚠️ 真弹窗自检点不了，这一半**没测**）" : "没有") +
+      "　‖ ①基准·GBK 字节二进制往返=" + (base.ok ? "逐字节相同(" + base.hex + ")" : "✗" + base.error) +
+      "　②文本模式读同一文件=" + (textMode.ok ? JSON.stringify(textMode.text) : "✗" + textMode.error) +
+      "（解出「中文,A」⇒ 走系统代码页；乱码 ⇒ 文本模式不可靠）" +
+      "　⇒ 中文 CSV " + (textModeIsGbk ? "能直接读" : "**不能靠宿主解码**") +
+      "　‖ ③TextDecoder 位置=" + JSON.stringify(loc) +
+      "　负对照抛异常=" + bogus.threw +
+      (TD ? "（须 true，否则③的读数不可信）" : "（没有 TextDecoder ⇒ 这一半**没测**，不是判据不成立）") +
+      (TD ? "　gbk 解码=" + (gbkViaTD.ok ? JSON.stringify(gbkViaTD.text) : "✗" + gbkViaTD.error) : "") +
+      "　‖ ④utf-8 CSV 往返=" + (rt.ok ? "逐字相同" : "不一致(" + (rt.error || rt.len) + ")") +
+      "　⇒ " + (!base.ok
+        ? "【无结论】连二进制基准都没成立 ⇒ 后面的解码读数不可信"
+        : textModeIsGbk
+          ? "宿主能按系统代码页解 GBK ⇒ 中文 CSV 有原路"
+          : "utf-8/BOM 的 CSV 无损可读；**GBK 得自己做解码**（见读数）")
+    );
+  } catch (e) {
+    rec(S35, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.3.7",
+    version: "0.3.8",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

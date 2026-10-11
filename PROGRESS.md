@@ -1432,3 +1432,47 @@
 - ⚠️ 另外两条要提前告知用户的：新目录 = **空**（「我的颜色」与上次看的库会重置）；
   开发态与正式装是**两套数据**、插件菜单里可能出现**两个「Vellum 工具箱」**（建议装前先卸载开发态那份）。
 - 档案：`docs/34-发布与安装说明.md`（含安装步骤、UPIA 命令行、卸载、上架 Marketplace 的差异与 ID 注意事项）。
+
+
+---
+
+## v0.3.8 · M3「表格生成」开工前可行性评估（探针轮，2026-10-11 17:05）
+
+> **本轮只加探针（`lib/selfcheck.js` S31–S35 + `lib/ps.js` 一组地基算子），未动 M1 / M2 业务代码。**
+> 依据用户给的《M3 开工提示词》第 4 节"开工前必须先做、每个都要有真机证据、不许猜"。
+
+**真机结论（PS 27.2.0 / UXP 9.0.2，自检 39/40 连跑两轮 `17:03:58` / `17:05:15`，唯一 FAIL = 已知 S17；离线 54/54）**
+
+1. **矢量线条 ✅ 可行** —— 表格框线做成 **矩形形状图层**（`_obj:"make"` + `_target:[{_ref:"contentLayer"}]`
+   + `shape:{rectangle…}` + `strokeStyle`），描述符来自 **Adobe 社区一段 ScriptListener 录制输出**
+   （不是手拼）。真机：`kind=solidColor`（内容图层 = 矢量，不是 pixel）、bounds `40,100,360,104`
+   **精确命中目标矩形**、线内取样色 **命中 #E60012**。
+2. **文字样式 ✅ 够用，但要分两条路** —— 建层走 **Adobe 官方样例**的**框文本**描述符
+   （`char:box` + `bounds`，每格一个框）；**字号/颜色/字距**走 AM `set textStyle`（真机 40pt→40、
+   `#E60012`→`#E60012` 读回命中）；**文字内容**走 DOM `textItem.contents`（DOM **只接了这一个属性**，
+   `fontSize/font/justification/leading/tracking` 读回全是 undefined）；**对齐**走 AM `set paragraphStyle`
+   —— 真机读回确认字段叫 **`align`**、枚举族 **`alignmentType`**（默认 `left`），
+   且**"把整份 `textKey` 改一处写回"那条路不报错也不生效**，必须用 `_property` 那一套。
+3. **批量出稿 🔴 不能靠"变量 + 数据组"** —— `doc.dataSets` / `doc.variables` / `app.variables` 都读不到
+   （对照项同样读不到）。**替代路径真机成立**：建组 → 组内建文字层 → `doc.activeLayers=[group]` 选中组 →
+   `duplicate()` → 只改副本组里的文字 ⇒ **副本改了 且 原件没变**。架构压这条路。
+   （顺带发现 `doc.layerComps` **是对象** —— "一份文件多个稿件变体"的另一条候选，未测。）
+4. **规模有硬边界 ⚠️** —— N=15 实测：**批量一次 batchPlay 37.5ms/层** vs 逐条循环 267ms/层（**慢 7.8×**，
+   模态进出是大头）⇒ 2000 层外推 ≈**75s**（批量）/ 535s（循环）。⇒ 实现**一律批量发命令**，
+   并按实测成本**设行数上限**（超限给"生成前 N 行 + 继续生成"，不静默截断）。
+5. **CSV 🔴 中文编码是坑** —— `getFileForOpening` 有；utf-8 / UTF-8 BOM 往返**逐字无损**；
+   但 **UXP 里没有 `TextDecoder`**，且文本模式读 GBK 字节 `D6 D0 CE C4 2C 41` 得到 `"����,A"`
+   ⇒ **GBK 必须自带解码表或明确拒绝**（待拍板）。
+
+**两处探针自己的自我更正（方法学）**：① `undefined` 往返假阳性（"读回来的值再写回去"在属性没接上时
+会 `undefined===undefined` 一路通过）⇒ 原值读不到就不试、读回 undefined 一律判失败；
+② 组内图层计数口径错（用顶层 `doc.layers.length` 数组里新建的层，恒不变）⇒ 改**递归计数**。
+
+**改动**：`lib/ps.js`（+11 个地基函数：`rectShapeMakeDesc/makeRectShapeLayer`、`textLayerBoxDesc/makeTextLayerBox`、
+`textStyleDesc/applyTextStyle`、`paragraphStyleDesc/applyParagraphStyle`、`readTextKeyDesc/summarizeTextKey`、
+`textLayerSetDesc/applyTextLayerDesc`、`makeGroup/duplicateActiveLayer/findTextLayerContents`、
+`countLayersDeep`、`sampleRectAvgColor`、`trySetTextItem`/`textItemProbe`）、`lib/selfcheck.js`（+S31–S35）、
+`index.js` / `manifest.json`（0.3.8）、`docs/35`（新）、`docs/README.md`。
+
+**待用户拍板**（写进 `docs/35` §七）：① GBK CSV 支不支持（自带表 / 只支持 utf-8）② 批量出稿的模板从哪来
+③ 文字对齐的默认策略。**未测**：文件选择器真弹窗、行距怎么设（字段已定位）、形状层能否带多子路径、`layerComps` 能否写。
