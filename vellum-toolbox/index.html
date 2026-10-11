@@ -1523,10 +1523,10 @@
       .tbl-gh { display: flex; align-items: center; height: 30px; padding: 0 9px; }
       .tbl-gh .t { flex: 1 1 auto; font-size: 11.5px; color: var(--vt-tx); }
       .tbl-gh .n { flex: 0 0 auto; font-family: var(--vt-mono); font-size: 10.5px; color: var(--vt-tx3); margin-right: 8px; }
-      .tbl-gh .cv { flex: 0 0 auto; width: 0; height: 0; border-left: 4px solid transparent;
-        border-right: 4px solid transparent; border-top: 5px solid var(--vt-tx3); }
+      /* 🔴 v0.4.4：原来的"折角三角"是用 border 技巧画的（border-left/right 透明 + border-top 上色）。
+         UXP **不支持透明边框** ⇒ 真机上退化成一个**实心黑方块**、还贴在右边缘（用户报的第 5 条）。
+         已整个去掉：折叠状态由"内容显不显示"表达就够了，不需要额外图标。 */
       .tbl-grp.closed .tbl-gb { display: none; }
-      .tbl-grp.closed .tbl-gh .cv { border-top: 0; border-bottom: 5px solid var(--vt-tx3); }
       .tbl-gb { padding: 2px 9px 9px; }
 
       .tf { display: flex; align-items: center; min-height: 26px; margin-bottom: 3px; }
@@ -1541,11 +1541,20 @@
       .tseg > div:hover { color: var(--vt-tx); }
       .tseg > div.on:hover { color: #fff; }
 
+      /* 🔴 v0.4.4：`.tnum` 必须显式 `flex: 0 0 auto`。
+         UXP **不实现** flex 项的自动最小尺寸（`min-width: auto`）⇒ 不写死的话，
+         容器一挤就把**边框盒**压到只剩 `−` 那么宽，而内部 `−/值/+`（`flex: 0 0 Npx`）照样
+         往外溢 ⇒ 相邻步进器的**灰色 `−`/`+` 压在数字上**（真机截图确认，就是用户报的
+         "数字上有灰色字符遮挡"）。约束要写在**能缩的那一层**上。 */
       .tnum { display: flex; align-items: center; border: 1px solid var(--vt-line); border-radius: 4px;
-        background: var(--vt-sink); height: 24px; }
+        background: var(--vt-sink); height: 24px; flex: 0 0 auto; }
       .tnum .mn, .tnum .pl { flex: 0 0 22px; text-align: center; line-height: 22px; color: var(--vt-tx2); font-size: 13px; }
       .tnum .mn:hover, .tnum .pl:hover { background: var(--vt-raised); color: var(--vt-tx); }
       .tnum .vl { flex: 0 0 42px; text-align: center; font-family: var(--vt-mono); font-size: 11.5px; color: var(--vt-tx); }
+      /* 紧凑版（内边距那一行要放 4 个）：16+30+16 = 62px，四个 248px + 间距，
+         在 420px 面板里（内容宽约 288px）放得下。 */
+      .tnum.cpt .mn, .tnum.cpt .pl { flex: 0 0 16px; font-size: 12px; }
+      .tnum.cpt .vl { flex: 0 0 30px; font-size: 11px; }
       .tunit { font-size: 11px; color: var(--vt-tx3); margin-left: 6px; }
 
       .tclr { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--vt-line); margin-left: 8px; }

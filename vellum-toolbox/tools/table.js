@@ -73,6 +73,17 @@ function setStatus(text) {
   if (ctx && ctx.setStatus) ctx.setStatus(String(text));
 }
 
+/**
+ * 面板**可能随时被 unmount**（切工具、关面板），而面板里到处是**异步**回调
+ * （点一下样式要重算区域、导入要读文件、生成要跑几秒）。
+ * 这些回调在 await 之后必须重新确认"我还活着"，否则会摸到已经置 null 的 `S`：
+ *   `TypeError: Cannot set properties of null (setting 'region')`
+ * —— 这是离线回归**当场抓到的**（v0.4.4），真机上"点完样式马上切走"会撞同一个坑。
+ */
+function alive() {
+  return !!S && !!refs;
+}
+
 /** 文件名去扩展名（只砍已知后缀，和 v0.3.6 的图层命名同一条纪律） */
 function baseName(fileName) {
   const n = String(fileName || "表格");
@@ -104,10 +115,11 @@ function makeGroup(title, id, summary) {
   const gh = el("div", "tbl-gh");
   const t = el("span", "t", null, title);
   const n = el("span", "n", null, summary || "");
-  const cv = el("span", "cv");
+  /* 🔴 v0.4.4：这里原来还有一个 `.cv`（用 border 技巧画的折角三角）。
+     真机上 UXP **不支持透明边框** ⇒ 它退化成**实心黑方块**、还贴在面板右边缘。
+     用户点名要删 —— 删掉。折叠状态由"内容显不显示"本身就看得出来了。 */
   gh.appendChild(t);
   gh.appendChild(n);
-  gh.appendChild(cv);
   const gb = el("div", "tbl-gb");
   wrap.appendChild(gh);
   wrap.appendChild(gb);
@@ -124,14 +136,37 @@ function field(label, ctl) {
 }
 
 /** 分段控件：options = [{v,label}] */
+/**
+ * 分段控件（自绘）。
+ * 🔴 v0.4.4：点选时**必须自己把高亮挪过去**。原来只在构建时算一次 `on`，
+ * 点击只改状态、不碰 DOM ⇒ 真机上"改了选项，高亮不动，切一下 tab 才跳过去"
+ * （用户报的第 2 条）。这类"状态变了但界面没跟着变"的 bug 一条修掉全部控件。
+ */
 function seg(id, options, value, onPick) {
   const box = el("div", "tseg", id);
+  const kids = [];
+  const paint = (cur) => {
+    kids.forEach((k, i) => {
+      if (k.classList && k.classList.add && k.classList.remove) {
+        if (options[i].v === cur) k.classList.add("on");
+        else k.classList.remove("on");
+      } else {
+        /* 兜底（离线 mock 没有 classList）：直接写 class */
+        k.setAttribute("class", options[i].v === cur ? "on" : "");
+      }
+    });
+  };
   options.forEach((o) => {
     const d = el("div", o.v === value ? "on" : null, null, o.label);
     d.setAttribute("role", "button");
-    d.onclick = () => onPick(o.v);
+    d.onclick = () => {
+      paint(o.v);       // ← 先挪高亮，再回调（回调可能只更新状态/重算预估）
+      onPick(o.v);
+    };
+    kids.push(d);
     box.appendChild(d);
   });
+  box.__paint = paint;
   return box;
 }
 
@@ -141,7 +176,7 @@ function seg(id, options, value, onPick) {
  */
 function num(id, value, opt, onChange) {
   const o = Object.assign({ min: 0, max: 999, step: 1 }, opt || {});
-  const box = el("div", "tnum", id);
+  const box = el("div", o.cpt ? "tnum cpt" : "tnum", id);
   const mn = el("div", "mn", null, "−");
   const vl = el("div", "vl", null, String(value));
   const pl = el("div", "pl", null, "+");
@@ -193,7 +228,7 @@ function btn(label, cls, id) {
  * 点表头 = 打开这一列的抽屉
  * ------------------------------------------------------------------------ */
 function renderGrid() {
-  if (!refs || !refs.grid) return;
+  if (!alive() || !refs || !refs.grid) return;
   dom.clear(refs.grid);
   if (!S.norm || !S.norm.cols) {
     const e = el("div", "tbl-empty", null, "还没有数据。");
@@ -221,7 +256,7 @@ function renderGrid() {
 
 /** 顶部的源文件行 / 编码行 */
 function renderTop() {
-  if (!refs) return;
+  if (!alive() || !refs) return;
   dom.clear(refs.src);
   if (!S.fileName) {
     const b = btn("导入 CSV", "sm", "vt-tbl-import");
@@ -275,7 +310,7 @@ function openCol(c) {
 }
 
 function renderDrawer() {
-  if (!refs || !refs.drawer) return;
+  if (!alive() || !refs || !refs.drawer) return;
   dom.clear(refs.drawer);
   if (!S.norm || S.openCol < 0 || S.openCol >= S.norm.cols) {
     refs.drawer.setAttribute("style", "display:none");
@@ -310,7 +345,7 @@ function renderDrawer() {
   refs.drawer.appendChild(field("对齐", seg(
     "vt-tbl-colalign",
     [{ v: "left", label: "左" }, { v: "center", label: "中" }, { v: "right", label: "右" }],
-    S.style.colAlign[c] || S.style.align,
+    S.style.colAlign[c] || S.style.rowAlign,
     (v) => {
       S.style.colAlign[c] = v;
       savePref();
@@ -392,6 +427,20 @@ function renderStyleGroup() {
 
   const pane = el("div");
 
+  /* 水平对齐三档的**文案**（用户 2026-10-11 要求写全：「左对齐 / 水平居中 / 右对齐」） */
+  const H_OPTS = [
+    { v: "left", label: "左对齐" },
+    { v: "center", label: "水平居中" },
+    { v: "right", label: "右对齐" },
+  ];
+  /* 垂直对齐：PS 的框文本**只能从框顶往下排**，没有"框内垂直居中"这个属性
+     ⇒ 这三档是靠**把文字框缩到一行高、再挪到目标位置**做出来的（见 lib/table.js 的 valign）。 */
+  const V_OPTS = [
+    { v: "top", label: "顶对齐" },
+    { v: "middle", label: "垂直居中" },
+    { v: "bottom", label: "底对齐" },
+  ];
+
   if (S.tab === "g") {
     pane.appendChild(field("线条规则", seg("vt-tbl-border",
       [{ v: "all", label: "横竖都有" }, { v: "h", label: "只要横线" }, { v: "v", label: "只要竖线" }, { v: "none", label: "都不要" }],
@@ -399,6 +448,8 @@ function renderStyleGroup() {
     pane.appendChild(field("外框宽", withUnit(num("vt-tbl-sw", S.style.strokeW, { min: 0, max: 10, step: 1 }, (v) => {
       S.style.strokeW = v; savePref(); refreshRegion();
     }), "px")));
+    pane.appendChild(field("内边距", padRow()));
+    pane.appendChild(note("上 / 右 / 下 / 左。它决定文字框比格子内缩多少，是排版的手感来源。"));
     pane.appendChild(field("圆角半径", withUnit(num("vt-tbl-radius", S.style.radius, { min: 0, max: 40, step: 2 }, (v) => {
       S.style.radius = v; savePref(); refreshRegion();
     }), "px")));
@@ -406,29 +457,47 @@ function renderStyleGroup() {
       [{ v: "none", label: "无" }, { v: "solid", label: "单色" }],
       S.style.rowBgMode, (v) => { S.style.rowBgMode = v; savePref(); refreshRegion(); })));
   } else if (S.tab === "h") {
-    pane.appendChild(field("对齐", seg("vt-tbl-halign",
-      [{ v: "left", label: "左" }, { v: "center", label: "中" }, { v: "right", label: "右" }],
-      S.style.align, (v) => { S.style.align = v; savePref(); refreshRegion(); })));
+    pane.appendChild(field("水平对齐", seg("vt-tbl-halign", H_OPTS,
+      S.style.headerAlign, (v) => { S.style.headerAlign = v; savePref(); refreshRegion(); })));
+    pane.appendChild(field("垂直对齐", seg("vt-tbl-hvalign", V_OPTS,
+      S.style.headerVAlign, (v) => { S.style.headerVAlign = v; savePref(); refreshRegion(); })));
     pane.appendChild(field("背景", seg("vt-tbl-hbg",
       [{ v: "none", label: "无" }, { v: "solid", label: "单色" }],
       S.style.headerBgMode, (v) => { S.style.headerBgMode = v; savePref(); refreshRegion(); })));
-    pane.appendChild(field("字号", withUnit(num("vt-tbl-hfs", S.style.headerFontPt, { min: 6, max: 72, step: 1 }, (v) => {
-      S.style.headerFontPt = v; savePref(); refreshRegion();
-    }), "pt")));
+    pane.appendChild(field("字号", withUnit(num("vt-tbl-hfs", S.style.headerFontPx, { min: 6, max: 72, step: 1 }, (v) => {
+      S.style.headerFontPx = v; savePref(); refreshRegion();
+    }), "px")));
     pane.appendChild(note("字号与颜色**建层时**就给（官方框文本描述符），改完仍是普通文字层。"));
   } else {
-    pane.appendChild(field("对齐", seg("vt-tbl-ralign",
-      [{ v: "left", label: "左" }, { v: "center", label: "中" }, { v: "right", label: "右" }],
-      S.style.align, (v) => { S.style.align = v; savePref(); refreshRegion(); })));
+    pane.appendChild(field("水平对齐", seg("vt-tbl-ralign", H_OPTS,
+      S.style.rowAlign, (v) => { S.style.rowAlign = v; savePref(); refreshRegion(); })));
+    pane.appendChild(field("垂直对齐", seg("vt-tbl-rvalign", V_OPTS,
+      S.style.rowVAlign, (v) => { S.style.rowVAlign = v; savePref(); refreshRegion(); })));
     pane.appendChild(field("隔行变色", seg("vt-tbl-zebra",
       [{ v: "off", label: "关" }, { v: "on", label: "开" }],
       S.style.zebra ? "on" : "off", (v) => { S.style.zebra = v === "on"; savePref(); refreshRegion(); })));
-    pane.appendChild(field("字号", withUnit(num("vt-tbl-fs", S.style.fontPt, { min: 6, max: 72, step: 1 }, (v) => {
-      S.style.fontPt = v; savePref(); refreshRegion();
-    }), "pt")));
+    pane.appendChild(field("字号", withUnit(num("vt-tbl-fs", S.style.fontPx, { min: 6, max: 72, step: 1 }, (v) => {
+      S.style.fontPx = v; savePref(); refreshRegion();
+    }), "px")));
     pane.appendChild(note("每个格子一个文字层，所以改某一行某个字以后可以直接在画布上双击改。"));
   }
   g.gb.appendChild(pane);
+}
+
+/** 内边距那一行：上 / 右 / 下 / 左 四个**紧凑**步进器（见 index.html 的 `.tnum.cpt`） */
+function padRow() {
+  const box = el("div", "ct");
+  const keys = ["t", "r", "b", "l"];
+  keys.forEach((k, i) => {
+    const n = num("vt-tbl-pad-" + k, S.style.pad[k], { min: 0, max: 80, step: 1, cpt: true }, (v) => {
+      S.style.pad[k] = v;
+      savePref();
+      refreshRegion();
+    });
+    if (i > 0) n.setAttribute("style", "margin-left:4px");
+    box.appendChild(n);
+  });
+  return box;
 }
 
 function renderBindGroup() {
@@ -447,7 +516,7 @@ function renderBindGroup() {
 
 /** 更新折叠块标题上的摘要（收起也知道现状） */
 function renderGroupSummaries() {
-  if (!refs || !S.norm) return;
+  if (!alive() || !refs || !S.norm) return;
   if (S.region) {
     refs.g1.n.textContent = S.region.from === "selection"
       ? "选区 " + Math.round(S.region.rect.right - S.region.rect.left) + "×" + Math.round(S.region.rect.bottom - S.region.rect.top)
@@ -474,7 +543,9 @@ function rebuildNorm() {
 }
 
 async function refreshRegion() {
+  if (!alive()) return;
   const r = await resolveRegion();
+  if (!alive()) return;          // ← 等来的可能是"面板已经被关了"
   S.region = r.ok ? { from: r.from, rect: r.rect } : null;
   S.regionError = r.ok ? null : r.error;
   const info = refs && refs.g1 ? refs.g1.gb.querySelector("#vt-tbl-regioninfo") : null;
@@ -496,16 +567,20 @@ async function refreshRegion() {
 
 function currentPlan() {
   if (!S.norm || !S.region) return null;
+  const info = ps.docInfo() || {};
   return tbl.layoutTable({
     header: S.norm.header,
     body: S.norm.body,
     region: S.region.rect,
     style: S.style,
+    /* 🔴 文档 ppi 必须给：字号是**物理单位**（pt），而我们的布局全是画布像素，
+       两者靠 ppi 换算；垂直居中/底对齐要拿"文字实际有多高"来定位，非它不可。 */
+    ppi: info.resolution || 72,
   });
 }
 
 function updateEstimate() {
-  if (!refs || !refs.estimate) return;
+  if (!alive() || !refs.estimate) return;
   const plan = currentPlan();
   S.plan = plan;
   dom.clear(refs.estimate);
@@ -590,6 +665,7 @@ async function doImport() {
  *    而这条走的是**同样的字节读 + 同样的解码解析**，只少最后那一次 `getFileForOpening()`。
  */
 async function loadSample(id) {
+  if (!alive()) return;
   const spec = SAMPLE_SPECS.filter((s) => s.id === id)[0];
   if (!spec) {
     setStatus("没有这个样例：" + id);
@@ -620,6 +696,7 @@ async function loadSample(id) {
  * 「导入 CSV」（系统弹窗）与「内置样例」共用这一段 —— 两条路的差别**只在怎么拿到字节**。
  */
 async function ingest(u8, fileName, via) {
+  if (!alive()) return null;
   let res = null;
   try {
     res = csv.readBytes(u8);
@@ -650,10 +727,12 @@ async function ingest(u8, fileName, via) {
     log.appendLog("table import ok file=" + S.fileName + " via=" + via + " enc=" + res.encoding +
       " rows=" + res.rows.length + " cols=" + (S.norm ? S.norm.cols : 0) + " bytes=" + u8.length);
   }
+  if (!alive()) return res;
   renderTop();
   renderGrid();
   renderDrawer();
   await refreshRegion();
+  if (!alive()) return res;
   setStatus(res.ok
     ? "已导入「" + S.fileName + "」：编码 " + S.encoding + "，" + S.rows.length + " 行"
     : "读不了「" + S.fileName + "」：" + S.encError);
@@ -661,6 +740,7 @@ async function ingest(u8, fileName, via) {
 }
 
 async function doGenerate() {
+  if (!alive()) return;
   const plan = currentPlan();
   if (!plan || !plan.ok) {
     /* 🔴 这条**必须写日志**：v0.4.2 之前"还不能生成"只写状态栏，于是自检里那次失败
@@ -719,6 +799,7 @@ async function doGenerate() {
  * ========================================================================== */
 
 async function savePref() {
+  if (!S) return;
   try {
     await store.writeJson(PREF_FILE, {
       variant: 1,
@@ -777,7 +858,7 @@ function build() {
   wrap.appendChild(top);
 
   const body = el("div", "tbl-body", "vt-tbl-body");
-  refs.g1 = makeGroup("画在哪儿", "vt-tbl-g1", "—");
+  refs.g1 = makeGroup("置入方式", "vt-tbl-g1", "—");
   refs.g2 = makeGroup("样式", "vt-tbl-g2", "通用 / 表头 / 行");
   refs.g3 = makeGroup("按行批量出稿", "vt-tbl-g3", "下一步做");
   [refs.g1, refs.g2, refs.g3].forEach((g) => {
@@ -814,6 +895,9 @@ async function mount(container, context) {
   binder = dom.makeBinder();
 
   const pref = await loadPref();
+  /* 读偏好是异步的（可能几百 ms）—— 这期间用户完全可能切走工具 ⇒ unmount 已经把
+     `ctx` / `container` 收掉了。不确认的话后面会往一个已经废弃的容器里画，或者摸到 null。 */
+  if (!ctx || !container) return;
   S = {
     fileName: null, rows: null, norm: null,
     encoding: null, encText: null, encError: null, encWarn: false,

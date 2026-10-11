@@ -1042,6 +1042,154 @@ async function main() {
     }
   }
 
+  /* ---- 22e. 用户报的 5 个界面缺陷：逐条离线防回归（v0.4.4） ----
+     来源：2026-10-11 用户在真机上跑完 M3a 后的 5 条反馈。每条都对应一个**具体的错**，
+     所以每条都要有一条能独立失败的判据 —— 别合并成一个"界面看起来对"。 */
+  {
+    const tMod = require(path.join(PKG, "tools", "table.js"));
+    await tMod.mount(view, { setStatus() {} });
+    await sleep(200);
+
+    /* ① 折叠块标题：用户第 4 条要求「画在哪儿」→「置入方式」 */
+    const g1 = document.getElementById("vt-tbl-g1");
+    const g1Title = g1 && g1.children[0] && g1.children[0].children[0]
+      ? String(g1.children[0].children[0].textContent || "") : "(没有 g1 标题)";
+
+    /* ② 用户第 5 条：那个自绘折角在真机上退化成**实心黑方块** ⇒ 整个去掉 */
+    const cvCount = document.querySelectorAll(".tbl-gh .cv").length;
+
+    /* ③ 用户第 3 条：水平 + 垂直对齐，**表头与行两个 tab 都要有**、文案要写全。
+       ⚠️ 样式的三个 tab 是"只渲染当前那个 pane"的 ⇒ 必须**逐个切过去**再验；
+       一开始我在切到「行」之后才去抓「表头」的控件，抓到的是空数组（自己踩的）。 */
+    const hWant = ["左对齐", "水平居中", "右对齐"];
+    const vWant = ["顶对齐", "垂直居中", "底对齐"];
+    const has = (arr, want) => want.every((t) => arr.indexOf(t) >= 0);
+    const segText = (id) => {
+      const e = document.getElementById(id);
+      if (!e || !e.children) return [];
+      return Array.prototype.slice.call(e.children).map((c) => String(c.textContent || ""));
+    };
+    const tabs = document.getElementById("vt-tbl-styletabs");
+    let labelsOk = false;
+    let labelsNote = "找不到样式 tab";
+    let segOk = false;
+    let segNote = "未执行";
+    if (tabs && tabs.children.length >= 3) {
+      // ---- 「表头」tab ----
+      tabs.children[1].dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      await sleep(60);
+      const hl1 = segText("vt-tbl-halign");
+      const hv1 = segText("vt-tbl-hvalign");
+      // ---- 「行」tab ----
+      tabs.children[2].dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      await sleep(60);
+      const hl2 = segText("vt-tbl-ralign");
+      const hv2 = segText("vt-tbl-rvalign");
+      labelsOk = has(hl1, hWant) && has(hv1, vWant) && has(hl2, hWant) && has(hv2, vWant);
+      labelsNote = "表头=" + JSON.stringify(hl1) + " / " + JSON.stringify(hv1) +
+        "　行=" + JSON.stringify(hl2) + " / " + JSON.stringify(hv2);
+
+      /* ④ 用户第 2 条：改了选项 UI 高亮必须**当场**挪过去（原来的 bug 要切 tab 才更新） */
+      const seg = document.getElementById("vt-tbl-rvalign");
+      if (seg && seg.children && seg.children.length === 3) {
+        const c0Before = String(seg.children[0].getAttribute("class") || "");
+        seg.children[2].dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+        const c0 = String(seg.children[0].getAttribute("class") || "");
+        const c2 = String(seg.children[2].getAttribute("class") || "");
+        segOk = c2.indexOf("on") >= 0 && c0.indexOf("on") < 0;
+        segNote = "点前[0]=" + JSON.stringify(c0Before) + "　点后[0]=" + JSON.stringify(c0) + "、[2]=" + JSON.stringify(c2);
+      } else {
+        segNote = "找不到 #vt-tbl-rvalign（或不是 3 项）";
+      }
+    }
+
+    /* ⑤ 用户第 1 条：内边距那一行的 4 个步进器必须是**紧凑版**（否则会被压扁、灰字压数字） */
+    const padIds = ["vt-tbl-pad-t", "vt-tbl-pad-r", "vt-tbl-pad-b", "vt-tbl-pad-l"];
+    const padMiss = padIds.filter((id) => !document.getElementById(id));
+    const padCpt = padIds.filter((id) => {
+      const e = document.getElementById(id);
+      return e && String(e.getAttribute("class") || "").indexOf("cpt") >= 0;
+    }).length;
+
+    check(
+      "22e 用户报的 5 条界面缺陷：标题/折角/高亮/紧凑步进器/对齐标签",
+      g1Title === "置入方式" && cvCount === 0 && segOk &&
+        padMiss.length === 0 && padCpt === 4 && labelsOk,
+      "①标题（第4条）=" + JSON.stringify(g1Title) + "（须「置入方式」）" +
+        "　②折角元素数（第5条）=" + cvCount + "（须 0：UXP 不支持透明边框，它会变黑方块）" +
+        "　③段控件高亮自更新（第2条）=" + segOk + "（" + segNote + "）" +
+        "　④内边距紧凑步进器（第1条）缺 " + padMiss.length + "、紧凑版 " + padCpt + "/4" +
+        "　⑤水平+垂直对齐文案（第3条）=" + labelsOk + "（" + labelsNote + "）"
+    );
+    /* 🔴 故意"点完立刻 unmount"：第一次跑这里时整个脚本**崩了** ——
+       `refreshRegion()` 是异步的，unmount 把 `S` 置 null 之后它才回来赋值 ⇒
+       `TypeError: Cannot set properties of null (setting 'region')`。
+       真机上"点一下样式马上切走工具"是同一个坑。现在面板里所有 async 回调都过 `alive()`；
+       **这条用例的判据就是"脚本能跑到收尾"** —— 崩了整轮会响亮地死在这里。 */
+    try {
+      tMod.unmount();
+    } catch {
+      /* 忽略 */
+    }
+    await sleep(120);
+  }
+
+  /* ---- 22f. CSS 源码防回归（v0.4.4）：两条都是"UIX 特性没实现"踩出来的） ---- */
+  {
+    const html = fs.readFileSync(path.join(PKG, "index.html"), "utf8");
+    const tnumRule = /\.tnum\s*\{[^}]*flex:\s*0\s+0\s+auto/.test(html);
+    const cptRule = /\.tnum\.cpt\s+\.vl\s*\{[^}]*flex:\s*0\s+0\s+30px/.test(html);
+    const noCv = html.indexOf(".tbl-gh .cv") < 0;
+    check(
+      "22f CSS 防回归：步进器不许被压缩（UXP 无 min-width:auto）+ 折角三角已删",
+      tnumRule && cptRule && noCv,
+      "`.tnum{flex:0 0 auto}`=" + tnumRule + "　`.tnum.cpt .vl{flex:0 0 30px}`=" + cptRule +
+        "　`.tbl-gh .cv` 规则已删=" + noCv +
+        "　⇒ 前者是「灰字压数字」的根因（边框盒被压到只剩 −，内部照样溢出），后者在真机上是黑方块"
+    );
+  }
+
+  /* ---- 22g. 垂直对齐 / 单位换算的**纯函数**判据（v0.4.4，用户第 3 条） ----
+     期望值全部独立算：表头行 100–130、内边距 4 ⇒ 顶对齐框顶 104、底对齐框底 126。
+     ppi 的关键性质：**画面上文字的高度与 ppi 无关**（lineH 用画布 px），变的只是交给 PS 的 pt。 */
+  {
+    const tmod = require(path.join(PKG, "lib", "table.js"));
+    const rows = [["名称", "价格"], ["图一", "1.20"], ["图二", "3.40"]];
+    const mk = (style, ppi) => tmod.layoutTable({
+      header: rows[0], body: rows.slice(1),
+      region: { left: 100, top: 100, right: 300, bottom: 260 },
+      style: style, ppi: ppi,
+    });
+    const near = (a, b, tol) => Math.abs(Number(a) - Number(b)) <= (tol === undefined ? 0.01 : tol);
+    const mid = mk({}, 72);
+    const top = mk({ headerVAlign: "top", rowVAlign: "top" }, 72);
+    const bot = mk({ headerVAlign: "bottom", rowVAlign: "bottom" }, 72);
+    const h0 = mid.cells[0];   // 表头格
+    const b0 = mid.cells[2];   // 第一数据行
+    const lineH = 12 * 1.32;   // 字号 12px × 行距系数 1.32（独立算）
+
+    const midOk = h0.valign === "middle" && near(h0.box.top, 100 + (30 - lineH) / 2) &&
+      near(b0.box.top, 130 + (28 - lineH) / 2);
+    const topOk = near(top.cells[0].box.top, 104) && near(top.cells[2].box.top, 134);
+    const botOk = near(bot.cells[0].box.bottom, 126) && near(bot.cells[2].box.bottom, 154);
+    const p300 = mk({}, 300);
+    const ppiOk = near(p300.cells[0].lineH, lineH) && near(p300.cells[0].sizePt, 12 * 72 / 300) &&
+      near(mk({}, 600).cells[0].sizePt, 12 * 72 / 600);
+    const alignOk = mk({ headerAlign: "left", rowAlign: "right" }, 72).cells.map((c) => c.align).join(",") ===
+      "left,left,right,right,right,right";
+
+    check(
+      "22g 垂直对齐三档（纯几何）+ 字号按画布像素（pt 随 ppi 折算）",
+      midOk && topOk && botOk && ppiOk && alignOk,
+      "行高(独立算)=12×1.32=" + lineH + "px　" +
+        "①垂直居中：表头框顶 " + h0.box.top + "（须 " + (100 + (30 - lineH) / 2) + "）、数据行 " + b0.box.top + "（须 " + (130 + (28 - lineH) / 2) + "）" +
+        "　②顶对齐：" + top.cells[0].box.top + " / " + top.cells[2].box.top + "（须 104 / 134）" +
+        "　③底对齐：" + bot.cells[0].box.bottom + " / " + bot.cells[2].box.bottom + "（须 126 / 154）" +
+        "　④ppi：300ppi 时 lineH=" + p300.cells[0].lineH + "（须不变）且 pt=" + p300.cells[0].sizePt + "（须 2.88）" +
+        "　⑤表头/行水平对齐各自独立=" + alignOk
+    );
+  }
+
   /* ---- 23. 素材库：真实挂载 + 镜像缺失时的空态 ----
      验两件事：① 自检 S20 依赖的选择器全部存在（免得真机上一堆 FAIL 其实只是改了名）；
      ② **镜像不存在时的降级路径不抛异常**（真机上这条就是"用户还没在 VellumDesk 里同步过"，

@@ -23,7 +23,7 @@ const DEFAULTS = {
   pad: { t: 4, r: 8, b: 4, l: 8 },
   colwMode: "even",          // even | content
   colWidth: {},              // 手改过的列宽 {列序号(0起): px}
-  colAlign: {},              // 每列对齐 {列序号: left|center|right}
+  colAlign: {},              // 每列对齐 {列序号: left|center|right}（覆盖表头/行各自的默认）
   border: "all",             // all | h | v | none
   radius: 0,
   strokeW: 1,
@@ -35,14 +35,32 @@ const DEFAULTS = {
   rowBg: { r: 58, g: 58, b: 58 },
   zebra: false,
   zebraBg: { r: 52, g: 52, b: 52 },
-  fontPt: 12,
+  /* 🔴 v0.4.4：字号单位从「pt」改成「**画布 px**」。
+     原因：这一层的所有几何（行高 28px、内边距 4px）都是画布像素，而 pt 是**物理单位** ——
+     300ppi 的文档里 12pt = 50px，会把 28px 的行撑爆。设计师也是按 px 想事情的。
+     交给 PS 时再按 ppi 折回 pt（`pxToPt`），**描述符形状一个字没改**，只换数值。 */
+  fontPx: 12,
   fontColor: { r: 162, g: 162, b: 162 },
-  headerFontPt: 12,
+  headerFontPx: 12,
   headerFontColor: { r: 230, g: 230, b: 230 },
-  align: "center",
+  /* 对齐：水平 + 垂直，表头与数据行**各自独立**（用户 2026-10-11 要求两面都能调）。
+     水平三档 left/center/right；垂直三档 top/middle/bottom，默认**水平居中 + 垂直居中**。 */
+  headerAlign: "center",
+  rowAlign: "center",
+  headerVAlign: "middle",
+  rowVAlign: "middle",
   fontName: null,
   maxCells: 400,             // 单次上限（按经验值定，见 docs/40）
 };
+
+/** 单倍行距的经验系数（含上下余量，避免字被框切到） */
+const LEADING = 1.32;
+
+/** 画布像素 → 物理点（PS 的字号是 pt）。ppi 缺省按 72（此时 1px = 1pt）。 */
+function pxToPt(px, ppi) {
+  const p = isFinite(ppi) && ppi > 0 ? Number(ppi) : 72;
+  return (Number(px) || 12) * 72 / p;
+}
 
 const MIN_COL_W = 36;
 
@@ -145,6 +163,9 @@ function layoutTable(req) {
   const cols = header.length;
   const warnings = [];
   const region = (req && req.region) || { left: 0, top: 0, right: 0, bottom: 0 };
+  /* 文档 ppi：字号是**物理单位**（pt），而这一层全是画布像素 ⇒ 两者靠它换算。
+     真机上由 `ps.docInfo().resolution` 传进来；离线/缺省按 72（此时 pt 与 px 1:1）。 */
+  const ppi = isFinite(req && req.ppi) && req.ppi > 0 ? Number(req.ppi) : 72;
 
   if (!cols || !body.length) {
     return { ok: false, error: cols ? "没有数据行" : "没有列", warnings: warnings };
@@ -191,14 +212,30 @@ function layoutTable(req) {
       }
       const x0 = colLeft(c);
       const x1 = colLeft(c + 1);
+      /* ── 垂直对齐（v0.4.4，用户要求）────────────────────────────────────
+         ⚠️ **PS 的框文本没有"框内垂直居中"这个属性** —— 文字永远从框顶往下排。
+         ⇒ 三档是靠**自己把框缩到"一行高"、再挪到目标纵坐标**做出来的（纯几何）。
+         行高（画布像素）= 字号(px) × 行距系数；字号交给 PS 时要换成**物理单位 pt**。 */
+      const fontPx = isHd ? style.headerFontPx : style.fontPx;
+      const sizePt = pxToPt(fontPx, ppi);
+      const valign = (isHd ? style.headerVAlign : style.rowVAlign) || "top";
+      const boxT = rowTop(i) + style.pad.t;
+      const boxB = rowBottom(i) - style.pad.b;
+      const lineH = Math.min(Math.max(1, boxB - boxT), Math.max(1, fontPx * LEADING));
+      let textTop = boxT;
+      if (valign === "middle") textTop = boxT + (boxB - boxT - lineH) / 2;
+      else if (valign === "bottom") textTop = boxB - lineH;
       cells.push({
         row: i, col: c, role: isHd ? "header" : "body", text: text,
-        align: style.colAlign[c] || style.align,
-        sizePt: isHd ? style.headerFontPt : style.fontPt,
+        align: style.colAlign[c] || (isHd ? style.headerAlign : style.rowAlign),
+        valign: valign,
+        fontPx: fontPx,
+        sizePt: sizePt,
+        lineH: lineH,
         color: isHd ? style.headerFontColor : style.fontColor,
         box: {
-          left: x0 + style.pad.l, top: rowTop(i) + style.pad.t,
-          right: x1 - style.pad.r, bottom: rowBottom(i) - style.pad.b,
+          left: x0 + style.pad.l, top: textTop,
+          right: x1 - style.pad.r, bottom: textTop + lineH,
         },
       });
     }
@@ -305,6 +342,7 @@ function layoutTable(req) {
     emptyCells: emptyCells,
     layers: layers,
     style: style,
+    ppi: ppi,
     warnings: warnings,
   };
 }
@@ -317,6 +355,13 @@ function describe(plan) {
     (plan.lines.length - plan.outer.bars) + " · 背景 " + plan.bg.length +
     " · 文字 " + plan.cells.length + "）";
   if (plan.emptyCells) s += "　跳过 " + plan.emptyCells + " 个空格子";
+  /* 文档 ppi 不是 72 时**明说**：字号按画布像素算、交给 PS 时折算成了 pt。
+     不写清楚的话，用户看到"字号 12px"而 PS 里显示别的数字会以为是 bug。 */
+  if (plan.ppi && plan.ppi !== 72) {
+    const c0 = plan.cells[0];
+    s += "　（文档 " + plan.ppi + "ppi：字号按画布像素算" +
+      (c0 ? "，12px 交给 PS 是 " + (Math.round(c0.sizePt * 100) / 100) + "pt" : "") + "）";
+  }
   return s;
 }
 

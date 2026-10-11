@@ -719,6 +719,10 @@ async function readLayerAvgColor() {
       colorSpace: "RGB",
       applyAlpha: false,
     };
+    /* ⚠️ v0.4.5 这里**不能**引用 `o`：`readLayerAvgColor()` 没有 opts 参数。
+       上一版我用"字符串替换"去加 composite 开关，替换命中的是**这一处**（而不是
+       `sampleRectAvgColor` 里那处长得一模一样的行）⇒ 每次调用都 `ReferenceError: o is not defined`
+       ⇒ S16/S17/S18 集体报"像素回读未命中"。**"看起来一样的两处"永远不要用替换去改。** */
     if (l && l.id !== undefined) req.layerID = l.id;
 
     let rgb = null;
@@ -1718,6 +1722,33 @@ async function createScratchDoc(opts) {
   return { ok: false, error: errs.join("；"), errors: errs };
 }
 
+/**
+ * 把指定 id 的文档设为**活动文档**（并读回自证）。
+ *
+ * 为什么需要它：所有"读像素"的探针都隐含一个假设 —— **我们建的那个临时文档一直是活动的**。
+ * 但这个假设在真机上**会被打破**：用户在自检跑的几十秒里点一下自己的文档、或者切个窗口，
+ * 活动文档就变了，于是取样读到的全是别的东西（表现为"像素回读未命中"、几条横带亮度完全一样）。
+ * 与其把这种环境干扰误诊成"产品有 bug"，不如**每次取样前把文档要回来，并记下回来的 id**。
+ */
+async function activateDocument(id) {
+  try {
+    if (!app.documents || !app.documents.length) return { ok: false, error: "没有打开的文档" };
+    if (app.activeDocument && app.activeDocument.id === id) return { ok: true, already: true, docId: id };
+    let target = null;
+    for (const d of app.documents) {
+      if (d && d.id === id) { target = d; break; }
+    }
+    if (!target) return { ok: false, error: "找不到文档 id=" + id };
+    await runModal(async () => {
+      app.activeDocument = target;
+    }, "Vellum 工具箱：切到临时文档");
+    const now = app.activeDocument;
+    return { ok: !!(now && now.id === id), docId: now ? now.id : null, error: now && now.id === id ? null : "切过去了但读回不是它" };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
 /** 关文档（默认不保存）。自检收尾用，失败也要如实返回。 */
 async function closeDocument(id, opts) {
   const o = opts || {};
@@ -2488,7 +2519,16 @@ function findTextLayerContents(key) {
  * 走 `imaging.getPixels({ sourceRect, targetSize:{1,1} })`：
  * sourceRect 内重采样到 1×1 = 该区域的**平均色**。
  */
-async function sampleRectAvgColor(rect) {
+/**
+ * 取一个矩形的**平均色**。
+ * @param {{left,top,right,bottom}} rect
+ * @param {{composite?:boolean}} [opts] `composite:true` = 取**文档合成**（不传 `layerID`），
+ *        而不是"当前图层"。⚠️ v0.4.4：默认那条是"当前图层"——S31 验线色时正合适
+ *        （取样矩形全在线上），但**验文字纵向位置时必须用合成**：文字层在字形之外是透明的，
+ *        读当前图层只会得到一片恒定值（S43 第一版就是这么白跑一轮的）。
+ */
+async function sampleRectAvgColor(rect, opts) {
+  const o = opts || {};
   try {
     if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
     if (!imaging || typeof imaging.getPixels !== "function") {
@@ -2507,7 +2547,9 @@ async function sampleRectAvgColor(rect) {
       colorSpace: "RGB",
       applyAlpha: false,
     };
-    if (l && l.id !== undefined) req.layerID = l.id;
+    /* v0.4.5：`composite:true` = 取**文档合成**（不传 `layerID`）；默认仍是「当前图层」。
+       S43 量文字纵向位置时必须用合成 —— 文字层在字形之外是透明的，读当前图层只会得到一片恒定值。 */
+    if (!o.composite && l && l.id !== undefined) req.layerID = l.id;
 
     let rgb = null;
     let rawErr = null;
@@ -2792,6 +2834,7 @@ module.exports = {
   hasSelection,
   createScratchDoc,
   closeDocument,
+  activateDocument,
   /* v0.2.3 新增：图层类型判定 + 内容图层改色 */
   layerInfo,
   classifyLayer,
