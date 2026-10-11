@@ -53,8 +53,37 @@ const DEFAULTS = {
   maxCells: 400,             // 单次上限（按经验值定，见 docs/40）
 };
 
-/** 单倍行距的经验系数（含上下余量，避免字被框切到） */
+/** 单倍行距的经验系数（含上下余量）—— 现在只用来算 `lineH`（信息性字段） */
 const LEADING = 1.32;
+
+/**
+ * 文字**墨迹**相对"文字框顶"的位置（单位 em）—— 真机实测，见 docs/43。
+ *
+ * 为什么要这两个常数：PS 的框文本把第一行的 baseline 放在 `box_top + ascent` 处，
+ * 于是**字形是贴着箱顶往下画的**（箱高 1.32em 时，墨迹只占箱子上半部分）。
+ * 我们按"框"来对齐，用户看到的就永远是"偏上"（实测：居中档比行中心高 3.25px，
+ * 用户因此报「垂直居中没有生效」）。
+ * ⇒ 按**墨迹**对齐，用户看到的"垂直居中"才真的居中。
+ *
+ * 实测口径（真机 S43 + 用户表格截图逐像素量）：墨迹中心 = 箱顶 + 0.39～0.43em
+ * （12px 汉字 0.39、12px 数字 0.385、18px 汉字 0.43）；墨迹底边 = 箱顶 + 0.78em（数字）
+ * ～ 0.87em（汉字）。取中值使用，残差 <1px（bounds 本身也是整数，量不出更细的差别）。
+ */
+const INK_MID = 0.40;   // 墨迹中心
+const INK_BOT = 0.82;   // 墨迹底边
+
+/**
+ * 三档之间文字的**可调位移**（px）—— 面板上要如实告诉用户"为什么看不出差别"。
+ * = 内容高 − 墨迹高 ≈ (行高 − 上下内边距) − 0.82 × 字号。
+ * 行高 28 / 字号 12 时只有 10px；行高 60 / 字号 18 时有 37px。
+ */
+function inkTravel(style, isHeader) {
+  const s = Object.assign({}, DEFAULTS, style || {});
+  s.pad = Object.assign({}, DEFAULTS.pad, (style && style.pad) || {});
+  const h = Math.max(16, Math.round(isHeader ? s.headerH : s.rowH));
+  const em = Number(isHeader ? s.headerFontPx : s.fontPx) || 12;
+  return Math.max(0, Math.round(((h - s.pad.t - s.pad.b) - INK_BOT * em) * 10) / 10);
+}
 
 /** 画布像素 → 物理点（PS 的字号是 pt）。ppi 缺省按 72（此时 1px = 1pt）。 */
 function pxToPt(px, ppi) {
@@ -212,19 +241,24 @@ function layoutTable(req) {
       }
       const x0 = colLeft(c);
       const x1 = colLeft(c + 1);
-      /* ── 垂直对齐（v0.4.4，用户要求）────────────────────────────────────
+      /* ── 垂直对齐（v0.4.4 加、v0.4.6 改成**按墨迹对齐**）────────────────────
          ⚠️ **PS 的框文本没有"框内垂直居中"这个属性** —— 文字永远从框顶往下排。
          ⇒ 三档是靠**自己把框缩到"一行高"、再挪到目标纵坐标**做出来的（纯几何）。
-         行高（画布像素）= 字号(px) × 行距系数；字号交给 PS 时要换成**物理单位 pt**。 */
+         🔴 v0.4.6 两个改动（用户报「垂直居中没有生效」之后）：
+           ① 箱高从 `1.32em` 收到 **`1em`** —— 箱高不影响文字位置（S43 实测），
+              却直接吃掉可调空间；收窄后三档位移从 4px 变成 10px（用户实配 28/12）。
+           ② 对齐基准从"**框**"改成"**墨迹**"（`INK_MID`/`INK_BOT`）——
+              原来按框居中，字看着永远偏上 3px。 */
       const fontPx = isHd ? style.headerFontPx : style.fontPx;
       const sizePt = pxToPt(fontPx, ppi);
-      const valign = (isHd ? style.headerVAlign : style.rowVAlign) || "top";
+      const valign = (isHd ? style.headerVAlign : style.rowVAlign) || "middle";
       const boxT = rowTop(i) + style.pad.t;
       const boxB = rowBottom(i) - style.pad.b;
+      const boxH = Math.max(1, fontPx);
       const lineH = Math.min(Math.max(1, boxB - boxT), Math.max(1, fontPx * LEADING));
       let textTop = boxT;
-      if (valign === "middle") textTop = boxT + (boxB - boxT - lineH) / 2;
-      else if (valign === "bottom") textTop = boxB - lineH;
+      if (valign === "middle") textTop = (boxT + boxB) / 2 - INK_MID * fontPx;
+      else if (valign === "bottom") textTop = boxB - INK_BOT * fontPx;
       cells.push({
         row: i, col: c, role: isHd ? "header" : "body", text: text,
         align: style.colAlign[c] || (isHd ? style.headerAlign : style.rowAlign),
@@ -232,10 +266,11 @@ function layoutTable(req) {
         fontPx: fontPx,
         sizePt: sizePt,
         lineH: lineH,
+        boxH: boxH,
         color: isHd ? style.headerFontColor : style.fontColor,
         box: {
           left: x0 + style.pad.l, top: textTop,
-          right: x1 - style.pad.r, bottom: textTop + lineH,
+          right: x1 - style.pad.r, bottom: textTop + boxH,
         },
       });
     }
@@ -366,6 +401,6 @@ function describe(plan) {
 }
 
 module.exports = {
-  DEFAULTS, MIN_COL_W,
-  dispWidth, normalizeRows, columnWidths, layoutTable, describe,
+  DEFAULTS, MIN_COL_W, INK_MID, INK_BOT,
+  dispWidth, normalizeRows, columnWidths, layoutTable, describe, inkTravel,
 };

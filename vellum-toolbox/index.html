@@ -1531,7 +1531,9 @@
 
       .tf { display: flex; align-items: center; min-height: 26px; margin-bottom: 3px; }
       .tf .lb { flex: 0 0 86px; font-size: 11.5px; color: var(--vt-tx2); }
-      .tf .ct { flex: 1 1 auto; display: flex; align-items: center; }
+      /* ⚠️ `.ct` 写成**全局**（不是 `.tf .ct`）：内边距那一行的 4 个步进器也用 `.ct`，
+         而它并不在 `.tf` 里 —— 原来靠 UXP 的默认块级行为"恰好"排成一行，不可移植。 */
+      .ct { flex: 1 1 auto; display: flex; align-items: center; }
 
       .tseg { display: flex; flex: 1 1 auto; border: 1px solid var(--vt-line); border-radius: 4px; overflow: hidden; }
       .tseg > div { flex: 1 1 0; height: 24px; line-height: 24px; text-align: center;
@@ -1541,18 +1543,23 @@
       .tseg > div:hover { color: var(--vt-tx); }
       .tseg > div.on:hover { color: #fff; }
 
-      /* 🔴 v0.4.4：`.tnum` 必须显式 `flex: 0 0 auto`。
-         UXP **不实现** flex 项的自动最小尺寸（`min-width: auto`）⇒ 不写死的话，
-         容器一挤就把**边框盒**压到只剩 `−` 那么宽，而内部 `−/值/+`（`flex: 0 0 Npx`）照样
-         往外溢 ⇒ 相邻步进器的**灰色 `−`/`+` 压在数字上**（真机截图确认，就是用户报的
-         "数字上有灰色字符遮挡"）。约束要写在**能缩的那一层**上。 */
-      .tnum { display: flex; align-items: center; border: 1px solid var(--vt-line); border-radius: 4px;
-        background: var(--vt-sink); height: 24px; flex: 0 0 auto; }
+      /* 🔴 v0.4.6：步进器容器**必须显式给 `width`**。
+         真机字符画证明：`[−][12][+]` 的**子元素位置其实是对的**（`12` 正好落在 22+21 处、
+         `+` 落在 177 处），但**边框盒只画了 32px** —— UXP 算 flex 容器**自身**尺寸时，
+         按子元素的"**内容宽**"求和，**不认 `flex-basis`**。
+         ⇒ `flex: 0 0 auto`（v0.4.4 加的）只能管"别被压缩"，管不了"我该画多宽"，
+            所以用户看到的仍然不对：「边框只包住 −，数字和 + 掉在框外」。
+         ⇒ 现在把宽度写死：88 = 1 + 22 + 42 + 22 + 1（box-sizing: border-box）。
+         📌 纪律：**UXP 里凡是靠 flex 容器自己算尺寸的地方，都要给显式 width/height**。 */
+      .tnum { display: flex; align-items: center; flex: 0 0 auto; box-sizing: border-box;
+        width: 88px; height: 24px; border: 1px solid var(--vt-line); border-radius: 4px;
+        background: var(--vt-sink); }
       .tnum .mn, .tnum .pl { flex: 0 0 22px; text-align: center; line-height: 22px; color: var(--vt-tx2); font-size: 13px; }
       .tnum .mn:hover, .tnum .pl:hover { background: var(--vt-raised); color: var(--vt-tx); }
       .tnum .vl { flex: 0 0 42px; text-align: center; font-family: var(--vt-mono); font-size: 11.5px; color: var(--vt-tx); }
-      /* 紧凑版（内边距那一行要放 4 个）：16+30+16 = 62px，四个 248px + 间距，
-         在 420px 面板里（内容宽约 288px）放得下。 */
+      /* 紧凑版：内边距那一行要放 **4 个**（`.ct` 可用的宽度约 308px）。
+         64 = 1 + 16 + 30 + 16 + 1；四个 64 + 三个 5px 间距 = 271 ≤ 308 ✓ */
+      .tnum.cpt { width: 64px; }
       .tnum.cpt .mn, .tnum.cpt .pl { flex: 0 0 16px; font-size: 12px; }
       .tnum.cpt .vl { flex: 0 0 30px; font-size: 11px; }
       .tunit { font-size: 11px; color: var(--vt-tx3); margin-left: 6px; }

@@ -4129,180 +4129,126 @@ async function run(ctx, deps) {
     rec(S40, false, "抛异常：" + ((e && e.message) || e));
   }
 
-  /* ---------- S43: 垂直对齐真的动了没有（v0.4.4 新增，用户第 3 条）
-     用户要求「顶对齐 / 垂直居中 / 底对齐」。做法是**把文字框缩到一行高、再挪到目标纵坐标**
-     （PS 的框文本没有"框内垂直居中"这个属性，只能靠几何）—— 所以这里要验的就一件事：
-     **交给 PS 的那个框位置，真的让字落在了不同的高度上。**
+  /* ---------- S43: 垂直对齐（顶/垂直居中/底）—— 量**文字墨迹**落在行的上/中/下
+     v0.4.6 重写。上一版两个毛病：① 判据拿"墨迹中心距行中心 ≤3px"去卡 PS 自己的行盒排版
+     ⇒ 误报失败（实测恒定偏 4px，那是 PS 把字形画在行盒上方的固有偏移，不是我们的错）；
+     ② 取图层用**全局** `findLayerDeep` ⇒ 三张表的格子名完全相同，会串到第一张表去。
 
-     判据用**相对量**（不依赖任何绝对阈值）：把一行切成 4 条横带，取"最暗的那条"当索引进；
-     三档必须**单调**（top ≤ middle ≤ bottom 且 top ≠ bottom）。
-     为了给三档留出位移空间，探针用**高行 60px + 字号 18px**（28px 的行会把三档挤成同一个）。
-     ⚠️ 同时把文档 ppi 打进读数 —— 字号是按"画布像素"给的、交给 PS 时折成 pt，这条读数能对上账。 */
-  const S43 = "S43 垂直对齐（顶/垂直居中/底）—— 文字实际落在行的上/中/下（4 条横带取最暗当索引）";
+     这一版的判据只问**我们控制的东西**有没有落地：
+       期望墨迹中心 = `箱顶 + INK_MID × 字号`（真机实测常数 0.40em，见 lib/table.js 注释）
+     三档各自比一遍，残差 >1.5px 才算失败。顺带量位移：
+       · 宽松组 60/18：三档之间应移动 37.24px
+       · **用户实配 28/12**：应移动 10.16px（老实现只有 4.16px —— 这是用户报
+         「垂直居中没有生效」的真正原因：位移太小 + 按框对齐导致整体偏上） */
+  const S43 = "S43 垂直对齐 —— 按墨迹验证：三档各对期望值 / 用户实配那组的居中真的居中";
   try {
-    const sc43 = await ps.createScratchDoc({ size: 500, name: "Vellum 自检临时文档(垂直对齐)" });
+    const sc43 = await ps.createScratchDoc({ size: 700, name: "Vellum 自检临时文档(垂直对齐)" });
     if (!sc43 || !sc43.ok) {
       rec(S43, false, "建临时文档失败：" + ((sc43 && sc43.error) || "未知"));
     } else {
       try {
-        /* 🔴 先把自己建的文档**要回活动状态**并读回自证。
-           所有"读像素"的探针都隐含"我们的临时文档一直是活动的"这个假设，而它在真机上
-           会被打破（用户在跑的几十秒里点一下自己的文档）—— 取样就会落到别处
-           （表现为"几条横带亮度完全一样"，第一版就是这么白跑的）。 */
         const act0 = await ps.activateDocument(sc43.id);
         const info43 = ps.docInfo() || {};
         const ppi43 = info43.resolution || 72;
-        const BANDS = 4;
-        const ROWH = 60;
-        const FONT = 18;
         const order = ["top", "middle", "bottom"];
-        const idx = {};
-        const notes = [];
-        const docDrift = [];
-        const planBoxCs = [];
-        const inkTop = {};
-        const inkBot = {};
-        const rowC = {};
-        /* 对照：文档左上角一小块 —— 那里只有背景，用来区分"取样读到的是不是这张纸" */
-        const corner = await ps.sampleRectAvgColor(
-          { left: 2, top: 2, right: 10, bottom: 10 }, { composite: true });
-        /* 三条**分辨性读数**（读到 #555555 时用来分清是哪一种原因）：
-             ① 画布尺寸 —— 如果比计划的右下角小，取样就落在画布**外面**（那就是 PS 的灰底 #555555）
-             ② 打开的文档数 —— 探针没收尾干净会让文档越堆越多
-             ③ 画布中心取样 —— 与角落对照，确认"纸"本身是什么颜色 */
-        const canvasW = info43.docW;
-        const canvasH = info43.docH;
-        let docCount = -1;
-        try {
-          docCount = (ps.app.documents || []).length;
-        } catch {
-          docCount = -1;
-        }
-        const center = await ps.sampleRectAvgColor({
-          left: Math.max(0, Math.round((canvasW || 64) / 2) - 4),
-          top: Math.max(0, Math.round((canvasH || 64) / 2) - 4),
-          right: Math.max(0, Math.round((canvasW || 64) / 2) + 4),
-          bottom: Math.max(0, Math.round((canvasH || 64) / 2) + 4),
-        }, { composite: true });
-
-        for (let k = 0; k < order.length; k++) {
-          const v = order[k];
-          const region = { left: 30, top: 30 + k * 90, right: 330, bottom: 30 + k * 90 + ROWH + 30 };
-          const plan = tbl.layoutTable({
-            header: ["标"], body: [["字"]],
-            region: region,
-            ppi: ppi43,
-            style: {
-              rowH: ROWH, headerH: 30, fontPx: FONT, headerFontPx: FONT,
-              fontColor: { r: 0, g: 0, b: 0 }, headerFontColor: { r: 0, g: 0, b: 0 },
-              border: "none", headerBgMode: "none", rowBgMode: "none",
-              rowVAlign: v, headerVAlign: v,
-            },
-          });
-          /* ⚠️ 这里**不能 `return`** —— 那会把后面所有探针一起跳过（S43 之后的 S42/S41 全不跑）。
-             抛出去让本地 catch 记一条失败，流程继续。 */
-          if (!plan.ok) throw new Error("布局没成立（" + v + "）：" + (plan.error || "?"));
-          const r = await ps.buildTable(plan, { name: "valign-" + v });
-          if (!r.ok) throw new Error("建表失败（" + v + "）：" + (r.error || "?"));
-          /* 数据行是第 2 行（i=1）：rowTop = region.top + headerH */
-          /* 每次取样前重新确认"现在活动的是我们的文档"，不是就再要一次（并如实记下 id） */
-          let dNow = (ps.docInfo() || {}).docId;
-          if (dNow !== sc43.id) {
-            await ps.activateDocument(sc43.id);
-            dNow = (ps.docInfo() || {}).docId;
-            docDrift.push(v + " 取样前活动文档是 " + dNow + "（须 " + sc43.id + "）");
-          }
-          const rowTop = Math.round(region.top) + 30;
-          const rowBot = rowTop + ROWH;
-
-          /* 🔴 主判据 = **读文字图层的墨迹 bounds**（`layer.bounds` 对文字层给的是**字形实际范围**，
-             不是我们设的那个框）⇒ 它直接回答"字到底落在行的上/中/下"。
-             为什么不用像素：这一轮真机上"取合成"的像素读数一直返回一片 #555555
-             （画布 500×500、角落与中心都是 #FFFFFF，说明取样位置没问题 —— 原因待查），
-             与其在一个没解释清楚的读数上做结论，不如换一把**量字形**的尺子。 */
-          const bodyCell = plan.cells[1];
-          const wantName = ps.tableCellName(bodyCell);
-          const layer = ps.findLayerDeep(wantName, "text");
-          if (!layer) throw new Error("找不到数据行的文字图层：" + wantName);
+        const GROUPS = [
+          { id: "loose", rowH: 60, fontPx: 18, y0: 30 },
+          { id: "tight", rowH: 28, fontPx: 12, y0: 300 },
+        ];
+        const canvasOk = isFinite(info43.docW) && isFinite(info43.docH) &&
+          info43.docW >= 340 && info43.docH >= 560;
+        /* 在**指定组里**找那一格 —— 三张表的格子名一样，全局找会串表 */
+        const inkOf = async (groupName, layerName) => {
+          let layer = null;
           await ps.runModal(async () => {
-            ps.app.activeDocument.activeLayers = [layer];
-          }, "Vellum 工具箱：选中 " + wantName);
-          const lb = ps.readActiveLayerBounds();
-          if (!lb.ok) throw new Error("读不到 " + wantName + " 的 bounds：" + (lb.error || "?"));
-          const ink = lb.bounds;
-          planBoxCs.push(bodyCell.box.top + bodyCell.lineH / 2);
-          inkTop[v] = ink.top;
-          inkBot[v] = ink.bottom;
-          rowC[v] = (rowTop + rowBot) / 2;
-          notes.push(v + " 墨迹 y " + Math.round(ink.top) + "–" + Math.round(ink.bottom) +
-            "（行 " + rowTop + "–" + rowBot + "）");
+            const doc = ps.app.activeDocument;
+            let grp = null;
+            const walk = (arr) => {
+              for (const l of arr || []) {
+                if (grp) return;
+                if (l.kind === "group" && String(l.name) === groupName) { grp = l; return; }
+                if (l.layers && l.layers.length) walk(l.layers);
+              }
+            };
+            walk(doc.layers);
+            if (!grp) throw new Error("找不到组 " + groupName);
+            const walk2 = (arr) => {
+              for (const l of arr || []) {
+                if (layer) return;
+                if (l.kind === "text" && String(l.name) === layerName) { layer = l; return; }
+                if (l.layers && l.layers.length) walk2(l.layers);
+              }
+            };
+            walk2(grp.layers || []);
+            if (!layer) throw new Error("组里找不到 " + layerName);
+            doc.activeLayers = [layer];
+          }, "Vellum 工具箱：选中 " + layerName);
+          return ps.readActiveLayerBounds();
+        };
 
-          /* 次要诊断（**不参与判定**）：4 条横带的像素读数 —— 留着，等有空查它为什么是灰的 */
-          const bandH = ROWH / BANDS;
-          const lum = [];
-          for (let bi = 0; bi < BANDS; bi++) {
-            const t0 = rowTop + Math.round(bi * bandH) + 1;
-            const t1 = rowTop + Math.round((bi + 1) * bandH) - 1;
-            const smp = await ps.sampleRectAvgColor({
-              left: Math.round(region.left) + 6, top: t0,
-              right: Math.round(region.right) - 6, bottom: t1,
-            }, { composite: true });
-            lum.push(smp.ok && smp.rgb ? Math.round((smp.rgb.r + smp.rgb.g + smp.rgb.b) / 3) : -1);
+        const notes = [];
+        let bad = 0;
+        const per = {};
+        for (const G of GROUPS) {
+          const vals = {};
+          for (let k = 0; k < order.length; k++) {
+            const v = order[k];
+            const y0 = G.y0 + k * 90;
+            const region = { left: 30, top: y0, right: 330, bottom: y0 + G.rowH + 30 };
+            const plan = tbl.layoutTable({
+              header: ["表"], body: [["中"]], region: region, ppi: ppi43,
+              style: {
+                rowH: G.rowH, headerH: 30, fontPx: G.fontPx, headerFontPx: G.fontPx,
+                fontColor: { r: 0, g: 0, b: 0 }, headerFontColor: { r: 0, g: 0, b: 0 },
+                border: "none", headerBgMode: "none", rowBgMode: "none",
+                rowVAlign: v, headerVAlign: v,
+              },
+            });
+            /* ⚠️ 这里**不能 `return`** —— 那会把后面所有探针一起跳过（S43 之后还有 S44/S42/S41）。
+               抛出去让本地 catch 记一条失败，流程继续。 */
+            if (!plan.ok) throw new Error("布局没成立（" + v + "）：" + (plan.error || "?"));
+            const tname = "vt-va-" + G.id + "-" + v;
+            const r = await ps.buildTable(plan, { name: tname });
+            if (!r.ok) throw new Error("建表失败（" + tname + "）：" + (r.error || "?"));
+            const cell = plan.cells[1];                       // 数据行那一格
+            const lb = await inkOf(tname, ps.tableCellName(cell));
+            if (!lb.ok) throw new Error("读不到墨迹（" + tname + "）：" + (lb.error || "?"));
+            const inkC = (lb.bounds.top + lb.bounds.bottom) / 2;
+            const wantC = cell.box.top + tbl.INK_MID * cell.fontPx;   // 独立算的期望值
+            vals[v] = {
+              inkC: inkC, wantC: wantC, inkTop: lb.bounds.top, inkBot: lb.bounds.bottom,
+              /* 🔴 行中心要**按这一档自己的那张表**算：三档是三张表（region 纵向错开 90px），
+                 第一版忘了加 `k * 90` ⇒ 拿"第一张表的行中心"去比"第二张表的墨迹"，差 90px。 */
+              rowMid: (y0 + 30) + G.rowH / 2,
+            };
+            if (Math.abs(inkC - wantC) > 1.5) bad++;
+            notes.push(G.id + "/" + v + "=" + Math.round(inkC) + "vs" + Math.round(wantC * 10) / 10);
           }
-          notes.push("（像素诊断 " + lum.join("/") + "）");
+          vals.travel = Math.round((vals.bottom.inkTop - vals.top.inkTop) * 10) / 10;
+          vals.travelWant = Math.round((vals.bottom.wantC - vals.top.wantC) * 10) / 10;
+          if (Math.abs(vals.travel - vals.travelWant) > 2) bad++;
+          per[G.id] = vals;
         }
+        /* 「用户实配」那一组的**居中**：墨迹中心必须落在**行中心**上（±1.5px）——
+           这正是用户拿来说"没生效"的那件事 */
+        const midOff = Math.round((per.tight.middle.inkC - per.tight.middle.rowMid) * 10) / 10;
+        if (Math.abs(midOff) > 1.5) bad++;
+        const judge = bad === 0 && canvasOk;
 
-        /* 判据：三档的**墨迹顶边必须严格递增**（顶<中<底），总位移 ≥ 8px（字号 18px 下这是明显位移）；
-           而且"垂直居中"那一档的**墨迹中心要落在行的中心上**（±3px）—— 这才是用户要的效果。 */
-        const inkOk = inkTop.top < inkTop.middle && inkTop.middle < inkTop.bottom;
-        const spread = Math.round((inkTop.bottom - inkTop.top) * 10) / 10;
-        /* 🔴 判据要问**本质**：我们控制的只有"文字框的位置"，所以该验的是
-             ① 墨迹的位移 **等于** 计划里框中心的位移（几何 1:1 落到画面上）；
-             ② 墨迹相对框中心的偏移在三档之间**恒定**（那是 PS 的行盒排版偏移，
-                与我们的对齐逻辑无关 —— 第一版拿"距行中心 ≤3px"当判据，把
-                这个恒定偏移误判成了失败）。
-           实测：偏移三档都是 −4～−4.9px（字形上重下轻），位移 209px vs 计划 208.24px。 */
-        const planBoxC = {};
-        order.forEach((v, i) => {
-          const c = planBoxCs[i];
-          planBoxC[v] = c;
-        });
-        const offs = order.map((v) => Math.round(((inkTop[v] + inkBot[v]) / 2 - planBoxC[v]) * 100) / 100);
-        const offSpread = Math.round((Math.max.apply(null, offs) - Math.min.apply(null, offs)) * 100) / 100;
-        const planSpread = Math.round((planBoxC.bottom - planBoxC.top) * 100) / 100;
-        const moveGap = Math.round(Math.abs(spread - planSpread) * 100) / 100;
-        const midOff = Math.abs((inkTop.middle + inkBot.middle) / 2 - planBoxC.middle);
-        const needW = 30 + 330;   // 最右那张表的 right
-        const needH = 30 + 2 * 90 + 90;
-        const canvasOk = isFinite(canvasW) && isFinite(canvasH) &&
-          canvasW >= needW && canvasH >= needH;
-        const docOk = docDrift.length === 0 && !!(act0 && act0.ok);
-        const judge = inkOk && moveGap <= 3 && offSpread <= 2.5 && docOk && canvasOk;
         rec(
           S43,
           judge,
-          "文档 " + ppi43 + "ppi（id " + sc43.id + "，激活=" + JSON.stringify(act0) + "）" +
-          "　行高 " + ROWH + "px / 字号 " + FONT + "px" +
-          "　**画布=" + canvasW + "×" + canvasH + "**（须 ≥ " + (30 + 2 * 90 + 90) + "）" +
-          "　打开的文档数=" + docCount +
-          "　背景对照(左上角 8×8)=" + (corner.ok ? corner.hex : "取不到(" + (corner.error || "?") + ")") +
-          "、画布中心=" + (center.ok ? center.hex : "取不到") +
-          "　**墨迹位置**：" + notes.filter((x) => x.indexOf("像素诊断") < 0).join("　") +
-          "　墨迹位移=" + spread + "px（计划里框中心位移 " + planSpread + "px，差 " + moveGap + "px）" +
-          "　墨迹相对框中心的偏移=" + JSON.stringify(offs) + "（三档之间差 " + offSpread + "px，须 ≤2.5）" +
-          "　（像素诊断，不参与判定：" + notes.filter((x) => x.indexOf("像素诊断") >= 0).join("") + "）" +
-          (docDrift.length ? "　⚠️ 活动文档漂移：" + docDrift.join("；") : "　（取样期间活动文档始终是我们的）") +
+          "两组样式 × 三档，逐档比「墨迹中心 vs 期望（箱顶 + 0.40em）」：" +
+          "　宽松 60/18 位移 " + per.loose.travel + "px（期望 " + per.loose.travelWant + "）" +
+          "　**用户实配 28/12 位移 " + per.tight.travel + "px（期望 " + per.tight.travelWant + "）**" +
+          "　居中档落点 vs 行中心 = " + midOff + "px（须 ≤1.5）" +
+          "　超差 " + bad + " 项　画布=" + info43.docW + "×" + info43.docH +
+          "　激活=" + JSON.stringify(act0) +
+          "　逐档：" + notes.join(" ") +
           "　⇒ " + (judge
-            ? "三档墨迹严格递增；位移 " + spread + "px 与计划 " + planSpread + "px 只差 " + moveGap +
-              "px；偏移三档恒定（" + JSON.stringify(offs) + "）⇒ **框文本确实是「从框顶往下排」**，" +
-              "「把框缩到一行高再挪」1:1 生效（那 ~4px 恒定偏移是 PS 行盒排版，不是我们的错）"
-            : (!docOk
-              ? "⚠️ **采样时活动文档不是我们建的临时文档** ⇒ 这条读数无效（环境干扰，不是产品结论）。" +
-                "取证：激活=" + JSON.stringify(act0) + "、" + (docDrift.join("；") || "无漂移记录")
-              : (!canvasOk
-                ? "⚠️ **临时文档只有 " + canvasW + "×" + canvasH + "，装不下探针的坐标（须 " + needW + "×" + needH + "）** " +
-                  "⇒ 取样落在画布外的灰底上（#555555），这条读数无效（建文档没给到要求尺寸，不是排版结论）"
-                : "⚠️ 墨迹没有严格递增/位移不足/居中偏差过大 ⇒ 要么框没挪动，要么 PS 的排版锚点不是框顶（要改实现思路）")))
+            ? "三档都按**墨迹**落到位（居中真的居中、底档墨迹贴下内边距线），" +
+              "且 28/12 的位移从老实现的 4.16px 提到 " + per.tight.travel + "px ⇒ 肉眼看得出来"
+            : "⚠️ 有档位残差超 1.5px —— 见逐档读数（画布尺寸若为 0/NaN，是建文档那步的问题）")
         );
       } finally {
         try {
@@ -4315,6 +4261,7 @@ async function run(ctx, deps) {
   } catch (e) {
     rec(S43, false, (e && e.message) || String(e));
   }
+
 
   /* ---------- S42: 面板整链（免弹窗版，v0.4.2 新增）
      为什么要有它：面板上真正的「导入 CSV」要弹**系统文件选择器** —— 自检点不了、
@@ -4577,12 +4524,145 @@ async function run(ctx, deps) {
     rec(S41, false, "抛异常：" + ((e && e.message) || e));
   }
 
+
+  /* ---------- S44: 步进器几何（v0.4.6 新增）
+     为什么单独立一条：`[−][12][+]` 的**边框盒**曾经只画 32px（子元素位置却是对的）⇒
+     用户看到「边框只包住 −，数字和 + 掉在框外」，并把它报成"灰字压数字"。
+     真机字符画看得出来，但**字符画不能自动跑** ⇒ 把"量几何"写进自检：
+       ① 全尺寸步进器边框盒宽 == 88（紧凑版 64）—— UXP 算 flex 容器尺寸**不认 flex-basis**，
+          宽度必须**写死**（`.tnum{width:88px}`）
+       ② `− / 值 / +` 三个子元素**都在盒内**（一个都不许溢到框外）
+       ③ 内边距那 4 个并排的紧凑步进器**两两不重叠**，最后一个不超出面板右边界
+     期望值独立算：88 = 1 + 22 + 42 + 22 + 1；64 = 1 + 16 + 30 + 16 + 1。 */
+  const S44 = "S44 步进器几何 —— 边框盒宽度 / 子元素不出框 / 4 个并排不重叠";
+  try {
+    await ctx.shell.showTool("table", "selfcheck");
+    await waitFor(() => document.getElementById("vt-tbl"), 6000);
+
+    const R = (id) => {
+      const e = document.getElementById(id);
+      if (!e || !e.getBoundingClientRect) return null;
+      const r = e.getBoundingClientRect();
+      return {
+        l: Math.round(r.left), t: Math.round(r.top),
+        r: Math.round(r.right), b: Math.round(r.bottom),
+        w: Math.round(r.width), h: Math.round(r.height),
+      };
+    };
+    const kidsOf = (id) => {
+      const e = document.getElementById(id);
+      if (!e || !e.children) return [];
+      const out = [];
+      for (let i = 0; i < e.children.length; i++) {
+        const c = e.children[i];
+        const r = c.getBoundingClientRect ? c.getBoundingClientRect() : null;
+        if (r) out.push({
+          l: Math.round(r.left), r: Math.round(r.right), w: Math.round(r.width),
+          cls: String(c.getAttribute("class") || ""),
+        });
+      }
+      return out;
+    };
+    /* 展开折叠块（**幂等 + 一次重试**）：
+       已经开着的别再点（点了反而会关）；第一次没开成再试一次并留痕 ——
+       v0.4.6 首轮真机上 g1 开成了、g2 没开成（量出来 0×0），所以这里既要重试也要能看见过程。 */
+    const gcls = {};
+    const openGrp = async (id) => {
+      const g = document.getElementById(id);
+      if (!g) { gcls[id] = "(没有这个元素)"; return false; }
+      const isClosed = () => String(g.getAttribute("class") || "").indexOf("closed") >= 0;
+      const bodyH = () => {
+        const body = g.children[1];
+        const r = body && body.getBoundingClientRect ? body.getBoundingClientRect() : null;
+        return r ? Math.round(r.height) : -1;
+      };
+      gcls[id] = String(g.getAttribute("class") || "") + "(高 " + bodyH() + ")";
+      if (!isClosed() && bodyH() > 0) return true;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        syntheticClick(g.children[0], null);
+        const ok = await waitFor(() => (!isClosed() && bodyH() > 0 ? true : null), 2500);
+        if (ok) {
+          gcls[id] += " → 开(第 " + (attempt + 1) + " 次点)";
+          return true;
+        }
+      }
+      gcls[id] += " → 仍是关(" + String(g.getAttribute("class") || "") + " 高 " + bodyH() + ")";
+      return false;
+    };
+    /* 诊断：同一 id 出现多次 ⇒ 面板被重复挂载（`getElementById` 只返回第一个） */
+    let dupRoots = -1;
+    try {
+      dupRoots = document.querySelectorAll ? document.querySelectorAll("#vt-tbl").length : -1;
+    } catch (e) {
+      dupRoots = -1;
+    }
+    const open1 = await openGrp("vt-tbl-g1");     // 置入方式（行高 / 内边距）
+    const open2 = await openGrp("vt-tbl-g2");     // 样式（字号在「行」tab）
+    const tabs = document.getElementById("vt-tbl-styletabs");
+    if (tabs && tabs.children.length >= 3) syntheticClick(tabs.children[2], null);
+    /* 🔴 等的条件必须点名**我真正等的东西**：这里等的是"**布局落定**"，不是"元素出现"。
+       点 tab 会 `dom.clear(g.gb)` 重建整个 pane ⇒ `#vt-tbl-fs` 是**刚被创建**的，
+       而 UXP 的布局是**异步**的 ⇒ 只等"元素存在"就去量，拿到的是 `0×0`
+       （v0.4.6 首轮真机就是这么 FAIL 的：行高在 g1、几秒前就建好了 ⇒ 88；字号刚建 ⇒ 0）。 */
+    await waitFor(() => {
+      const e = document.getElementById("vt-tbl-fs");
+      if (!e || !e.getBoundingClientRect) return null;
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 ? true : null;
+    }, 5000);
+
+    const root = R("vt-tbl");
+    const boxFS = R("vt-tbl-fs");                 // 字号（全尺寸）
+    const kFS = kidsOf("vt-tbl-fs");
+    const boxRH = R("vt-tbl-rh");                 // 行高（全尺寸）
+    const kRH = kidsOf("vt-tbl-rh");
+    const padIds = ["vt-tbl-pad-t", "vt-tbl-pad-r", "vt-tbl-pad-b", "vt-tbl-pad-l"];
+    const pads = padIds.map(R);
+
+    const near = (a, b, tol) => isFinite(a) && Math.abs(a - b) <= tol;
+    const wideOk = !!(boxFS && near(boxFS.w, 88, 1) && boxRH && near(boxRH.w, 88, 1));
+    /* 子元素全在盒内 + 三格宽度是 22/42/22
+       ⚠️ 必须**先要求盒和子元素宽度都非零** —— 全 0 时 `l >= box.l-1` 恒成立，
+       等于把一个"没量到"的读数判成通过（v0.4.6 首轮就是这么自己骗自己的）。 */
+    const inside = (box, kids) => !!box && box.w > 0 && kids.length === 3 &&
+      kids.every((k) => k.w > 0 && k.l >= box.l - 1 && k.r <= box.r + 1);
+    const widthsOk = kFS.length === 3 && near(kFS[0].w, 22, 1) && near(kFS[1].w, 42, 1) && near(kFS[2].w, 22, 1) &&
+      kRH.length === 3 && near(kRH[0].w, 22, 1) && near(kRH[1].w, 42, 1) && near(kRH[2].w, 22, 1);
+    const kidsOk = inside(boxFS, kFS) && inside(boxRH, kRH);
+    const cptOk = pads.every((p) => p && near(p.w, 64, 1));
+    let noOverlap = true;
+    for (let i = 1; i < pads.length; i++) {
+      if (!pads[i] || !pads[i - 1] || pads[i].l < pads[i - 1].r) noOverlap = false;
+    }
+    const inPane = !!(pads[3] && root && pads[3].r <= root.r);
+    const judge = !!(open1 && open2 && root && wideOk && widthsOk && kidsOk && cptOk && noOverlap && inPane);
+
+    rec(
+      S44,
+      judge,
+      "字号步进器=" + (boxFS ? boxFS.w + "×" + boxFS.h : "缺") + "（须宽 88）" +
+      "　行高=" + (boxRH ? boxRH.w + "×" + boxRH.h : "缺") + "（须宽 88）" +
+      "　子格宽度=[" + kFS.map((k) => k.w).join(",") + "]（须 22,42,22）" +
+      "　子元素都在盒内=" + kidsOk +
+      "　内边距 4 个宽=[" + pads.map((p) => (p ? p.w : "缺")).join(",") + "]（须 64）" +
+      "　不重叠=" + noOverlap +
+      "　最后一个右边界 " + (pads[3] ? pads[3].r : "?") + " ≤ 面板右 " + (root ? root.r : "?") + " = " + inPane +
+      "　折叠块：" + JSON.stringify(gcls) + "　同 id 面板数=" + dupRoots +
+      "　⇒ " + (judge
+        ? "步进器的边框盒把 `− 值 +` 完整包住，4 个并排的也不打架 —— 「灰字压数字」这一类问题被**量**住了"
+        : "⚠️ 有项没成立 —— 边框盒宽度写死失效（UXP 又换了算法？）或 4 个并排放不下")
+    );
+  } catch (e) {
+    rec(S44, false, "抛异常：" + ((e && e.message) || e));
+  }
+
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.4.5",
+    version: "0.4.6",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

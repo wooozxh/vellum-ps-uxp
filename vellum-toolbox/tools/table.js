@@ -375,18 +375,21 @@ function renderAreaGroup() {
   g.gb.appendChild(info);
 
   g.gb.appendChild(field("表头高", withUnit(num("vt-tbl-hh", S.style.headerH, { min: 16, max: 200, step: 2 }, (v) => {
-    S.style.headerH = v; savePref(); refreshRegion();
+    S.style.headerH = v; savePref(); refreshRegion(); updateValignNote();
   }), "px")));
   g.gb.appendChild(field("行高", withUnit(num("vt-tbl-rh", S.style.rowH, { min: 16, max: 200, step: 2 }, (v) => {
-    S.style.rowH = v; savePref(); refreshRegion();
+    S.style.rowH = v; savePref(); refreshRegion(); updateValignNote();
   }), "px")));
 
   // 内边距：上右下左（它是**排版参数**，决定文字框 bounds 的收缩量）
-  const pad = el("div");
-  pad.setAttribute("style", "display:flex;align-items:center");
+  /* 🔴 这一行并排放 **4 个**，所以必须用紧凑版（`.tnum.cpt`，64px）：
+     全尺寸 88px 的话 4 × 88 = 352 > `.ct` 可用的 ~308px ⇒ 必然溢出、互相压。
+     （真机上曾经就是这样：用户看到"数字上有灰色字符遮挡"。宽度是**写死**的，
+      原因见 index.html 里那段注释：UXP 算 flex 容器自身尺寸时**不认 flex-basis**。） */
+  const pad = el("div", "ct");
   ["t", "r", "b", "l"].forEach((k, i) => {
-    const b = num("vt-tbl-pad-" + k, S.style.pad[k], { min: 0, max: 60, step: 1 }, (v) => {
-      S.style.pad[k] = v; savePref(); refreshRegion();
+    const b = num("vt-tbl-pad-" + k, S.style.pad[k], { min: 0, max: 60, step: 1, cpt: true }, (v) => {
+      S.style.pad[k] = v; savePref(); refreshRegion(); updateValignNote();
     });
     if (i > 0) b.setAttribute("style", "margin-left:5px");
     pad.appendChild(b);
@@ -448,8 +451,6 @@ function renderStyleGroup() {
     pane.appendChild(field("外框宽", withUnit(num("vt-tbl-sw", S.style.strokeW, { min: 0, max: 10, step: 1 }, (v) => {
       S.style.strokeW = v; savePref(); refreshRegion();
     }), "px")));
-    pane.appendChild(field("内边距", padRow()));
-    pane.appendChild(note("上 / 右 / 下 / 左。它决定文字框比格子内缩多少，是排版的手感来源。"));
     pane.appendChild(field("圆角半径", withUnit(num("vt-tbl-radius", S.style.radius, { min: 0, max: 40, step: 2 }, (v) => {
       S.style.radius = v; savePref(); refreshRegion();
     }), "px")));
@@ -461,11 +462,12 @@ function renderStyleGroup() {
       S.style.headerAlign, (v) => { S.style.headerAlign = v; savePref(); refreshRegion(); })));
     pane.appendChild(field("垂直对齐", seg("vt-tbl-hvalign", V_OPTS,
       S.style.headerVAlign, (v) => { S.style.headerVAlign = v; savePref(); refreshRegion(); })));
+    pane.appendChild(valignNote(true));
     pane.appendChild(field("背景", seg("vt-tbl-hbg",
       [{ v: "none", label: "无" }, { v: "solid", label: "单色" }],
       S.style.headerBgMode, (v) => { S.style.headerBgMode = v; savePref(); refreshRegion(); })));
     pane.appendChild(field("字号", withUnit(num("vt-tbl-hfs", S.style.headerFontPx, { min: 6, max: 72, step: 1 }, (v) => {
-      S.style.headerFontPx = v; savePref(); refreshRegion();
+      S.style.headerFontPx = v; savePref(); refreshRegion(); updateValignNote();
     }), "px")));
     pane.appendChild(note("字号与颜色**建层时**就给（官方框文本描述符），改完仍是普通文字层。"));
   } else {
@@ -473,31 +475,44 @@ function renderStyleGroup() {
       S.style.rowAlign, (v) => { S.style.rowAlign = v; savePref(); refreshRegion(); })));
     pane.appendChild(field("垂直对齐", seg("vt-tbl-rvalign", V_OPTS,
       S.style.rowVAlign, (v) => { S.style.rowVAlign = v; savePref(); refreshRegion(); })));
+    pane.appendChild(valignNote(false));
     pane.appendChild(field("隔行变色", seg("vt-tbl-zebra",
       [{ v: "off", label: "关" }, { v: "on", label: "开" }],
       S.style.zebra ? "on" : "off", (v) => { S.style.zebra = v === "on"; savePref(); refreshRegion(); })));
     pane.appendChild(field("字号", withUnit(num("vt-tbl-fs", S.style.fontPx, { min: 6, max: 72, step: 1 }, (v) => {
-      S.style.fontPx = v; savePref(); refreshRegion();
+      S.style.fontPx = v; savePref(); refreshRegion(); updateValignNote();
     }), "px")));
     pane.appendChild(note("每个格子一个文字层，所以改某一行某个字以后可以直接在画布上双击改。"));
   }
   g.gb.appendChild(pane);
 }
 
-/** 内边距那一行：上 / 右 / 下 / 左 四个**紧凑**步进器（见 index.html 的 `.tnum.cpt`） */
-function padRow() {
-  const box = el("div", "ct");
-  const keys = ["t", "r", "b", "l"];
-  keys.forEach((k, i) => {
-    const n = num("vt-tbl-pad-" + k, S.style.pad[k], { min: 0, max: 80, step: 1, cpt: true }, (v) => {
-      S.style.pad[k] = v;
-      savePref();
-      refreshRegion();
-    });
-    if (i > 0) n.setAttribute("style", "margin-left:4px");
-    box.appendChild(n);
-  });
-  return box;
+/* ── 垂直对齐那条**动态**说明（v0.4.6）──────────────────────────────────────
+   用户报「垂直居中没有生效」，量出来的真相是：**生效了，但位移只有 2px**
+   （行高 28 / 字号 12 ⇒ 内容高 20、墨迹高 9.8 ⇒ 三档总共只有 10px 可调，
+   当时还是老的"按框对齐 + 箱高 1.32em"，只余 4px）。
+   ⇒ 与其让用户以为坏了，不如**把可调位移写在界面上**，并说清"行高越大越明显"。
+   这条要随 行高 / 字号 / 内边距 就地更新，所以留一个模块级引用。 */
+let valignNoteEl = null;
+
+function valignNoteText(isHeader) {
+  const travel = tbl.inkTravel(S.style, isHeader);
+  const h = isHeader ? S.style.headerH : S.style.rowH;
+  const em = isHeader ? S.style.headerFontPx : S.style.fontPx;
+  return "三档之间的文字位移约 " + travel + "px（由行高 " + h + " 与字号 " + em + " 决定）。" +
+    (travel < 6
+      ? "现在偏紧，所以差别不明显 —— 把行高调大就会很明显。"
+      : "行高比字号大得越多，差别越明显。");
+}
+
+function valignNote(isHeader) {
+  valignNoteEl = el("p", "tnote", "vt-tbl-vanote", valignNoteText(isHeader));
+  return valignNoteEl;
+}
+
+/** 行高/字号/内边距变了就地刷新那条说明（不重建整个面板，免得把用户正在点的控件换掉） */
+function updateValignNote() {
+  if (valignNoteEl && S) valignNoteEl.textContent = valignNoteText(S.tab === "h");
 }
 
 function renderBindGroup() {

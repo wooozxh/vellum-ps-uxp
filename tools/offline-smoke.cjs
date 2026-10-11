@@ -1134,24 +1134,37 @@ async function main() {
     await sleep(120);
   }
 
-  /* ---- 22f. CSS 源码防回归（v0.4.4）：两条都是"UIX 特性没实现"踩出来的） ---- */
+  /* ---- 22f. CSS 源码防回归（v0.4.4 起，v0.4.6 换成"宽度必须写死"） ----
+     两条都是"UXP 特性没实现"踩出来的：
+       ① flex **容器**算自身尺寸时不认 `flex-basis` ⇒ `[−][12][+]` 的边框盒只画了 32px
+          （真机字符画证明：**子元素位置是对的**，只有边框盒小了）⇒ 宽度必须写死；
+       ② UXP 不支持透明边框 ⇒ 折角三角画出来是个实心黑方块。
+     ⚠️ 这里只防"CSS 被改回去"；**真机上的实际几何由 S44 量**（量 != 读源码）。 */
   {
     const html = fs.readFileSync(path.join(PKG, "index.html"), "utf8");
-    const tnumRule = /\.tnum\s*\{[^}]*flex:\s*0\s+0\s+auto/.test(html);
-    const cptRule = /\.tnum\.cpt\s+\.vl\s*\{[^}]*flex:\s*0\s+0\s+30px/.test(html);
+    const w88 = /\.tnum\s*\{[^}]*width:\s*88px/.test(html);
+    const w64 = /\.tnum\.cpt\s*\{\s*width:\s*64px/.test(html);
+    const basis = /\.tnum\s+\.mn,\s*\.tnum\s+\.pl\s*\{[^}]*flex:\s*0\s+0\s+22px/.test(html) &&
+      /\.tnum\s+\.vl\s*\{[^}]*flex:\s*0\s+0\s+42px/.test(html) &&
+      /\.tnum\.cpt\s+\.vl\s*\{[^}]*flex:\s*0\s+0\s+30px/.test(html);
     const noCv = html.indexOf(".tbl-gh .cv") < 0;
     check(
-      "22f CSS 防回归：步进器不许被压缩（UXP 无 min-width:auto）+ 折角三角已删",
-      tnumRule && cptRule && noCv,
-      "`.tnum{flex:0 0 auto}`=" + tnumRule + "　`.tnum.cpt .vl{flex:0 0 30px}`=" + cptRule +
-        "　`.tbl-gh .cv` 规则已删=" + noCv +
-        "　⇒ 前者是「灰字压数字」的根因（边框盒被压到只剩 −，内部照样溢出），后者在真机上是黑方块"
+      "22f CSS 防回归：步进器宽度必须写死（UXP 不认 flex-basis）+ 折角三角已删",
+      w88 && w64 && basis && noCv,
+      "`.tnum{width:88px}`=" + w88 + "　`.tnum.cpt{width:64px}`=" + w64 +
+        "（88 = 1+22+42+22+1；64 = 1+16+30+16+1）　子格 22/42/22=" + basis +
+        "　`.tbl-gh .cv` 已删=" + noCv +
+        "　⇒ 宽度写死是「灰字压数字」的根因修法（子元素位置本来就对，是边框盒只画了 32px）；" +
+        "透明边框那条在真机上是实心黑方块"
     );
   }
 
-  /* ---- 22g. 垂直对齐 / 单位换算的**纯函数**判据（v0.4.4，用户第 3 条） ----
-     期望值全部独立算：表头行 100–130、内边距 4 ⇒ 顶对齐框顶 104、底对齐框底 126。
-     ppi 的关键性质：**画面上文字的高度与 ppi 无关**（lineH 用画布 px），变的只是交给 PS 的 pt。 */
+  /* ---- 22g. 垂直对齐 / 单位换算的**纯函数**判据（v0.4.6：改成"按**墨迹**对齐"） ----
+     期望值**全部独立算**，常数按真机实测**写死在测试里**（不从被测模块读 `INK_MID`）——
+     否则"改了常量测试跟着变"，等于没测。
+       墨迹中心 = 箱顶 + 0.40em　墨迹底边 = 箱顶 + 0.82em　箱高 = 1em
+     表头行 y 100–130、数据行 130–158、内边距上下各 4 ⇒ 表头内容区 104–126、数据行 134–154。
+     ppi 的关键性质：**画面上文字的位置/箱高与 ppi 无关**（全用画布 px），变的只是交给 PS 的 pt。 */
   {
     const tmod = require(path.join(PKG, "lib", "table.js"));
     const rows = [["名称", "价格"], ["图一", "1.20"], ["图二", "3.40"]];
@@ -1161,32 +1174,52 @@ async function main() {
       style: style, ppi: ppi,
     });
     const near = (a, b, tol) => Math.abs(Number(a) - Number(b)) <= (tol === undefined ? 0.01 : tol);
+    const INK_MID = 0.40, INK_BOT = 0.82, EM = 12;      // 真机实测常数，独立写死
+    const hTop = 104, hBot = 126, bTop = 134, bBot = 154; // 上下内边距 4 独立算出来的内容区
     const mid = mk({}, 72);
     const top = mk({ headerVAlign: "top", rowVAlign: "top" }, 72);
     const bot = mk({ headerVAlign: "bottom", rowVAlign: "bottom" }, 72);
     const h0 = mid.cells[0];   // 表头格
     const b0 = mid.cells[2];   // 第一数据行
-    const lineH = 12 * 1.32;   // 字号 12px × 行距系数 1.32（独立算）
 
-    const midOk = h0.valign === "middle" && near(h0.box.top, 100 + (30 - lineH) / 2) &&
-      near(b0.box.top, 130 + (28 - lineH) / 2);
-    const topOk = near(top.cells[0].box.top, 104) && near(top.cells[2].box.top, 134);
-    const botOk = near(bot.cells[0].box.bottom, 126) && near(bot.cells[2].box.bottom, 154);
+    // ① 箱高 = 1em（老实现是 1.32em，白吃掉 0.32em 的可调空间）
+    const boxOk = near(h0.box.bottom - h0.box.top, EM) && near(b0.box.bottom - b0.box.top, EM) &&
+      near(b0.boxH, EM);
+    // ② 垂直居中 = **墨迹**中心落在行中心（墨迹中心 = **箱顶** + 0.40em，不是箱中心！）
+    const midOk = h0.valign === "middle" &&
+      near(h0.box.top, (hTop + hBot) / 2 - INK_MID * EM) &&
+      near(b0.box.top, (bTop + bBot) / 2 - INK_MID * EM) &&
+      near(h0.box.top + INK_MID * EM, (hTop + hBot) / 2) &&
+      near(b0.box.top + INK_MID * EM, (bTop + bBot) / 2);
+    // ③ 顶对齐 = 框顶贴内边距线
+    const topOk = near(top.cells[0].box.top, hTop, 0.5) && near(top.cells[2].box.top, bTop, 0.5);
+    // ④ 底对齐 = 墨迹底边贴下内边距线（箱顶 = 内容区底 − 0.82em）
+    const botOk = near(bot.cells[0].box.top, hBot - INK_BOT * EM, 0.5) &&
+      near(bot.cells[2].box.top, bBot - INK_BOT * EM, 0.5);
+    // ⑤ 位移：既等于独立算的值，又等于面板上显示给用户的那个数，还要**大于老实现**（4.16px）
+    const travel = bot.cells[2].box.top - top.cells[2].box.top;
+    const travelWant = (bBot - INK_BOT * EM) - bTop;
+    const travelOk = near(travel, travelWant, 0.05) && near(tmod.inkTravel({}), travel, 0.05) &&
+      travel > 4.2 && near(tmod.inkTravel({ rowH: 60, fontPx: 18 }), (60 - 8 - INK_BOT * 18), 0.05);
+    // ⑥ ppi：画布上的箱高不变，只有交给 PS 的 pt 变
     const p300 = mk({}, 300);
-    const ppiOk = near(p300.cells[0].lineH, lineH) && near(p300.cells[0].sizePt, 12 * 72 / 300) &&
+    const ppiOk = near(p300.cells[0].box.bottom - p300.cells[0].box.top, EM) &&
+      near(p300.cells[0].sizePt, 12 * 72 / 300) &&
       near(mk({}, 600).cells[0].sizePt, 12 * 72 / 600);
     const alignOk = mk({ headerAlign: "left", rowAlign: "right" }, 72).cells.map((c) => c.align).join(",") ===
       "left,left,right,right,right,right";
 
     check(
-      "22g 垂直对齐三档（纯几何）+ 字号按画布像素（pt 随 ppi 折算）",
-      midOk && topOk && botOk && ppiOk && alignOk,
-      "行高(独立算)=12×1.32=" + lineH + "px　" +
-        "①垂直居中：表头框顶 " + h0.box.top + "（须 " + (100 + (30 - lineH) / 2) + "）、数据行 " + b0.box.top + "（须 " + (130 + (28 - lineH) / 2) + "）" +
-        "　②顶对齐：" + top.cells[0].box.top + " / " + top.cells[2].box.top + "（须 104 / 134）" +
-        "　③底对齐：" + bot.cells[0].box.bottom + " / " + bot.cells[2].box.bottom + "（须 126 / 154）" +
-        "　④ppi：300ppi 时 lineH=" + p300.cells[0].lineH + "（须不变）且 pt=" + p300.cells[0].sizePt + "（须 2.88）" +
-        "　⑤表头/行水平对齐各自独立=" + alignOk
+      "22g 垂直对齐（按墨迹的纯几何）+ 字号按画布像素（pt 随 ppi 折算）",
+      boxOk && midOk && topOk && botOk && travelOk && ppiOk && alignOk,
+      "①箱高=" + (b0.box.bottom - b0.box.top) + "（须 1em=12；老实现 1.32em=15.84）" +
+        "　②居中：表头框顶 " + h0.box.top + "（须 " + ((hTop + hBot) / 2 - INK_MID * EM) + "）、数据行 " + b0.box.top +
+        "（须 " + ((bTop + bBot) / 2 - INK_MID * EM) + "），墨迹中心=" + (b0.box.top + INK_MID * EM) + "（须 = 行中心 144）" +
+        "　③顶对齐：" + top.cells[0].box.top + " / " + top.cells[2].box.top + "（须 104 / 134）" +
+        "　④底对齐：框顶 " + bot.cells[0].box.top + " / " + bot.cells[2].box.top + "（须 116.16 / 144.16）" +
+        "　⑤位移 " + travel + "px（独立算 " + travelWant + "、面板显示 " + tmod.inkTravel({}) + "、须 >4.2）" +
+        "　⑥ppi：300ppi 时箱高 " + (p300.cells[0].box.bottom - p300.cells[0].box.top) + "（须不变）且 pt=" + p300.cells[0].sizePt + "（须 2.88）" +
+        "　⑦表头/行水平对齐各自独立=" + alignOk
     );
   }
 
