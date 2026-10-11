@@ -794,11 +794,13 @@ async function doGenerate() {
   await log.appendLog(
     "table build ok=" + !!r.ok + " group=" + (r.group || "-") + " added=" + (r.added === undefined ? "-" : r.added) +
     "/" + (r.expected === undefined ? "-" : r.expected) + " ms=" + ms + " align=" + (r.alignMode || "-") +
-    (r.phase2Ms === undefined ? "" : " phase2=" + r.phase2Ms + "ms 选中" + r.selected + "/" + (r.cells || "?") +
-      " 改名" + r.renamed + " 对齐" + r.aligned +
-      (r.firstSelectError ? " selErr=" + r.firstSelectError : "") +
-      (r.firstNameError ? " nameErr=" + r.firstNameError : "") +
-      (r.firstAlignError ? " alignErr=" + r.firstAlignError : "")) +
+    /* v0.4.7：阶段二的形态换了（内联对齐 + 一次 batchPlay 改名）⇒ 日志字段跟着换。
+       真机实测：51 层 / 35 格 从 16086ms 降到 3395ms（阶段二 13455ms → 138ms）。 */
+    (r.phase2Ms === undefined ? "" : " phase2=" + r.phase2Ms + "ms name=" + (r.nameMode || "-") +
+      "(" + r.renamed + "/" + (r.expected === undefined ? "?" : r.expected - 1) +
+      (r.renameMs === undefined ? "" : "，" + r.renameMs + "ms") + ")" +
+      (r.nameMapError ? " mapErr=" + r.nameMapError : "") +
+      (r.firstNameError ? " nameErr=" + r.firstNameError : "")) +
     (r.error ? " err=" + r.error : "")
   );
   if (r.ok) {

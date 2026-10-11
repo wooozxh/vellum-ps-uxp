@@ -2670,7 +2670,13 @@ async function buildTable(plan, opts) {
 
   const before = countLayersDeep();
   const groupName = o.name || "表格";
-  const inline = o.alignMode === "inline"; // 默认走"已验原语"那条
+  /* v0.4.7 两条默认走法（都有真机单条验证，见 docs/44 的 S45/S46）：
+     · 对齐 → **内联进建层描述符**（`paragraphStyleRange`，读回命中 alignmentType）
+     · 改名 → **一次 batchPlay 按 _id set name**（不碰 UXP DOM）
+     `alignMode:"dom"` / `nameMode:"dom"` 是**退回路径**，保留可跑，用来对照耗
+     —— 真机上它就是"13.6s / 35 格"那一条（O(格数 × 文档层数)）。 */
+  const inline = o.alignMode !== "dom";
+  const useDom = !inline || o.nameMode === "dom";
   const cmds = [groupMakeDesc(groupName)];
 
   for (const b of plan.bg) {
@@ -2687,7 +2693,9 @@ async function buildTable(plan, opts) {
     cmds.push(textLayerBoxDesc({
       text: c.text, box: c.box, sizePt: c.sizePt, rgb: c.color,
       fontName: plan.style.fontName,
-      name: inline ? tableCellName(c) : null,
+      /* ⚠️ `name` **不放这里**：S45 真机实测 `make textLayer` 会**忽略**它
+         （层名变成文字内容）。命名走第②批的 `set name`（S46 已验证）。 */
+      name: null,
       align: inline ? { value: c.align } : null,
     }));
   }
@@ -2707,11 +2715,20 @@ async function buildTable(plan, opts) {
       /* ① 建层（一次 batchPlay；描述符只用验过的形状） */
       await batchPlay(cmds, {});
       note("m3 build 第①批发完（" + cmds.length + " 条命令已提交）");
-      if (inline) return;
-      note("m3 build 第②批开始（逐格改名 + 对齐，共 " + plan.cells.length + " 格）");
-
-      /* ② 改名 + 设对齐：**全部用已验原语，且都在同一个 modal 里**（省掉 33 次模态进出） */
+      /* ② 命名（+ 对齐兜底）—— v0.4.7 起**不再逐格碰 UXP DOM**
+         为什么重写：真机分段计时（docs/44）阶段二 = 13.6s / 35 格 / 51 层，拆开是
+           · 选择 `doc.activeLayers=[layer]`  6845ms（196ms/格）
+           · 改名 `layer.name=`              5920ms（169ms/格）
+           · 对齐 `batchPlay(set …)`          815ms（ 23ms/格，**线性、便宜**）
+         前两项的单次代价随**文档层数**涨（3 层时 11ms/格 → 51 层时 196ms/格）
+         ⇒ 开销在 UXP **DOM**，不在 AM。两条都改成走 AM（AM 能合批）：
+           · 对齐 → 第①批**内联**进建层描述符（S45 已验证：读回 alignmentType ✓）
+           · 改名 → **一次 batchPlay**，按 `_id` set name（S46 已验证 ✓；
+             而 `make textLayer`/`make contentLayer` 里的 `name` 都是**被忽略**的 —— S45/S46 实测）
+         📌 纪律：**UXP DOM 的写操作别放进"按格循环"** —— 文档一大就变成 O(文档大小)。
+         `useDom` 是退回路径，保留可跑（真机上它是 13.6s），用来对照新路径到底快多少。 */
       const doc = app.activeDocument;
+      note("m3 build 第②批开始（模式=" + (useDom ? "退回·逐格 DOM" : "内联对齐 + 合批改名") + "）");
       let grp = null;
       const walk = (arr) => {
         for (const l of arr || []) {
@@ -2723,57 +2740,131 @@ async function buildTable(plan, opts) {
       walk(doc.layers);
       if (!grp) throw new Error("建完找不到组「" + groupName + "」");
 
-      const kids = (grp.layers || []).filter((l) => l.kind === "text");
-      // 建层顺序是"从下往上"⇒ 图层面板里最上面那个 = **最后**建的那格
-      kids.reverse();
-      const n = Math.min(kids.length, plan.cells.length);
-      /* 🔴 v0.4.2 取证：这一段的三个 try/catch 以前**把错误全吞了**，
-         于是真机上"35 格只改名成功 1 个、花了 90 秒"只能靠猜。
-         现在每一步都记**成功数 + 首个错误原文 + 整段耗时** —— 失败要能被查。 */
-      out.kids = kids.length;
-      out.selected = 0;
-      out.phase2Ms = 0;
-      let selBad = 0;
-      let nameBad = 0;
-      let alignBad = 0;
+      /* 组内顺序是"从下往上"（PS 每建一层都放在组内最上面）⇒ 反转 = **建层顺序**。
+         建层顺序 = 背景 → 线 → 文字，与上面 `cmds` 的 push 顺序一一对应。 */
+      const ordered = (grp.layers || []).slice().reverse();
+      const creation = [];
+      for (const b of plan.bg) {
+        creation.push({ text: false, name: b.role === "header" ? "背景 · 表头" : "背景 · 第 " + b.row + " 行" });
+      }
+      let hN = 0;
+      let vN = 0;
+      for (const l of plan.lines) {
+        if (l.outer) {
+          const side = { top: "上", bottom: "下", left: "左", right: "右" }[l.edge] || "";
+          creation.push({ text: false, name: "外框" + (side ? " · " + side : "") });
+        } else if (l.kind === "h") {
+          hN++;
+          creation.push({ text: false, name: "线 · 横 " + hN });
+        } else {
+          vN++;
+          creation.push({ text: false, name: "线 · 竖 " + vN });
+        }
+      }
+      for (const c of plan.cells) creation.push({ text: true, name: tableCellName(c) });
+
+      out.kids = ordered.length;
+      out.structure = ordered.length + "/" + creation.length;
       const t2 = Date.now();
-      for (let i = 0; i < n; i++) {
-        const layer = kids[i];
-        const cell = plan.cells[i];
-        try {
-          doc.activeLayers = [layer];
-          out.selected++;
-        } catch (e) {
-          /* 选不中就当这一格没处理，继续下一格 */
-          selBad++;
-          if (!out.firstSelectError) out.firstSelectError = "第 " + i + " 格：" + msg(e);
+
+      if (useDom) {
+        /* ---- 退回路径：逐格 UXP DOM。真机 = O(格数 × 文档层数)，35 格 / 51 层 ≈ 13.6s ---- */
+        const kids = ordered.filter((l) => l.kind === "text");
+        const n = Math.min(kids.length, plan.cells.length);
+        out.selected = 0;
+        let selBad = 0;
+        let nameBad = 0;
+        let alignBad = 0;
+        let tSel = 0;
+        let tRen = 0;
+        let tAli = 0;
+        for (let i = 0; i < n; i++) {
+          const layer = kids[i];
+          const cell = plan.cells[i];
+          let t = Date.now();
+          try {
+            doc.activeLayers = [layer];
+            out.selected++;
+          } catch (e) {
+            selBad++;
+            if (!out.firstSelectError) out.firstSelectError = "第 " + i + " 格：" + msg(e);
+          }
+          tSel += Date.now() - t;
+          t = Date.now();
+          try {
+            layer.name = tableCellName(cell);
+            out.renamed++;
+          } catch (e) {
+            nameBad++;
+            if (!out.firstNameError) out.firstNameError = "第 " + i + " 格：" + msg(e);
+          }
+          tRen += Date.now() - t;
+          t = Date.now();
+          try {
+            await batchPlay([paragraphStyleDesc({ align: { cls: "alignmentType", value: cell.align } })], {});
+            out.aligned++;
+          } catch (e) {
+            alignBad++;
+            if (!out.firstAlignError) out.firstAlignError = "第 " + i + " 格：" + msg(e);
+          }
+          tAli += Date.now() - t;
         }
-        try {
-          layer.name = tableCellName(cell);
-          out.renamed++;
-        } catch (e) {
-          /* 单个改名失败不该拖垮整张表 */
-          nameBad++;
-          if (!out.firstNameError) out.firstNameError = "第 " + i + " 格：" + msg(e);
+        out.selectBad = selBad;
+        out.nameBad = nameBad;
+        out.alignBad = alignBad;
+        out.phase2Parts = { sel: tSel, ren: tRen, ali: tAli };
+        out.alignMode = "dom";
+        out.nameMode = "dom";
+        note("m3 phase2(退回路径)　格数 " + n + "　选择 " + tSel + "ms　改名 " + tRen + "ms　对齐 " + tAli + "ms" +
+          "　选中 " + out.selected + "/" + n + "　改名 " + out.renamed + "/" + n + "　对齐 " + out.aligned + "/" + n);
+      } else {
+        /* ---- 新路径：**只读** DOM（拿 id）+ **一次 batchPlay**（改名）---- */
+        let mapOk = ordered.length === creation.length;
+        let mismatch = null;
+        const cmds2 = [];
+        if (mapOk) {
+          for (let i = 0; i < ordered.length; i++) {
+            const isText = ordered[i].kind === "text";
+            if (isText !== creation[i].text) {
+              mapOk = false;
+              mismatch = "第 " + i + " 个 DOM是" + ordered[i].kind + "、计划是" + (creation[i].text ? "文字" : "形状");
+              break;
+            }
+            cmds2.push({
+              _obj: "set",
+              _target: [{ _ref: "layer", _id: ordered[i].id }],
+              to: { name: creation[i].name },
+            });
+          }
         }
-        try {
-          await batchPlay([paragraphStyleDesc({ align: { cls: "alignmentType", value: cell.align } })], {});
-          out.aligned++;
-        } catch (e) {
-          /* 同上 */
-          alignBad++;
-          if (!out.firstAlignError) out.firstAlignError = "第 " + i + " 格：" + msg(e);
+        out.alignMode = "inline";
+        if (!mapOk) {
+          /* 层序对不上**就不改名** —— 宁可不命名，也不能把名字安到错层上（错名比无名难查） */
+          out.nameMode = "skipped";
+          out.nameMapError = mismatch || ("层数不符：DOM " + ordered.length + "、计划 " + creation.length);
+          note("m3 phase2 跳过改名（层序对不上）：" + out.nameMapError);
+        } else {
+          const t3 = Date.now();
+          try {
+            await batchPlay(cmds2, {});
+            out.renamed = cmds2.length;
+            out.nameMode = "am";
+          } catch (e) {
+            out.nameMode = "failed";
+            out.nameBad = cmds2.length;
+            out.firstNameError = msg(e);
+          }
+          out.renameMs = Date.now() - t3;
         }
       }
       out.phase2Ms = Date.now() - t2;
-      out.selectBad = selBad;
-      out.nameBad = nameBad;
-      out.alignBad = alignBad;
-      note("m3 phase2 结束　格数 " + n + "　选中 " + out.selected + "（失败 " + selBad + "）" +
-        "　改名 " + out.renamed + "（失败 " + nameBad + "）" +
-        "　对齐 " + out.aligned + "（失败 " + alignBad + "）" +
+      note("m3 phase2 结束　模式=对齐" + out.alignMode + " / 改名" + out.nameMode +
+        "　层序 " + out.structure +
+        "　改名 " + out.renamed + (out.nameBad ? "（失败 " + out.nameBad + "）" : "") +
+        (out.renameMs === undefined ? "" : "　改名批次 " + out.renameMs + "ms") +
+        (out.selected === undefined ? "" : "　（退回路径：选中 " + out.selected + " 失败 " + out.selectBad +
+          "　对齐 " + out.aligned + " 失败 " + out.alignBad + "）") +
         "　耗时 " + out.phase2Ms + "ms" +
-        (out.firstSelectError ? "　首个选择错误=" + out.firstSelectError : "") +
         (out.firstNameError ? "　首个改名错误=" + out.firstNameError : "") +
         (out.firstAlignError ? "　首个对齐错误=" + out.firstAlignError : ""));
     }, "Vellum 工具箱：生成表格（" + plan.layers + " 个图层）");

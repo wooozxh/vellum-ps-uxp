@@ -4091,9 +4091,14 @@ async function run(ctx, deps) {
           const nameOk = !!(li.ok && li.name === wantName);
           const textOk = !!(pr.values && pr.values.contents === last.text);
           const alignOk = !!(gotAlign && gotAlign.value === last.align);
-          const phaseOk = r.alignMode === "inline" ||
-            (r.renamed === plan.cells.length && r.aligned === plan.cells.length);
-          const judge = csvOk && addedOk && grpFound && nameOk && textOk && alignOk && phaseOk;
+          /* v0.4.7：阶段二 = **内联对齐 + 一次 batchPlay 改名（所有图层）**。
+             期望改名条数 = 层数 − 1（背景 + 线 + 文字），不再是"只给文字层改名"。 */
+          const phaseOk = r.alignMode === "inline" && r.renamed === plan.layers - 1;
+          /* v0.4.7：改名现在是"所有图层一起改"（背景/线/外框/文字）。
+             `make contentLayer` 里的 `name` **被忽略**（S46 实测）⇒ 必须验"事后 set 真生效了"：
+             找得到按规则命名的**形状层**，才算命名这条路真的通了（不能只看"命令没报错"）。 */
+          const frameOk = !!ps.findLayerDeep("外框 · 上");
+          const judge = csvOk && addedOk && grpFound && nameOk && textOk && alignOk && phaseOk && frameOk;
           const judgeAll = judge && lineOk;
 
           rec(
@@ -4109,8 +4114,9 @@ async function run(ctx, deps) {
             "（须 " + JSON.stringify(wantName) + "）" + (nameOk ? "✓" : "✗") +
             "　⑤ 对齐=" + ((gotAlign && gotAlign.value) || "?") +
             "（须 " + last.align + "）" + (alignOk ? "✓" : "✗") +
-            "　⑥ 阶段二（DOM 改名 + AM 对齐）=" + r.renamed + "/" + plan.cells.length +
-            " 改名 · " + r.aligned + "/" + plan.cells.length + " 对齐" + (phaseOk ? " ✓" : " ✗") +
+            "　⑥ 阶段二=" + r.nameMode + "（改名 " + r.renamed + "/" + (plan.layers - 1) +
+            (r.renameMs === undefined ? "" : "，批次 " + r.renameMs + "ms") + "）" + (phaseOk ? " ✓" : " ✗") +
+            "　形状层「外框 · 上」存在=" + frameOk + (frameOk ? " ✓" : " ✗") +
             "　⑦ 线条取色=" + (lineSample.ok ? lineSample.hex : "取不到（" + (lineSample.error || "?") + "）") +
             "（须 " + ps.rgbToHex(lc) + "，±25）" + (lineOk ? "✓" : "✗") +
             (r.error ? "　err=" + r.error : "") +
@@ -4263,6 +4269,211 @@ async function run(ctx, deps) {
   }
 
 
+  /* ---------- S45: 建层描述符的两个"能省掉阶段二"的加法（v0.4.7）
+     为什么要有它：阶段二（逐格 `doc.activeLayers=` + `layer.name=`）真机量出来是
+     **O(格数 × 文档层数)** —— 35 格 / 51 层时单次 **196ms / 169ms**，整段 **12.7s**；
+     而同在阶段二的 `batchPlay(set paragraphStyle)` 只要 **23ms/格**（线性、便宜）。
+     ⇒ 开销在 UXP **DOM**，不在 AM。⇒ 只要"图层名"和"段落对齐"能在**建层那一条描述符**里带上，
+       阶段二就整个消失（12.7s → 0，总耗时回到"第①批"那 2 秒量级）。
+
+     ⚠️ 这两个加法正是 v0.4.0 卡死宿主的**同一类**"推理出来的描述符"。
+        ⇒ **一条命令单独发、发完立刻读回**，绝不与其它未验项合批（两条也分开验）。
+        卡住的话日志会停在"即将发第 N 条"，那就是分野线。
+
+     判据（全部**读回**，不看"命令没报错"）：
+       ① 层名读到 == 我们要的（不是默认的"文字图层 n"）
+       ② 段落对齐读到 == 我们要的（枚举族 alignmentType / 值 center）
+       ③ 文字内容没被改坏，且读到的是**刚建的那一层** */
+  const S45 = "S45 建层描述符能否一次带上「图层名 + 段落对齐」（分别单条验，省掉阶段二）";
+  try {
+    const sc45 = await ps.createScratchDoc({ size: 300, name: "Vellum 自检临时文档(S45建层加法)" });
+    if (!sc45 || !sc45.ok) {
+      rec(S45, false, "建临时文档失败：" + ((sc45 && sc45.error) || "未知"));
+    } else {
+      try {
+        await ps.activateDocument(sc45.id);
+        const note45 = [];
+        /* ---- 第 1 条：`name`（不带对齐） ---- */
+        await log.appendLog("S45 即将发第 1 条：make textLayer + name（若卡住请点掉 PS 里的对话框，日志会停在这一行）");
+        let r1 = null;
+        try {
+          await ps.runModal(async () => {
+            await ps.batchPlay([ps.textLayerBoxDesc({
+              text: "甲", box: { left: 20, top: 20, right: 180, bottom: 60 },
+              sizePt: 18, rgb: { r: 0, g: 0, b: 0 }, name: "vt-s45-name",
+            })], {});
+          }, "Vellum 工具箱：S45 第 1 条");
+          r1 = { ok: true };
+        } catch (e) {
+          r1 = { ok: false, error: (e && e.message) || String(e) };
+        }
+        const li1 = r1.ok ? ps.layerInfo() : null;
+        const pr1 = r1.ok ? ps.textItemProbe() : null;
+        const nameOk = !!(li1 && li1.ok && String(li1.name) === "vt-s45-name");
+        const textOk1 = !!(pr1 && pr1.values && pr1.values.contents === "甲");
+        await log.appendLog("S45 第 1 条回来了：发送=" + (r1.ok ? "没抛错" : "抛错 " + r1.error) +
+          "　层名=" + JSON.stringify((li1 && li1.name) || null) + "　内容=" +
+          JSON.stringify((pr1 && pr1.values && pr1.values.contents) || null));
+
+        /* ---- 第 2 条：`paragraphStyleRange`（对齐），单独一发 ---- */
+        await log.appendLog("S45 即将发第 2 条：make textLayer + paragraphStyleRange(center)");
+        let r2 = null;
+        try {
+          await ps.runModal(async () => {
+            await ps.batchPlay([ps.textLayerBoxDesc({
+              text: "乙", box: { left: 20, top: 90, right: 180, bottom: 130 },
+              sizePt: 18, rgb: { r: 0, g: 0, b: 0 },
+              align: { cls: "alignmentType", value: "center" },
+            })], {});
+          }, "Vellum 工具箱：S45 第 2 条");
+          r2 = { ok: true };
+        } catch (e) {
+          r2 = { ok: false, error: (e && e.message) || String(e) };
+        }
+        let alignOk = false;
+        let alignGot = null;
+        let textOk2 = false;
+        if (r2.ok) {
+          const tk = await ps.readTextKeyDesc();
+          const sm = tk.ok ? ps.summarizeTextKey(tk.raw) : null;
+          const a = sm && (sm.paragraphAlign || sm.paragraphJustification);
+          alignGot = a ? a.cls + ":" + a.value : null;
+          alignOk = !!(a && a.value === "center");
+          const pr2 = ps.textItemProbe();
+          textOk2 = !!(pr2 && pr2.values && pr2.values.contents === "乙");
+        }
+        await log.appendLog("S45 第 2 条回来了：发送=" + (r2.ok ? "没抛错" : "抛错 " + r2.error) +
+          "　段落对齐=" + JSON.stringify(alignGot) + "　内容=" + (textOk2 ? "乙" : "?"));
+
+        /* 判据只押**我们要依赖的那一条**（对齐内联生效）。
+           `name` 被忽略是**读数**、不是失败：PS 用文字内容当默认层名 ⇒ 命名改走第②批 `set name`（S46 已验）。
+           ⚠️ 哪天真机上 `name` 开始生效，这里会先看出来（那时第②批可以省掉）。 */
+        const judge = !!(r1.ok && textOk1 && r2.ok && alignOk && textOk2);
+        rec(
+          S45,
+          judge,
+          "第1条 name：发送=" + (r1.ok ? "没抛错" : "✗" + r1.error) +
+          "　层名=" + JSON.stringify((li1 && li1.name) || null) + "（须 vt-s45-name）" + (nameOk ? " ✓" : " ✗") +
+          "　内容=" + JSON.stringify((pr1 && pr1.values && pr1.values.contents) || null) + (textOk1 ? " ✓" : " ✗") +
+          "　‖ 第2条 paragraphStyleRange：发送=" + (r2.ok ? "没抛错" : "✗" + r2.error) +
+          "　对齐=" + JSON.stringify(alignGot) + "（须 alignmentType:center）" + (alignOk ? " ✓" : " ✗") +
+          "　内容=" + (textOk2 ? "乙 ✓" : "✗") +
+          "　⇒ 对齐**可以内联**（这一条已改为默认走法）；`name` 被忽略（" +
+          (nameOk ? "⚠️ 这次**居然生效了** —— 若稳定，第②批改名可以省掉" : "PS 用文字内容当默认层名") +
+          "）⇒ 命名仍走第②批 `set name`（S46 已验）" +
+          (judge ? "；阶段二只剩**一次 batchPlay**，UXP DOM 的两个写操作全部消失" : " ⚠️ 对齐内联没成立，只能退回逐格 DOM")
+        );
+      } finally {
+        try {
+          await ps.closeDocument(sc45.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S45, false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S46: 「改名」的两条路能不能走 AM（v0.4.7）
+     S45 的结论：`paragraphStyleRange`（对齐）建层时就生效 ✓，但 `name` 被**忽略**
+     （层名变成文字内容）。而阶段二里**改名占 5.9s**（35 格 / 51 层时 169ms/格 ——
+     UXP DOM 的 `layer.name=` 单次代价随**文档层数**涨）。
+     ⇒ 试两条**走 AM** 的路（AM 那边 23ms/命令且可以合批）：
+        ① 按 `_id` 选中图层后 `set` 它的 `name`（一次 batchPlay 能合 35 条）
+        ② 形状图层（`make contentLayer`）的 `name` —— 录制样例里**有**这个字段，
+           若成立，线/外框/背景一起在建层那一发里命名（0 成本）
+     ⚠️ 两条都是**单条发、发完立刻读回**（未验描述符的纪律）。 */
+  const S46 = "S46 改名的两条路：AM 按 _id set name / contentLayer 的 name（分别单条验）";
+  try {
+    const sc46 = await ps.createScratchDoc({ size: 300, name: "Vellum 自检临时文档(S46改名)" });
+    if (!sc46 || !sc46.ok) {
+      rec(S46, false, "建临时文档失败：" + ((sc46 && sc46.error) || "未知"));
+    } else {
+      try {
+        await ps.activateDocument(sc46.id);
+        /* 先用**已验**描述符造一个文字层，再拿它的 id 去试 AM 改名 */
+        await ps.runModal(async () => {
+          await ps.batchPlay([ps.textLayerBoxDesc({
+            text: "丙", box: { left: 20, top: 20, right: 180, bottom: 60 }, sizePt: 18, rgb: { r: 0, g: 0, b: 0 },
+          })], {});
+        }, "Vellum 工具箱：S46 造层");
+
+        /* 取 id（DOM 读，不写） */
+        let id0 = null;
+        await ps.runModal(async () => {
+          const doc = ps.app.activeDocument;
+          const l = doc.activeLayers && doc.activeLayers[0];
+          if (!l) throw new Error("没有活动图层");
+          id0 = l.id;
+        }, "Vellum 工具箱：S46 取 id");
+
+        /* ---- ① AM：按 _id `set name` ---- */
+        await log.appendLog("S46 即将发第 1 条：set name（按 _id=" + id0 + "）");
+        let r1 = null;
+        try {
+          await ps.runModal(async () => {
+            await ps.batchPlay([{
+              _obj: "set",
+              _target: [{ _ref: "layer", _id: id0 }],
+              to: { name: "vt-s46-byid" },
+            }], {});
+          }, "Vellum 工具箱：S46 AM 改名");
+          r1 = { ok: true };
+        } catch (e) {
+          r1 = { ok: false, error: (e && e.message) || String(e) };
+        }
+        const after1 = ps.layerInfo();
+        const byIdOk = !!(r1.ok && after1 && after1.ok && String(after1.name) === "vt-s46-byid");
+        await log.appendLog("S46 第 1 条回来了：发送=" + (r1.ok ? "没抛错" : "抛错 " + r1.error) +
+          "　层名=" + JSON.stringify((after1 && after1.name) || null));
+
+        /* ---- ② 形状图层（contentLayer）的 `name` ---- */
+        await log.appendLog("S46 即将发第 2 条：make contentLayer(rectangle) + name");
+        let r2 = null;
+        try {
+          await ps.runModal(async () => {
+            await ps.batchPlay([ps.rectShapeMakeDesc(
+              { left: 20, top: 150, right: 180, bottom: 154 },
+              { r: 200, g: 0, b: 0 },
+              { fill: true, stroke: false, name: "vt-s46-shape" }
+            )], {});
+          }, "Vellum 工具箱：S46 形状命名");
+          r2 = { ok: true };
+        } catch (e) {
+          r2 = { ok: false, error: (e && e.message) || String(e) };
+        }
+        const after2 = r2.ok ? ps.layerInfo() : null;
+        const shapeOk = !!(after2 && after2.ok && String(after2.name) === "vt-s46-shape");
+        await log.appendLog("S46 第 2 条回来了：发送=" + (r2.ok ? "没抛错" : "抛错 " + r2.error) +
+          "　形状层名=" + JSON.stringify((after2 && after2.name) || null));
+
+        /* 判据只押**要依赖的那一条**（AM 按 _id 改名 —— 阶段二就靠它）。
+           `contentLayer` 的 `name` 被忽略是**读数**（录制样例里有这个字段、但真机不吃）⇒ 形状用 PS 默认名。 */
+        const judge = !!byIdOk;
+        rec(
+          S46,
+          judge,
+          "① AM 按 _id set name：发送=" + (r1.ok ? "没抛错" : "✗" + r1.error) +
+          "　层名=" + JSON.stringify((after1 && after1.name) || null) + "（须 vt-s46-byid）" + (byIdOk ? " ✓" : " ✗") +
+          "　‖ ② contentLayer 的 name：发送=" + (r2.ok ? "没抛错" : "✗" + r2.error) +
+          "　层名=" + JSON.stringify((after2 && after2.name) || null) + "（须 vt-s46-shape）" + (shapeOk ? " ✓" : " ✗") +
+          "　⇒ 改名走**一次 batchPlay**（不再碰 UXP DOM）；`contentLayer` 的 name " +
+          (shapeOk ? "⚠️ 这次居然生效了（那真机行为变了，可以考虑省掉形状改名）" : "被忽略 ⇒ 形状保持 PS 默认名")
+          + (byIdOk ? "" : " ⚠️ 但 AM 改名**不通** ⇒ 只能退回 DOM 改名或不要命名")
+        );
+      } finally {
+        try {
+          await ps.closeDocument(sc46.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S46, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- S42: 面板整链（免弹窗版，v0.4.2 新增）
      为什么要有它：面板上真正的「导入 CSV」要弹**系统文件选择器** —— 自检点不了、
      自动化也点不了 ⇒ "解码 → 解析 → 预览 → 生成"这条链在真机上一直缺中间一段：
@@ -4300,6 +4511,7 @@ async function run(ctx, deps) {
       let grpOk = false;
       let statusTxt = "";
       let finishedOk = false;
+      let genMs = -1;
       let stepErr = null;
       const want = 7 * 5 + 4 + 6 + 4 + 1 + 1; // 51（独立算：35 文字 + 外框 4 + 横 6 + 竖 4 + 背景 1 + 组 1）
       /* 🔴 v0.4.4：这个 51 只在**默认样式**下成立，而面板会**读用户存过的样式偏好**
@@ -4358,6 +4570,9 @@ async function run(ctx, deps) {
             }, 120000);
             finishedOk = !!finished;
             statusTxt = finished ? String(finished) : txt("vt-status");
+            /* v0.4.7：把面板自己报的耗时抽出来 —— 它才是"性能优化到底有没有用"的读数 */
+            const durHit = /用时\s*(\d+)\s*ms/.exec(statusTxt);
+            genMs = durHit ? Number(durHit[1]) : -1;
             /* 找组这一步单独兜住：v0.4.2 第一次跑就是这里抛的（`findLayerDeep` 当时没导出），
                而它一抛，前面四条读数全跟着丢了 */
             try {
@@ -4388,7 +4603,8 @@ async function run(ctx, deps) {
         "　④ 点生成后层数增量=" + added + "/" + want +
         "（收尾=" + finishedOk + "）" +
         "　⑤ 组「表格 · prices-2026-gbk」=" + grpOk +
-        "、状态栏=" + JSON.stringify(statusTxt.slice(0, 28)) +
+        "、状态栏=" + JSON.stringify(statusTxt.slice(0, 60)) +
+        "、**本次生成耗时 " + genMs + "ms**" +
         "　⇒ " + (judge
           ? "面板整链通：点样例 → 读字节 → GBK 解码 → 预览 → 点生成 → 文档里真出 " + want + " 层" +
             "（**唯一没覆盖的**只剩系统文件选择器那一次弹窗）"
@@ -4662,7 +4878,7 @@ async function run(ctx, deps) {
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.4.6",
+    version: "0.4.7",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

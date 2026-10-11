@@ -2275,12 +2275,18 @@ async function main() {
       style: {},
     });
 
-    /* 假文档：组里的孩子要**和真机同序** —— UXP DOM 的 `layers` 是"面板序"
-       （第 0 个在最上），而建层顺序是 cells[0..n-1] 从下往上叠 ⇒ 组里数组应是 cells 的**逆序**。
-       只有这样才测得到 buildTable 里那句 `kids.reverse()` 到底对不对（反了 = 整表串格，真机上极难查）。 */
+    /* 假文档：**必须和真机同序** —— UXP DOM 的 `layers` 是"面板序"（第 0 个在最上），
+       而 buildTable 的建层顺序是 [背景 → 线 → 文字] 从下往上叠 ⇒ 组里数组 = **建层顺序的逆序**。
+       id 故意编成 `2000 + 建层序号`：这样"第几条改名命令动的是哪一层"可以**精确断言**
+       ——顺序反了 = 整张表的名字安到别的层上，真机上极难查（v0.4.7 起改名是**一次 batchPlay**，
+       不再有"逐格 DOM 改名"那层兜底，所以这条判据比过去更重要）。 */
+    const kinds = [];
+    for (let i = 0; i < plan.bg.length; i++) kinds.push("solidColor");
+    for (let i = 0; i < plan.lines.length; i++) kinds.push("solidColor");
+    for (let i = 0; i < plan.cells.length; i++) kinds.push("text");
     const g = { id: 900, kind: "group", name: "离线表", layers: [] };
-    for (let i = plan.cells.length - 1; i >= 0; i--) {
-      g.layers.push({ id: 1000 + i, kind: "text", name: "文字图层 " + (i + 1) });
+    for (let i = kinds.length - 1; i >= 0; i--) {
+      g.layers.push({ id: 2000 + i, kind: kinds[i], name: "未命名 " + i });
     }
     mockApp.documents.length = 0;
     mockApp.documents.push({ id: 950, name: "假表文档", mode: "RGB", activeLayers: [], layers: [g] });
@@ -2305,8 +2311,30 @@ async function main() {
         u.type && u.type._obj === "solidColorLayer" &&
         s.fillEnabled === true && s.strokeEnabled === false;
     };
-    const hasRiskyKey = (c) =>
-      !!(c.using && (c.using.name !== undefined || c.using.paragraphStyleRange !== undefined));
+    /* 判据提成具名函数 —— 后面两条"负对照"要**复用同一个判据**，
+       否则对照只是在自证它自己（"永远成立的样本验不出任何东西"）。
+       v0.4.7 两处判据都换了对象：
+        · 文字命令**该带** `paragraphStyleRange`（S45 真机验过：读回 alignmentType 命中），
+          但形状必须**只**含 {from,to,paragraphStyle{align:{alignmentType, 三档之一}}} ——
+          多一个键就说明我们塞了没验过的东西（v0.4.0 卡死宿主就是这么来的）；
+        · 改名改成**按 `_id` 的 set**（S46 真机验过），一次 batchPlay 合批。 */
+    const ALIGNS = ["left", "center", "right"];
+    const inlineAlignOk = (c) => {
+      const u = (c && c.using) || null;
+      if (!u || u.name !== undefined) return false;            // `name` 没验过（S45 实测被忽略），不许出现
+      const r = u.paragraphStyleRange;
+      if (!Array.isArray(r) || r.length !== 1) return false;
+      const psr = r[0];
+      const ps = psr && psr.paragraphStyle;
+      return !!(psr && psr._obj === "paragraphStyleRange" &&
+        psr.from === 0 && psr.to === String(u.textKey === undefined ? "" : u.textKey).length &&
+        ps && ps._obj === "paragraphStyle" &&
+        Object.keys(ps).length === 2 &&                        // 只有 _obj + align
+        ps.align && ps.align._enum === "alignmentType" && ALIGNS.indexOf(ps.align._value) >= 0);
+    };
+    const idRenameOk = (c) => !!(c && c._obj === "set" && c.to && typeof c.to.name === "string" &&
+      Array.isArray(c._target) && c._target.length === 1 &&
+      c._target[0]._ref === "layer" && typeof c._target[0]._id === "number");
 
     // ① 形状命令：只能是 S31 验过的那一种
     const shapeBad = shapeCmds.filter((c) => !isVerifiedShape(c));
@@ -2319,13 +2347,17 @@ async function main() {
       "　⇒ 「只描边不填充」那条路**刻意没走**（fill/stroke 组合没验过），外框是 4 条细矩形拼的"
     );
 
-    // ② 文字命令：不许带 name / paragraphStyleRange（v0.4.0 卡死宿主的正是这两个键）
-    const risky = batch1.filter((c) => !isGroup(c) && hasRiskyKey(c));
+    // ② 文字命令：带**已验形状**的段落对齐（S45），且**不带** name（S45 实测被忽略）
+    const badText = batch1.filter((c) => ref(c) === "textLayer" && !inlineAlignOk(c));
     check(
-      "M3 命令形状②：建文字图层**不带** name / paragraphStyleRange（未验键）",
-      textCmds.length === plan.cells.length && risky.length === 0,
-      "文字命令 " + textCmds.length + "/" + plan.cells.length + " 条　带未验键的 " + risky.length + " 条" +
-      "　⇒ 每格只带 textKey + textShape + textStyleRange（S32 的形状）；组命令的 name 例外（S33 验过）"
+      "M3 命令形状②：文字命令带**已验形状**的 paragraphStyleRange（S45）、不带 name（被忽略）",
+      textCmds.length === plan.cells.length && badText.length === 0,
+      "文字命令 " + textCmds.length + "/" + plan.cells.length + " 条　形状不对 " + badText.length + " 条" +
+      (badText.length
+        ? "　首条=" + JSON.stringify(badText[0].using.paragraphStyleRange || badText[0].using.name).slice(0, 170)
+        : "") +
+      "　⇒ 形状 = [{paragraphStyleRange:{from,to,paragraphStyle:{align:{alignmentType,left|center|right}}}}]，" +
+      "**只许这 4 个键**；对齐内联是 S45 真机验过的（改完仍是普通文字层）"
     );
 
     // ③ 层数：命令条数必须**正好**等于计划层数
@@ -2337,36 +2369,67 @@ async function main() {
       "　‖ 拆解 1 组 + 线 " + plan.lines.length + " + 背景 " + plan.bg.length + " + 文字 " + plan.cells.length
     );
 
-    // ④ 逐格落地：改名**顺序**对不对 + 每格一条 set paragraphStyle
-    const names = g.layers.map((l) => l.name);
-    const wantTop = psm.tableCellName(plan.cells[plan.cells.length - 1]);
-    const wantBottom = psm.tableCellName(plan.cells[0]);
-    /* 阶段二是**每格一发** `batchPlay`（各有各的小 batch）⇒ 要对 sentBatches **从第 2 批起合并**再筛，
-       只看 sentBatches[1] 会漏掉后面 7 格（第一版就踩了这个） */
-    const alignCmds = sentBatches.slice(1)
-      .reduce((a, b) => a.concat(b), [])
-      .filter((c) => c._obj === "set" && c._target && c._target[0]._property === "paragraphStyle");
+    // ④ 落地形状：**一次** batchPlay 合批改名（按 _id）、对齐**不再**逐格 set
+    /* v0.4.7 换了设计：阶段二从"逐格 DOM 选择 + 改名 + 每格一条 set paragraphStyle"（真机 13.6s）
+       改成"内联对齐 + 一次 batchPlay 按 _id 改名"。这里钉死四件事：
+         ① **只有两个批次**（建层 + 改名）—— 批次数就是性能断言（DOM 那条路是 36 个批次）
+         ② 改名条数 = 层数 − 1（**所有**图层都命名：背景/线/文字）
+         ③ **id 顺序 = 建层顺序**（反了 = 整表串格，真机极难查）
+         ④ 对齐**不再**出现在阶段二（已内联） */
+    const phase2 = sentBatches.slice(1).reduce((a, b) => a.concat(b), []);
+    const renameCmds = phase2.filter(idRenameOk);
+    const alignCmds = phase2.filter((c) => c._target && c._target[0]._property === "paragraphStyle");
+    const idOrderOk = renameCmds.length > 0 && renameCmds.every((c, i) => c._target[0]._id === 2000 + i);
+    const textStart = plan.bg.length + plan.lines.length;      // 独立算：文字在建层序里的起点
+    const nameTailOk = renameCmds.length > textStart + plan.cells.length - 1 &&
+      renameCmds[renameCmds.length - 1].to.name === psm.tableCellName(plan.cells[plan.cells.length - 1]) &&
+      renameCmds[textStart].to.name === psm.tableCellName(plan.cells[0]) &&
+      renameCmds[0].to.name === "背景 · 表头";
     check(
-      "M3 逐格落地：改名顺序（组内第 0 个 = 最后一格）+ 每格一条 set paragraphStyle",
-      names[0] === wantTop && names[names.length - 1] === wantBottom &&
-      res.renamed === plan.cells.length && alignCmds.length === plan.cells.length &&
-      alignCmds.every((c) => c.to && c.to.align && c.to.align._enum === "alignmentType"),
-      "组内第 0 个=" + JSON.stringify(names[0]) + "（须 " + JSON.stringify(wantTop) + "）" +
-      "　最后一个=" + JSON.stringify(names[names.length - 1]) + "（须 " + JSON.stringify(wantBottom) + "）" +
-      "　改名 " + res.renamed + "/" + plan.cells.length +
-      "　对齐命令 " + alignCmds.length + " 条（枚举族 alignmentType，S37 验过 left/center/right）"
+      "M3 落地：一次 batchPlay 合批改名（按 _id、顺序 = 建层序）+ 对齐已内联不再逐格 set",
+      sentBatches.length === 2 && renameCmds.length === plan.layers - 1 &&
+      renameCmds.length === phase2.length && idOrderOk && nameTailOk &&
+      alignCmds.length === 0 && res.nameMode === "am" && res.renamed === plan.layers - 1,
+      "批次数=" + sentBatches.length + "（须 2：建层 + 改名；退回路径是 37 个以上）" +
+      "　改名命令 " + renameCmds.length + "/" + (plan.layers - 1) + "（须全部按 _id）" +
+      "　id 顺序对=" + idOrderOk + "　首/中/末名字对=" + nameTailOk +
+      "　逐格对齐命令 " + alignCmds.length + " 条（须 0，已内联）" +
+      "　nameMode=" + res.nameMode + "　renamed=" + res.renamed
     );
 
-    // ⑤ 负对照：把未验键**塞回去**，②必须能抓住（抓不住就说明②是个空壳）
-    const poisoned = [
-      { _obj: "make", _target: [{ _ref: "textLayer" }], using: { _obj: "textLayer", textKey: "x", name: "poison" } },
-      { _obj: "make", _target: [{ _ref: "textLayer" }], using: { _obj: "textLayer", textKey: "y" } },
+    // ⑤ 负对照：文字命令的判据必须只放过**那一条合规的**（多键/错枚举族/错值/带 name 都要抓住）
+    const mkText = (using) => ({ _obj: "make", _target: [{ _ref: "textLayer" }], using: using });
+    const goodUsing = (align) => ({
+      _obj: "textLayer", textKey: "y",
+      paragraphStyleRange: [{
+        _obj: "paragraphStyleRange", from: 0, to: 1,
+        paragraphStyle: { _obj: "paragraphStyle", align: { _enum: "alignmentType", _value: align } },
+      }],
+    });
+    const poisonedText = [
+      mkText({ _obj: "textLayer", textKey: "x", name: "poison" }),                       // 带 name
+      mkText(goodUsing("center")),                                                       // 合规（必须命中）
+      (() => { const u = goodUsing("center"); u.paragraphStyleRange[0].paragraphStyle.justification = { _enum: "x", _value: "y" }; return mkText(u); })(),
+      (() => { const u = goodUsing("center"); u.paragraphStyleRange[0].paragraphStyle.align._enum = "justification"; return mkText(u); })(),
+      (() => { const u = goodUsing("center"); u.paragraphStyleRange[0].paragraphStyle.align._value = "middle"; return mkText(u); })(),
     ];
     check(
-      "M3 判据自证（负对照）：人工塞 unverified 键，②的判据必须命中",
-      poisoned.filter(hasRiskyKey).length === 1,
-      "两条构造命令里，带 name 的命中 " + poisoned.filter(hasRiskyKey).length + " 条（必须**正好 1**）" +
-      "　⇒ 判据不是「永远通过」的空壳；反之若这里也 0 命中，②的 PASS 就该被推翻"
+      "M3 判据自证（负对照）：文字命令判据只放过那一条合规的（多键/错枚举族/错值/带 name 都得抓住）",
+      poisonedText.filter(inlineAlignOk).length === 1,
+      "5 条构造命令里命中 " + poisonedText.filter(inlineAlignOk).length + " 条（必须**正好 1**）" +
+      "　⇒ 判据不是空壳；若这里 ≠1，②的 PASS 就该被推翻"
+    );
+
+    // ⑥ 负对照：改名判据不许放过"按名字选层"（那是**没验过**的形状）或缺 `to.name` 的
+    const poisonedRename = [
+      { _obj: "set", _target: [{ _ref: "layer", _name: "某层" }], to: { name: "x" } },   // 按名字（没验过）
+      { _obj: "set", _target: [{ _ref: "layer", _id: 2001 }], to: { name: "x" } },       // 合规（必须命中）
+      { _obj: "set", _target: [{ _ref: "layer", _id: 2001 }] },                          // 没有 to.name
+    ];
+    check(
+      "M3 判据自证（负对照）：改名判据只放过「按 _id 且真的在改名」",
+      poisonedRename.filter(idRenameOk).length === 1,
+      "3 条构造命令里命中 " + poisonedRename.filter(idRenameOk).length + " 条（必须**正好 1**）"
     );
 
     mockApp.documents.length = 0;
