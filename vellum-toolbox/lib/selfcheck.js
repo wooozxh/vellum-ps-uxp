@@ -360,6 +360,25 @@ async function run(ctx, deps) {
     }
     return n;
   }
+  /* ⚠️ v0.3.4：瀑布流把卡片放进了 `.lib-col` ⇒ **不能再数 `#vt-lib-grid` 的直接子节点**
+     （那两个是列容器，数出来恒为 2，与素材条数无关）。
+     判 class 一律按 **token**（`class.split(/\s+/)[0]`），不用 indexOf 子串 ——
+     `.card-th` / `.card-nm` / `.card-mt` 都含 "card"，子串判法会把它们全算成卡片。
+     ⚠️ 必须声明在 run() 顶层的帮助函数区：S20d/S20e 各自在**独立的 try 块**里，
+        块内的 `const` 它们看不见 —— 第一版放在 S20 的块里，真机直接报 `libCards is not defined`。 */
+  const isLibCard = (el) => {
+    const cl = String((el && el.getAttribute && el.getAttribute("class")) || "");
+    return cl.split(/\s+/)[0] === "card";
+  };
+  const libCards = (node, out) => {
+    const kids = (node && node.children) || [];
+    for (let i = 0; i < kids.length; i++) {
+      const c = kids[i];
+      if (isLibCard(c)) out.push(c);
+      libCards(c, out);
+    }
+    return out;
+  };
   /**
    * 等网格的卡片数 == n（n < 0 表示只等"有卡片"）。
    * ⚠️ **必须点名 `scope`** —— 否则条件会被**上一个库留下的旧网格**满足。
@@ -373,8 +392,10 @@ async function run(ctx, deps) {
       const el = document.getElementById("vt-lib-grid");
       if (!el) return null;
       if (scope && String(el.getAttribute("data-scope") || "") !== scope) return null;
-      if (n < 0) return el.children.length > 0 ? el : null;
-      return el.children.length === n ? el : null;
+      // v0.3.4：网格的直接子节点**恒为 2**（两列容器）⇒ 必须递归数 `.card`，
+      // 否则"等网格渲染完"会退化成"网格存在就行" —— 等待条件就不再点名"我在等什么"。
+      if (n < 0) return libCards(el, []).length > 0 ? el : null;
+      return libCards(el, []).length === n ? el : null;
     }, ms || 5000, 150);
   }
   /** 网格当前属于哪个库（读 DOM，不读模块状态）。 */
@@ -398,7 +419,7 @@ async function run(ctx, deps) {
       const el = document.getElementById("vt-lib-grid");
       if (!el) return null;
       if (String(el.getAttribute("data-scope") || "") !== id) return null;
-      return el.children.length > 0 ? el : null;
+      return libCards(el, []).length > 0 ? el : null;
     }, ms || 6000, 200);
     return !!ok;
   }
@@ -1505,6 +1526,7 @@ async function run(ctx, deps) {
       return out;
     };
 
+
     const rawMan = await data.readTextIn(["library"], "manifest.json", "");
     let man = null;
     try {
@@ -1575,7 +1597,8 @@ async function run(ctx, deps) {
       }, 8000, 250);
 
       const grid = document.getElementById("vt-lib-grid");
-      const cards = grid ? grid.children.length : 0;
+      const cardsArr = grid ? libCards(grid, []) : [];
+      const cards = cardsArr.length;
       const imgs = grid ? collectImgs(grid, []) : [];
       let loaded = 0;
       for (const im of imgs) if (im.naturalWidth > 0) loaded++;
@@ -1583,8 +1606,8 @@ async function run(ctx, deps) {
       // 点第一张卡 → 详情行必须出现这个文件
       let detailOk = false;
       let firstName = "";
-      if (grid && grid.children.length) {
-        const c0 = grid.children[0];
+      if (cardsArr.length) {
+        const c0 = cardsArr[0];
         const ft = document.getElementById("vt-lib-foot");
         if (c0) {
           syntheticClick(c0, false);
@@ -1622,6 +1645,122 @@ async function run(ctx, deps) {
         "　详情行含「" + firstName + "」=" + detailOk
       );
 
+      /* ---- S27（v0.3.4）：瀑布流 —— 盒子高度必须等于「盒宽 × 该素材高宽比」 ----
+         用户要求「缩略图容器与缩略图比例一致」（原先是固定 120px 的一排等高格子）。
+         判据**逐张卡片比期望值**，不用"高度种类大于 1"那种弱判据 ——
+         后者在"库里恰好都是同一种比例"时会假 FAIL，且证明不了算得对。
+
+         期望值独立算（**不复用 library.js 的中间结果** —— 那是拿被测模块的输出验它自己）：
+           · 盒宽 = 盒子自己的 offsetWidth（真实布局量出来的）
+           · 比例 = 镜像里该素材的 height / width
+           · 期望 = clamp(盒宽 × 比例, 72, 380)　← 72/380 是 library.js 的封顶区间
+         另验两条结构：恰好两个列容器；每张卡片都**挂在列里**（没有掉到网格直接子级）。 */
+      /* 先在**条目最多的那个库**上验（v0.3.4 补）——
+         只有 1 条素材时，"两列分派"和"按比例"两条都验不到
+         （纪律：一个"永远成立"的样本验不出任何东西）。
+         切库后 DOM 会重建 ⇒ 下面**重新从 DOM 抓**网格与卡片，绝不沿用旧引用。 */
+      const richScope = (man.scopes || []).slice()
+        .sort((a, b) => (b.count || 0) - (a.count || 0))[0];
+      if (richScope && richScope.id !== activeId && (richScope.count || 0) > cardsArr.length) {
+        await libSwitchTo(richScope.id);
+        await libWaitCards(-1, 6000, richScope.id);
+      }
+      const s27Grid = document.getElementById("vt-lib-grid");
+      const s27Cards = s27Grid ? libCards(s27Grid, []) : [];
+
+      if (s27Grid && s27Cards.length) {
+        /* 🔴 先等"布局落定 + 高度已用真实盒宽重算" —— `relayoutThumbs` 是异步的
+           （它必须等 UXP 把布局做完，才能量到盒子的真实宽度）。
+           `data-boxw` 就是它落定后写下的信号 —— 与"等新库渲染完看 data-scope"同一套做法。
+           不等这一步，量到的是 renderGrid 当时的**推算值**：真机第一版就是
+           201px（推算）vs 189px（实测）差 12px —— 推算宽度错了 12px，量出来就是错的。 */
+        await waitFor(() => {
+          const g = document.getElementById("vt-lib-grid");
+          if (!g) return null;
+          const bw = g.getAttribute("data-boxw");
+          return bw && Number(bw) > 0 ? g : null;
+        }, 4000, 100);
+
+        // ⚠️ 索引必须读**当前这个库**的文件 —— S27 上面可能刚切过库，
+        //    而 `scopeFile` 是 S20 那一刻算的（切库后用它会拿错库的宽高，全部对不上）。
+        const s27ScopeId = String(s27Grid.getAttribute("data-scope") || "");
+        let s27ScopeFile = "";
+        for (const s of man.scopes || []) if (s.id === s27ScopeId) s27ScopeFile = s.file;
+
+        const idIndex = {};
+        const indexAssets = (n) => {
+          if (!n || typeof n !== "object") return;
+          if (Array.isArray(n)) {
+            for (const k of n) indexAssets(k);
+            return;
+          }
+          if (n.id !== undefined && n.name !== undefined && n.ext !== undefined) {
+            idIndex[String(n.id)] = n;
+          }
+          for (const k of Object.keys(n)) indexAssets(n[k]);
+        };
+        try {
+          const rawScope = await data.readTextIn(["library"], s27ScopeFile, "");
+          indexAssets(JSON.parse(rawScope));
+        } catch {
+          /* 建不出索引就只跑结构那两条 */
+        }
+
+        const colNodes = [];
+        for (const k of s27Grid.children) if (hasClass(k, "lib-col")) colNodes.push(k);
+        const colH = colNodes.map((c) => c.offsetHeight || 0);
+        const colSum = colH.length >= 2 ? colH[0] + colH[1] : 0;
+
+        let probed = 0;
+        let bad = 0;
+        let badWhy = "";
+        let inCol = 0;
+        let skipped = 0;
+        for (const c of s27Cards) {
+          if (c.parentNode && hasClass(c.parentNode, "lib-col")) inCol++;
+          const a = idIndex[String(c.getAttribute("data-id"))];
+          if (!a || !(Number(a.width) > 0) || !(Number(a.height) > 0)) {
+            skipped++;
+            continue;
+          }
+          let box = c.querySelector ? c.querySelector(".card-th") : null;
+          if (!box && c.children[0]) {
+            for (const k of c.children[0].children) if (hasClass(k, "card-th")) box = k;
+          }
+          if (!box) continue;
+          const bw = box.offsetWidth || 0;
+          const bh = box.offsetHeight || 0;
+          if (!(bw > 0)) continue;
+          const want = Math.max(
+            72,
+            Math.min(Math.round(bw * (Number(a.height) / Number(a.width))), 380)
+          );
+          probed++;
+          if (Math.abs(bh - want) > 2) {
+            bad++;
+            if (!badWhy) badWhy = a.name + "（期望 " + want + "px，实际 " + bh + "px）";
+          }
+        }
+
+        // 两列累计高差的容忍上限 = 最高的一张卡片（分派本就是按"累计高度较小的一列"做的）
+        const maxCard = 380 + 56;
+        const balanced = colH.length === 2 && Math.abs(colH[0] - colH[1]) <= maxCard;
+
+        rec(
+          "S27 瀑布流 —— 缩略图盒子按素材比例 + 两列分派",
+          colNodes.length === 2 && inCol === s27Cards.length &&
+            probed > 0 && bad === 0 && balanced,
+          "卡片=" + s27Cards.length + "（挂在列里的=" + inCol + "）" +
+          "　本轮验的库=" + String(s27Grid.getAttribute("data-scope") || activeId || "?") +
+          "　列容器=" + colNodes.length + "（须 2）" +
+          "　逐张比对「盒高 = 盒宽×素材高宽比」：" + (probed - bad) + "/" + probed + " 命中" +
+          (skipped ? "（跳过 " + skipped + " 张无像素尺寸的素材）" : "") +
+          "　两列高 " + (colH.length ? colH.join("/") : "?") +
+          "（合计 " + colSum + "）·均衡=" + balanced +
+          (badWhy ? "　‖ 第一处不符：" + badWhy : "")
+        );
+      }
+
       // 顺带验一次「切库」：切到另一个库，卡片数要对上那个库的自数
       if (man.scopes.length >= 2) {
         const other = man.scopes[0].id === activeId ? man.scopes[1] : man.scopes[0];
@@ -1646,10 +1785,10 @@ async function run(ctx, deps) {
             const el = document.getElementById("vt-lib-grid");
             if (!el) return null;
             if (String(el.getAttribute("data-scope") || "") !== String(other.id)) return null;
-            if (el.children.length !== expect2) return null;
+            if (libCards(el, []).length !== expect2) return null;
             return el;
           }, 6000, 200);
-          const c2 = g2 ? g2.children.length : 0;
+          const c2 = g2 ? libCards(g2, []).length : 0;
           const chip2 = document.getElementById("vt-lib-tab-" + other.id);
           rec(
             "S20b 切库 —— 卡片数跟着换（证明 tab 不是写死的）",
@@ -1779,7 +1918,7 @@ async function run(ctx, deps) {
       if (kOpt) {
         syntheticClick(kOpt, false);
         const g2 = await libWaitCards(twoLevel.expKid, 5000, "brand");
-        cardsKid = g2 ? g2.children.length : -1;
+        cardsKid = g2 ? libCards(g2, []).length : -1;
       }
       const closedAfterPick = !libSelOpen();
 
@@ -1809,7 +1948,7 @@ async function run(ctx, deps) {
 
   /* S20d 来源筛选（只在 ≥2 种来源时出现） */
   try {
-    const S20D = "S20d 来源筛选 —— 「来源」行只在 ≥2 种来源时出现，点了能收窄（契约 §5.4 asset.source）";
+    const S20D = "S20d 通用库不画重复的「来源」行（顶层分组已是同一划分；卡片角标仍在）";
     if (!brandDeclared) {
       rec(S20D, true, "【不适用】镜像没声明 brand scope（通用库尚未由 VellumDesk 写出）—— 本条不判失败");
     } else if (!srcInfo || srcInfo.keys.length < 2) {
@@ -1817,43 +1956,54 @@ async function run(ctx, deps) {
         "【不适用】镜像里通用库只有 " + (srcInfo ? srcInfo.keys.length : "?") +
         " 种来源 —— 无法验证来源筛选（老镜像没有 source 字段时属正常）");
     } else {
-      // 挑"最少的那种来源"，这样"点完卡片变少"是能看出来的
-      const pick = srcInfo.keys.slice().sort((a, b) => srcInfo.counts[a] - srcInfo.counts[b])[0];
+      /* 🔴 v0.3.4 **语义更新**：通用库不再画「来源」行 ——
+         顶层分组（公司素材 / 个人收藏）与「来源」（company / user）是**同一个划分**，
+         两行同时出现只是在复述同一件事（用户 2026-10-11 报「这些和上面有些重复了」）。
+         ⇒ 本条从"点来源能收窄"改成"该行确实不画"，并且要求
+           **卡片上的来源角标仍在** —— 角标标的是每一张素材、不占筛选区版面，是另一回事。
+         （"什么时候该画"的判据在 library.js 里是**按划分**判的，不是按分组命名。） */
       const okSwitch = await libSwitchTo("brand");
       libResetFilter();
-      const chip = libChip(pick);
-      let cards = -1;
-      if (chip) {
-        syntheticClick(chip, false);
-        const g = await libWaitCards(srcInfo.counts[pick], 5000, "brand");
-        cards = g ? g.children.length : -1;
-      }
+      await libWaitCards(-1, 5000, "brand");
 
-      // 反向验证"不构成筛选就不画"：切到一个单一来源的父组，来源 chip 必须消失
-      let goneWhenSingleSource = null;
-      if (twoLevel) {
-        libResetFilter();
-        const pChip = libChip(twoLevel.parent.name);
-        if (pChip) {
-          syntheticClick(pChip, false);
-          await libWaitCards(twoLevel.expParent, 5000, "brand");
-          goneWhenSingleSource = !libChip(pick);
+      const srcChipKeys = [];
+      for (const k of srcInfo.keys) if (libChip(k)) srcChipKeys.push(k);
+      const srcRowShown = srcChipKeys.length > 0;
+
+      // 角标仍在？递归找 `.card-src`
+      const g3 = document.getElementById("vt-lib-grid");
+      let badgeFound = false;
+      if (g3) {
+        const hasBadge = (n) => {
+          for (let i = 0; i < n.children.length; i++) {
+            const k = n.children[i];
+            if (hasClass(k, "card-src")) return true;
+            if (hasBadge(k)) return true;
+          }
+          return false;
+        };
+        for (const c of libCards(g3, [])) {
+          if (hasBadge(c)) {
+            badgeFound = true;
+            break;
+          }
         }
       }
 
       rec(
         S20D,
-        okSwitch && !!chip && cards === srcInfo.counts[pick] && goneWhenSingleSource === true,
+        okSwitch && !srcRowShown,
         "库=brand（切换=" + okSwitch + "）" +
-        "　来源=" + JSON.stringify(srcInfo.counts) +
-        "　取最少的一种「" + pick + "」chip=" + !!chip +
-        " → 卡片=" + cards + "（自数期望 " + srcInfo.counts[pick] + "）" +
-        "　切到单来源父组后该 chip 消失=" + goneWhenSingleSource + "（须 true —— 只有一种来源时不构成筛选）"
+        "　来源分布=" + JSON.stringify(srcInfo.counts) +
+        "　筛选区里出现 company/user 的 chip=" + (srcChipKeys.length ? srcChipKeys.join(",") : "无") +
+        "（须无 —— 顶层分组已经是同一个划分）" +
+        "　卡片来源角标仍在=" + badgeFound +
+        "　‖ 筛选区签名=" + libBarSig()
       );
       libResetFilter();
     }
   } catch (e) {
-    rec("S20d 来源筛选 —— 「来源」行只在 ≥2 种来源时出现，点了能收窄（契约 §5.4 asset.source）", false,
+    rec("S20d 通用库不画重复的「来源」行（顶层分组已是同一划分；卡片角标仍在）", false,
       "抛异常：" + ((e && e.message) || e));
   }
 
@@ -1939,7 +2089,7 @@ async function run(ctx, deps) {
       if (opt) {
         syntheticClick(opt, false);
         const g = await libWaitCards(pick.n, 5000, "task");
-        cards = g ? g.children.length : -1;
+        cards = g ? libCards(g, []).length : -1;
       }
       const closed = !libSelOpen("vt-lib-projwrap");
       // 没有"非空项目" / 没有"空项目" / 镜像里没有 brand scope 时，对应的那一小项**不适用**
@@ -2621,7 +2771,7 @@ async function run(ctx, deps) {
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.3.3",
+    version: "0.3.4",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

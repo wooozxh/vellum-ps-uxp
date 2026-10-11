@@ -656,8 +656,27 @@ function renderFilters() {
     }
   }
 
-  /* ③ 来源（契约 §5.4 加法 ② 的可选 asset.source） */
-  if (srcs.length > 1) {
+  /* ③ 来源（契约 §5.4 加法 ② 的可选 asset.source）
+     🔴 v0.3.4：**通用库里这一行不再画** —— 用户 2026-10-11 报
+     「一级目录激活『全部』时，下方出现的来源文字和按钮和上面重复了」。
+     原因：通用库的顶层分组（公司素材 / 我的收藏）**就是** source（company / user）
+     的另一种叫法 —— 一级选「全部」时两行会同时出现，说的其实是同一件事。
+     判据用**覆盖关系**而不是硬写 `kind === "brand"`：万一将来顶层分组不再按来源分，
+     这一行会**自己回来**，不会静默丢掉一个筛选维度。
+     （注意：来源**角标**是另一回事，它由 `showSrc` 单独控制，不受这里影响。） */
+  /* 判据**不是**"分组名里含来源标签" —— 那是靠命名的巧合，真机上第一版就这么漏了：
+     软件侧的顶层分组叫「**个人收藏**」而不是「我的收藏」，`indexOf("我的")` 直接落空。
+     改成问本质：把库**按顶层组切**和**按来源切**，是不是同一个划分？
+     （每个顶层组里只有一种来源，且组数 === 来源种类数。）是 ⇒ 这一行纯粹是上面的复述。 */
+  const srcRedundant = (() => {
+    if (tree.length < 2 || tree.length !== srcs.length) return false;
+    for (const t of tree) {
+      const inT = (S.items || []).filter((it) => it.group === t.name);
+      if (mirror.sourceSummary(inT).length !== 1) return false;
+    }
+    return true;
+  })();
+  if (srcs.length > 1 && !srcRedundant) {
     const chips = [{ key: "", label: "全部", n: itemsInGroup().length, on: !S.source }];
     for (const s of srcs) chips.push({ key: s.value, label: s.label, n: s.count, on: S.source === s.value });
     refs.bar.appendChild(
@@ -726,7 +745,37 @@ function renderMessage(title, sub, withRetry) {
   refs.body.appendChild(box);
 }
 
-function makeCard(item, showSrc) {
+/* ---------- 瀑布流的"缩略图盒子"尺寸（v0.3.4） ---------- */
+
+/** 缩略图的高宽比（h / w）。算不出来返回 0。 */
+function thumbRatio(a) {
+  const w = Number(a && a.width);
+  const h = Number(a && a.height);
+  return w > 0 && h > 0 ? h / w : 0;
+}
+
+/**
+ * 盒子高度封顶/保底。
+ * 不封顶：一张 1:5 的长图会把整列拉得极长，另一列只剩一小截；
+ * 不保底：5:1 的扁图会变成一条缝，名称和元信息全挤在一起。
+ */
+const THUMB_MIN_H = 72;
+const THUMB_MAX_H = 380;
+
+function clampThumbH(h) {
+  return Math.max(THUMB_MIN_H, Math.min(Math.round(h), THUMB_MAX_H));
+}
+
+/** 盒子高度（px）；算不出来返回 0（调用方回落 CSS 保底 120px）。 */
+function thumbBoxH(a, imgW) {
+  const r = thumbRatio(a);
+  return r ? clampThumbH(imgW * r) : 0;
+}
+
+/** 卡片信息区（名称 + 元信息两行 + 卡片下内边距）的估算高度 —— 只用于"投放给哪一列"。 */
+const CARD_FOOT_H = 56;
+
+function makeCard(item, showSrc, imgW) {
   const a = item.asset;
   const on = S.selected && S.selected.asset && S.selected.asset.id === a.id;
   const card = dom.el("div", {
@@ -741,6 +790,8 @@ function makeCard(item, showSrc) {
   card.appendChild(inner);
 
   const th = dom.el("div", { class: "card-th" });
+  const thH = thumbBoxH(a, imgW);
+  if (thH) th.style.height = thH + "px";
   const ph = dom.el("span", { class: "card-ph" }, ["无预览"]);
   th.appendChild(ph);
   // ⚠️ <img> 先建、后塞 src：缩略图是异步读的，避免一次读几十个文件把面板卡住
@@ -776,7 +827,9 @@ function makeCard(item, showSrc) {
     doInsert();
   });
 
-  return { card: card, img: img, ph: ph, asset: a };
+  // `estH` 只用于"投放给哪一列"的估算；`fixed` = 高度已由 asset 宽高算准，
+  // 图片加载后就不必再校正（见 loadThumbs）。
+  return { card: card, img: img, ph: ph, th: th, asset: a, estH: (thH || 120) + CARD_FOOT_H, fixed: !!thH };
 }
 
 function renderGrid() {
@@ -804,14 +857,77 @@ function renderGrid() {
   });
   // 角标规则与「来源」筛选行同一套：只有真能起区分作用时才画
   const showSrc = mirror.sourceSummary(itemsInGroup()).length > 1;
+
+  /* ---- 瀑布流分派（v0.3.4）----
+     两列各自纵向堆叠，每张卡片投给"当前累计高度较小"的那一列。
+     列宽得先知道才能算缩略图盒子高度 ⇒ 量 `.lib-body`（此刻它已挂在 DOM 上）；
+     首次布局尚未完成量到 0 时用面板默认宽度兜底 —— **不会**因为量不到就退回旧布局。 */
+  // 盒子实际宽度 = 列宽 − 卡片左右内边距 = (bodyW + 10)/2 − 10 = bodyW/2 − 5
+  // （`.lib-grid` 带 `margin: 0 -5px`，所以列比 body 的一半还宽 5px）
+  const bodyW = (refs.body && refs.body.offsetWidth) || 0;
+  const imgW = Math.max(60, Math.round((bodyW || 412) / 2) - 5);
+  const cols = [dom.el("div", { class: "lib-col" }), dom.el("div", { class: "lib-col" })];
+  const acc = [0, 0];
   for (const it of list) {
-    const made = makeCard(it, showSrc);
+    const k = acc[0] <= acc[1] ? 0 : 1;
+    const made = makeCard(it, showSrc, imgW);
+    acc[k] += made.estH;
     refs.cards.push(made);
-    grid.appendChild(made.card);
+    cols[k].appendChild(made.card);
   }
+  grid.appendChild(cols[0]);
+  grid.appendChild(cols[1]);
+  // 排障用：两列的累计高度（分派均不均衡，一眼看得出来）
+  grid.setAttribute("data-cols", Math.round(acc[0]) + "/" + Math.round(acc[1]));
   refs.body.appendChild(grid);
+  refs.grid = grid;
 
   loadThumbs(++loadToken);
+  // ⚠️ 上面那个 `imgW` 是**推算**的（此刻布局还没落定，盒子量不出宽度）。
+  //    布局一落定就用**每个盒子自己的 offsetWidth** 重算一遍 ——
+  //    高度严格等于"盒宽 × 素材比例"，不依赖任何宽度推导（自检 S27 也是这么判的）。
+  relayoutThumbs(++layoutToken);
+}
+
+/* ---------- 布局落定后，按真实盒宽重算缩略图高度（v0.3.4） ---------- */
+
+let layoutToken = 0;
+
+/**
+ * 等真实布局落定，再用**盒子自己的宽度**把高度重算一遍。
+ *
+ * 为什么不省掉这一步：`.lib-grid`(负外边距) → `.lib-col`(50%) → `.card`(100% + 内边距)
+ * 三级下来，宽度推导差 5px，乘上图片比例就是十几像素 —— 正是"推算 vs 实测"的经典翻车点。
+ * ⚠️ 用轮询而不是"让固定两帧"：UXP 布局是异步的，让帧是赌注（老纪律）。
+ * 令牌作用与 `loadThumbs` 同源：重渲染 / 切库 / 卸载后立刻停手。
+ */
+async function relayoutThumbs(token) {
+  for (let i = 0; i < 20; i++) {
+    if (token !== layoutToken || !refs || !refs.cards) return;
+    let seen = 0;
+    let done = 0;
+    let firstW = 0;
+    for (const c of refs.cards) {
+      if (!c.th) continue;
+      const w = c.th.offsetWidth || 0;
+      if (!w) continue;
+      seen++;
+      if (!firstW) firstW = w;
+      const h = thumbBoxH(c.asset, w);
+      if (h) {
+        c.th.style.height = h + "px";
+        done++;
+      }
+    }
+    if (seen > 0 && done > 0) {
+      // 排障用：这次真正量到的盒宽（与第一版"推算"值对比，一眼看得出来）
+      if (refs.grid && refs.grid.setAttribute) {
+        refs.grid.setAttribute("data-boxw", String(firstW));
+      }
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
 }
 
 /**
@@ -837,6 +953,15 @@ async function loadThumbs(token) {
     if (r && r.ok) {
       c.img.src = r.url;
       c.ph.style.display = "none";
+      // asset 没给像素宽高 ⇒ 盒子高度还是 CSS 保底 120px，用缩略图自身的比例补上（只做一次）
+      if (!c.fixed && c.th && c.img.naturalWidth > 0 && c.img.naturalHeight > 0) {
+        const w = c.th.offsetWidth || 0;
+        if (w > 0) {
+          c.th.style.height =
+            clampThumbH(w * (c.img.naturalHeight / c.img.naturalWidth)) + "px";
+          c.fixed = true;
+        }
+      }
     } else {
       c.ph.textContent = r && r.webp ? "格式不支持" : "预览失败";
       if (r && r.error) {

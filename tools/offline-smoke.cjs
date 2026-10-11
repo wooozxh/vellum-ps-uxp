@@ -942,12 +942,15 @@ async function main() {
       "24 素材库 UI 不碰禁用特性（无 Grid / 无 gap / 无 <button>）",
       src.indexOf("display:grid") < 0 &&
         !badBtn &&
-        gridBlock.indexOf("flex-wrap") >= 0 &&
-        gridBlock.indexOf("gap") < 0,
+        gridBlock.indexOf("flex") >= 0 &&
+        gridBlock.indexOf("gap") < 0 &&
+        // v0.3.4 瀑布流：两列容器在，不再靠 flex-wrap（wrap 会按行高对齐、就不是瀑布流了）
+        css.indexOf(".lib-col") >= 0,
       "源码含 display:grid=" + (src.indexOf("display:grid") >= 0) +
         "　源码建 <button>=" + badBtn +
-        "　.lib-grid 用 flex-wrap=" + (gridBlock.indexOf("flex-wrap") >= 0) +
-        "　.lib-grid 含 gap=" + (gridBlock.indexOf("gap") >= 0)
+        "　.lib-grid 用 flex=" + (gridBlock.indexOf("flex") >= 0) +
+        "　.lib-grid 含 gap=" + (gridBlock.indexOf("gap") >= 0) +
+        "　两列容器 .lib-col=" + (css.indexOf(".lib-col") >= 0)
     );
   }
 
@@ -1254,19 +1257,29 @@ async function main() {
    *   ④ 通用库：二级下拉与一级按钮放同一行的最右侧
    * ================================================================== */
 
-  /* ---- 37. 素材网格改 2 列（缩略图跟着加高） ---- */
+  /* ---- 37. 素材网格 = 两列瀑布流（v0.3.4 起：列容器 50% + 卡片占满列） ----
+     旧版是 `.lib-grid{flex-wrap}` + `.card{width:50%}`；
+     瀑布流把"列"提出来做成 `.lib-col`（纵向堆叠），卡片宽度随之变成 100%（占满列）。
+     这条断言跟着实现改 —— 判据换的是**结构**，不是把阈值放宽去迎合代码。 */
   {
     const css = fs.readFileSync(path.join(PKG, "index.html"), "utf8");
+    const colBlock = (/\.lib-col\s*\{[^}]*\}/.exec(css) || [""])[0];
     const cardBlock = (/\.card\s*\{[^}]*\}/.exec(css) || [""])[0];
     const thBlock = (/\.card-th\s*\{[^}]*\}/.exec(css) || [""])[0];
-    const w = /width:\s*([0-9.]+)%/.exec(cardBlock);
-    const h = /height:\s*(\d+)px/.exec(thBlock);
+    const cw = /width:\s*([0-9.]+)%/.exec(colBlock);
+    const kw = /width:\s*([0-9.]+)%/.exec(cardBlock);
+    const stacked = /flex-direction:\s*column/.test(colBlock);
+    const th = /height:\s*(\d+)px/.exec(thBlock);
     check(
-      "37 素材网格 2 列：.card 宽 50% + .card-th 加高（卡片变小格子 → 变大）",
-      !!w && Number(w[1]) === 50 && !!h && Number(h[1]) >= 100,
-      ".card 宽=" + (w ? w[1] + "%" : "?") +
-        "　.card-th 高=" + (h ? h[1] + "px" : "?") +
-        "　（3 列旧值 33.3333% / 84px）"
+      "37 素材网格 = 两列瀑布流（列 50% 纵向堆叠 + 卡片占满列 + 缩略图盒子有保底高）",
+      !!cw && Number(cw[1]) === 50 && stacked &&
+        !!kw && Number(kw[1]) === 100 &&
+        !!th && Number(th[1]) >= 100,
+      ".lib-col 宽=" + (cw ? cw[1] + "%" : "?") + "（两列）" +
+        "　.lib-col 纵向堆叠=" + stacked +
+        "　.card 宽=" + (kw ? kw[1] + "%" : "?") + "（占满所在列）" +
+        "　.card-th 保底高=" + (th ? th[1] + "px" : "?") +
+        "（实际高度由 JS 按缩略图比例写成 inline style）"
     );
   }
 
@@ -1438,8 +1451,29 @@ async function main() {
     const optCount = pop ? pop.children.length : -1;
     click(opt2);
     await sleep(200);
+    // v0.3.4：卡片现在躺在 `.lib-col` 里，不能再数 grid 的直接子节点（那是两列容器）
+    const countCardsIn = (n) => {
+      let c = 0;
+      if (!n || !n.children) return c;
+      for (const k of n.children) {
+        const cl = String((k.getAttribute && k.getAttribute("class")) || "");
+        if (cl.split(/\s+/)[0] === "card") c++;
+        c += countCardsIn(k);
+      }
+      return c;
+    };
+    const firstCardIn = (n) => {
+      if (!n || !n.children) return null;
+      for (const k of n.children) {
+        const cl = String((k.getAttribute && k.getAttribute("class")) || "");
+        if (cl.split(/\s+/)[0] === "card") return k;
+        const d = firstCardIn(k);
+        if (d) return d;
+      }
+      return null;
+    };
     const g1 = document.getElementById("vt-lib-grid");
-    const cardsTask = g1 ? g1.children.length : -1;
+    const cardsTask = g1 ? countCardsIn(g1) : -1;
     // 任务库只有一层（`flattenTask` 的 `sub` 恒为空）⇒ 筛选区里不该再出现项目 chip
     const barChips = collectByAttr(document.getElementById("vt-lib-bar"), "data-key", []).length;
 
@@ -1477,7 +1511,7 @@ async function main() {
 
     // ④ 详情区：细分隔线 + 「落点」标题在九宫格上方 + 去掉了「置入为新图层」
     const g2 = document.getElementById("vt-lib-grid");
-    click(g2 && g2.children.length ? g2.children[0] : null);
+    click(g2 ? firstCardIn(g2) : null);
     await sleep(150);
     const foot = document.getElementById("vt-lib-foot");
     let sepOk = false;
@@ -1511,6 +1545,17 @@ async function main() {
         "　‖ 失败时看这里·筛选区结构=" + barSig() +
         "　（二级下拉 attached=" + attached(subSel) + "　chip 所在行=" + !!rowOfChip +
         "　下拉所在行=" + !!rowOfSub + "）"
+    );
+
+    /* ---- 47（v0.3.4）：通用库不再画重复的「来源」行 ----
+       一级分组（公司素材 / 我的收藏）**就是** source（company / user）的另一种叫法，
+       两行同时出现说的是同一件事 —— 用户 2026-10-11 报「这些和上面有些重复了」。 */
+    const barTxt = bar ? String(bar.textContent || "") : "";
+    const srcRowShown = barTxt.indexOf("来源") >= 0;
+    check(
+      "47 通用库不再画重复的「来源」行（一级分组已经是来源）",
+      bar ? !srcRowShown : false,
+      "筛选区里出现「来源」行=" + srcRowShown + "　‖ 结构=" + barSig()
     );
 
     libMod.unmount();
