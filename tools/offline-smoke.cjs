@@ -1403,7 +1403,7 @@ async function main() {
       batch2[0].to.horizontal._value === plan.copies[0].dx && batch2[0].to.vertical._value === plan.copies[0].dy &&
       batch2[1].to.horizontal._value === plan.copies[0].dx &&
       batch2[4].to.horizontal._value === plan.copies[2].dx && batch2[5].to.horizontal._value === plan.copies[2].dx;
-    const dupOk = sentBatches.length === 2 && batch1.length === 3 && batch1.every(dupShapeOk);
+    const dupOk = sentBatches.length === 1 && batch1.length === 3 && batch1.every(dupShapeOk);   // 只发复制那批
 
     const doc2 = mockApp.documents[0];
     const pick = (nm) => doc2.layers.filter((l) => l.name === nm)[0];
@@ -1417,23 +1417,25 @@ async function main() {
     };
     const tplG = pick("版式");
     const tplIntact = txt(tplG, "标题") === "标题占位" && txt(tplG, "价格") === "000";
-    const flowOk = dupOk && moveOk2 && r.ok === true && r.copies === 3 && r.writes === 2 &&
+    const flowOk = dupOk && r.ok === true && r.copies === 3 && r.writes === 2 &&
       txt(c1, "标题") === "开学季" && txt(c2, "标题") === "秋季班" &&
       txt(c3, "标题") === "标题占位" &&          // 空值 ⇒ 保留模板原文
       txt(c1, "价格") === "000" &&                // 未绑定的列不许被动
-      tplIntact === true;
+      tplIntact === true &&
+      c1 && c1.moved && c1.moved[0] === 216 && c1.moved[1] === 166 &&
+      c3 && c3.moved && c3.moved[0] === 648;
     check(
       "22h-3 M3b 执行：一次 batchPlay 只发 duplicate（按 _id）+ 每份写**自己那一行**的值 + 未绑定列不动 + 原件不动 + 网格位移",
       dupOk && flowOk,
-      "批次数=" + sentBatches.length + "（须 2：复制 + 位移）　复制命令 " + batch1.length + " 条全按 _id=" + dupOk +
-      "　位移命令 " + batch2.length + "/6（逐叶层）值对=" + moveOk2 +
+      "批次数=" + sentBatches.length + "（须 1：只发复制）　复制命令 " + batch1.length + " 条全按 _id=" + dupOk +
+      "　位移（DOM translate，mock 记录）=" + JSON.stringify([c1 && c1.moved, c3 && c3.moved]) +
       "　copies=" + r.copies + "/3　writes=" + r.writes + "/2　dup=" + r.dupMs + "ms step2=" + r.step2Ms +
       "ms（写 " + r.writesMs + " / 移动 " + r.moveMs + "）" +
       "　第1份标题=" + JSON.stringify(txt(c1, "标题")) + "（须 开学季）" +
       "　第2份标题=" + JSON.stringify(txt(c2, "标题")) + "（须 秋季班）" +
       "　第3份标题=" + JSON.stringify(txt(c3, "标题")) + "（须保留模板原文）" +
       "　未绑定列（价格）=" + JSON.stringify(txt(c1, "价格")) + "（须 000 不动）" +
-      "　原件没动=" + tplIntact + "　位移命令 dx=" + JSON.stringify(batch2.map((c) => c.to.horizontal._value))
+      "　原件没动=" + tplIntact + "　AM move 批（应为 0）=" + batch2.length
     );
 
     /* 负对照：duplicate 判据不许放过"按名字选层"或漏了名字的 */
