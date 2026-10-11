@@ -1830,6 +1830,47 @@ async function main() {
     );
   }
 
+  /* ---- 49. 图层命名（v0.3.6，纯函数级） ----
+     用户 2026-10-11 拍板：**不带扩展名** + 同名加 **` (n)`**。
+     这几条全是纯函数，最适合离线钉死（真机那条是自检 S29）。
+     ⚠️ "只砍已知的 `asset.ext`" 是重点：名字里带点很常见（`v1.2 终稿`），
+        用"砍最后一个点"的写法会把它砍成 `v1`。 */
+  {
+    const psm = require(path.join(PKG, "lib", "ps.js"));
+    const cases = [
+      [{ name: "图一(1).jpg", ext: "jpg" }, "图一(1)"],
+      [{ name: "无扩展名", ext: "png" }, "无扩展名"],
+      [{ name: "v1.2 终稿.png", ext: "png" }, "v1.2 终稿"],
+      [{ name: "报告.PDF", ext: "pdf" }, "报告"],
+      [{ name: "ab.jpg", ext: "jpg" }, "ab"],
+      [{ name: " 两边有空格 .png ", ext: "png" }, "两边有空格"],
+      [{ name: "", ext: "jpg" }, ""],
+      [{ name: ".jpg", ext: "jpg" }, ".jpg"],
+    ];
+    const failed = cases.filter((c) => psm.layerBaseName(c[0]) !== c[1]);
+    const baseOk = failed.length === 0;
+
+    const u1 = psm.uniqueLayerName("图一(1)", {});
+    const u2 = psm.uniqueLayerName("图一(1)", { "图一(1)": true });
+    const u3 = psm.uniqueLayerName("图一(1)", { "图一(1)": true, "图一(1) (2)": true });
+    const u4 = psm.uniqueLayerName("", {});
+    const long = psm.fitName("长".repeat(300), " (2)", 255);
+    const fitOk = long.length <= 255 && long.slice(-4) === " (2)";
+
+    check(
+      "49 图层命名：去扩展名（只认 asset.ext）+ 同名加 (n) + 超长截断保住后缀",
+      baseOk && u1 === "图一(1)" && u2 === "图一(1) (2)" && u3 === "图一(1) (3)" &&
+        u4 === "素材" && fitOk,
+      "去扩展名 8 例全对=" + baseOk +
+        (baseOk ? "" : "（错的是 " + JSON.stringify(failed) + "）") +
+        "　无冲突=" + JSON.stringify(u1) +
+        "　一次冲突=" + JSON.stringify(u2) +
+        "　两次冲突=" + JSON.stringify(u3) +
+        "　空基名=" + JSON.stringify(u4) +
+        "　超长(300字+后缀)=" + long.length + " 字符、后缀还在=" + fitOk
+    );
+  }
+
   /* ---- 生成浏览器预览（用的是同一份渲染代码产出的 DOM） ---- */
   let previewPath = null;
   if (WANT_PREVIEW) {

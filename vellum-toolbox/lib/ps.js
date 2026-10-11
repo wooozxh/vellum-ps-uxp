@@ -1320,6 +1320,136 @@ async function applyLayerRect(rect) {
   };
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ★ v0.3.6：置入进来的图层**按素材名命名**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 为什么需要这一步：PS 置入时拿"**被置入的那个文件的名字**"当图层名，
+ * 而契约 §六 规定交接文件是**固定名** `incoming.<ext>`（每次覆盖 ⇒ 好清理、防竞态）
+ * ⇒ 每个新图层都叫 `incoming`，图层面板里分不清谁是谁。
+ *
+ * 修法：置入后自己改名，名字取自**镜像里的 `asset.name`**（用户在设计软件里看到的名字）
+ * ⇒ **不需要任何文件命名规范**，也不需要动契约。
+ *
+ * ⚠️ **改不掉的那部分**（要如实告知用户）：智能对象内部记录的**链接源文件名**仍然是
+ *    `incoming.<ext>`。图层面板显示的是我们设的名字 ✓，但"编辑智能对象内容 / 链接面板"
+ *    里露出来的还是 incoming。要连那个也改，只能让软件侧用**原文件名**交接
+ *    —— 那要动契约（固定名是为了清理与防竞态），代价明显更大，暂不做。
+ *
+ * ⚠️ 命名规则（用户 2026-10-11 拍板）：
+ *    ① **不带扩展名**（与 PS 原生置入一致：`t112.png` 置入后本来就叫 `t112`）
+ *    ② 同名的加 **` (n)`** 区分，n 从 2 开始试到不重复为止
+ */
+
+/** PS 对图层名的长度上限（保守取 255；超长会被它自己截断/报错，不如我们先截）。 */
+const LAYER_NAME_LIMIT = 255;
+
+/**
+ * 图层基名 = `asset.name` **去掉已知的 `asset.ext`**。
+ * ⚠️ 只认 `asset.ext` 那个后缀，不用正则去砍"最后一个点" ——
+ *    否则 `v1.2 终稿` 会被砍成 `v1`（名字里带点很常见，那不是扩展名）。
+ */
+function layerBaseName(asset) {
+  const raw = String((asset && asset.name) || "").trim();
+  if (!raw) return "";
+  const ext = String((asset && asset.ext) || "").trim().toLowerCase();
+  if (ext) {
+    const tail = "." + ext;
+    if (raw.toLowerCase().endsWith(tail) && raw.length > tail.length) {
+      // ⚠️ 去完扩展名可能留个**尾空格**（`报告 .png`）—— 图层名不该带着它，顺手 trim 掉
+      return raw.slice(0, raw.length - tail.length).trim();
+    }
+  }
+  return raw;
+}
+
+/** 按后缀拼名字，并把总长压进上限（先截基名、再拼后缀，避免截掉后缀本身）。 */
+function fitName(base, suffix, limit) {
+  const lim = limit || LAYER_NAME_LIMIT;
+  const room = lim - String(suffix).length;
+  const b = String(base);
+  return (b.length > room ? b.slice(0, Math.max(1, room)) : b) + String(suffix);
+}
+
+/** 在"已被占用的名字"里取一个可用的：原名 → `原名 (2)` → `原名 (3)` → … */
+function uniqueLayerName(base, taken) {
+  const used = taken || {};
+  const b = String(base || "").trim() || "素材";
+  if (!used[b]) return fitName(b, "", LAYER_NAME_LIMIT);
+  for (let n = 2; n < 10000; n++) {
+    const cand = fitName(b, " (" + n + ")", LAYER_NAME_LIMIT);
+    if (!used[cand]) return cand;
+  }
+  return fitName(b, " (" + Date.now() + ")", LAYER_NAME_LIMIT);
+}
+
+/** 当前文档里所有图层的名字（**递归进组**）—— 用来判重名。 */
+function activeLayerNames() {
+  const set = {};
+  try {
+    const doc = app.activeDocument;
+    if (!doc) return { ok: false, error: "没有打开的文档", names: set };
+    const walk = (layers) => {
+      const arr = layers || [];
+      for (let i = 0; i < arr.length; i++) {
+        const l = arr[i];
+        set[String(l.name || "")] = true;
+        if (l.layers && l.layers.length) walk(l.layers);
+      }
+    };
+    walk(doc.layers);
+    return { ok: true, names: set };
+  } catch (e) {
+    return { ok: false, error: msg(e), names: set };
+  }
+}
+
+/** 读回活动图层的名字（判据不许只看"命令没报错"）。 */
+function readActiveLayerName() {
+  try {
+    const doc = app.activeDocument;
+    const l = doc && doc.activeLayers && doc.activeLayers[0];
+    return { ok: !!l, name: l ? String(l.name || "") : null };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
+/**
+ * 给**刚置入进来的活动图层**命名：去重 → 改名 → **读回验证**。
+ * @param {object} asset 契约 §5.4 的 asset（用 name / ext）
+ * @returns {Promise<{ok:boolean, want?:string, base?:string, got?:string, ambiguous?:boolean, error?:string}>}
+ *   `ambiguous:true` 表示"读回的名字对不上，但文档里**确实存在**这个名字的图层" ——
+ *   多半是 PS 给同名图层自动加了副本后缀，不算硬失败（自检按这个区分报告）。
+ */
+async function renameInsertedLayer(asset) {
+  const base = layerBaseName(asset);
+  const names = activeLayerNames();
+  if (!names.ok) return { ok: false, error: "读不到图层列表：" + names.error };
+  const want = uniqueLayerName(base || "素材", names.names);
+
+  try {
+    await runModal(async () => {
+      const doc = app.activeDocument;
+      const l = doc && doc.activeLayers && doc.activeLayers[0];
+      if (!l) throw new Error("没有活动图层");
+      l.name = want; // UXP 的 Layer.name 是同步属性（赋值仍需在 modal 里）
+    }, "Vellum 工具箱：按素材名命名图层");
+  } catch (e) {
+    return { ok: false, base: base, want: want, error: "改名失败：" + msg(e) };
+  }
+
+  const after = readActiveLayerName();
+  const got = after.ok ? after.name : "";
+  return {
+    ok: got === want,
+    base: base,
+    want: want,
+    got: got,
+    ambiguous: got !== want && !!names.names[got],
+    error: got === want ? null : "读回的名字是「" + got + "」，期望「" + want + "」",
+  };
+}
+
 function placeDesc(pathOrToken, offset) {
   return {
     _obj: "placeEvent",
@@ -1688,6 +1818,13 @@ module.exports = {
   setSelectionRect,
   /* v0.3.3 新增：置入后精确校正（尺寸 + 位置一次做准） */
   applyLayerRect,
+  /* v0.3.6 新增：置入的图层按素材名命名（去重 + 读回验证） */
+  layerBaseName,
+  uniqueLayerName,
+  fitName,
+  activeLayerNames,
+  renameInsertedLayer,
+  LAYER_NAME_LIMIT,
   RASTER_KINDS,
   CONTENT_KINDS,
   KIND_CN,

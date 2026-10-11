@@ -1442,6 +1442,23 @@ async function doInsert() {
           : null,
       expectRect: ai.ok ? ai.rect : null,
     });
+    /* ---- ⑤ 按素材名给图层命名（v0.3.6）----
+       PS 置入时用的是**被置入文件的名字**，而契约 §六 规定交接文件固定叫
+       `incoming.<ext>` ⇒ 每个新图层都叫 `incoming`，图层面板里分不清谁是谁。
+       这里改读镜像里的 `asset.name`（去扩展名；重名加 ` (n)`，用户 2026-10-11 拍板）。
+       ⚠️ 只在图层**真的多出来**时才改 —— 否则万一置入失败，会把用户**原有的**图层改掉。 */
+    let named = null;
+    if (placed.ok && placed.changed) {
+      named = await ps.renameInsertedLayer(a);
+      await log.appendLog(
+        "library layer-name base=" + JSON.stringify(named.base) +
+        " want=" + JSON.stringify(named.want) +
+        " got=" + JSON.stringify(named.got) +
+        " ok=" + named.ok + (named.ambiguous ? " ambiguous=true" : "") +
+        (named.error ? " err=" + named.error : "")
+      );
+    }
+
     await log.appendLog(
       "library insert via=placeEvent ok=" + placed.ok + " changed=" + placed.changed +
       " layers=" + placed.layersBefore + "→" + placed.layersAfter +
@@ -1468,7 +1485,12 @@ async function doInsert() {
         ? Math.round(fx.before.right - fx.before.left) + "×" + Math.round(fx.before.bottom - fx.before.top)
         : null;
       status(
-        "✓ 已置入「" + a.name + "」· 落点[" + ps.anchorLabel(S.anchor) + "]" +
+        // 显示的是**图层名**（= 素材名去扩展名，v0.3.6）；命名失败时回落到素材名
+        "✓ 已置入「" + ((named && named.want) || a.name) + "」" +
+        "· 落点[" + ps.anchorLabel(S.anchor) + "]" +
+        (named && !named.ok
+          ? "　⚠️ 图层名没设上（" + (named.error || "未知") + "）"
+          : "") +
         (placed.rect
           ? "　" + placed.rect.left + "," + placed.rect.top +
             "（" + placed.rect.w + "×" + placed.rect.h + "）" +

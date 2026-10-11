@@ -2835,12 +2835,72 @@ async function run(ctx, deps) {
     rec(S28, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S29: 置入的图层按素材名命名（v0.3.6 新增）
+     PS 置入时拿"**被置入文件的名字**"当图层名，而契约 §六 规定交接文件固定叫
+     `incoming.<ext>` ⇒ 每个新图层都叫 `incoming`。这里改成读镜像的 `asset.name`。
+
+     判据两条（都要**读回**验证，不看"命令没报错"）：
+       ① 第一次置入 → 图层名正好是**去掉扩展名**的素材名（`自检素材.jpg` → `自检素材`）
+       ② 再置入一次同名素材 → 必须变成 **`自检素材 (2)`**（用户拍板的去重规则）
+     ⚠️ 用**假 asset**（只用到 `name`/`ext`）⇒ 不依赖镜像里恰好有什么名字。
+     ⚠️ 只作用在自建临时文档上，跑完关掉。 */
+  const S29 = "S29 置入的图层按素材名命名（去扩展名 + 同名加 (n)）";
+  try {
+    const tf29 = await testThumbFile();
+    const e29 = tf29 ? await data.entryIn(tf29.dir, tf29.name) : null;
+    if (!e29) {
+      rec(S29, true, "【不适用】镜像里没有可用的测试图（" + ((tf29 && tf29.name) || "无") + "）");
+    } else {
+      const SIDE = 400;
+      const sc29 = await ps.createScratchDoc({ size: SIDE, name: "Vellum 自检临时文档(命名)" });
+      if (!sc29 || !sc29.ok) {
+        rec(S29, false, "建临时文档失败：" + ((sc29 && sc29.error) || "未知"));
+      } else {
+        try {
+          const fake = { name: "自检素材.jpg", ext: "jpg" };
+
+          const p1 = await ps.placeFile(e29, { verify: "change" });
+          const first = p1.ok && p1.changed
+            ? await ps.renameInsertedLayer(fake)
+            : { ok: false, error: "置入失败：" + (p1.error || "图层数没变") };
+
+          const p2 = await ps.placeFile(e29, { verify: "change" });
+          const second = p2.ok && p2.changed
+            ? await ps.renameInsertedLayer(fake)
+            : { ok: false, error: "第二次置入失败：" + (p2.error || "图层数没变") };
+
+          const ok1 = !!(first && first.ok && first.want === "自检素材");
+          const ok2 = !!(second && second.ok && second.want === "自检素材 (2)");
+
+          rec(
+            S29,
+            ok1 && ok2,
+            "基名=" + JSON.stringify((first && first.base) || "") + "（须「自检素材」—— 不带 .jpg）" +
+            "　① 期望「自检素材」→ 实得 " + JSON.stringify((first && first.got) || "") +
+            "　② 期望「自检素材 (2)」→ 实得 " + JSON.stringify((second && second.got) || "") +
+            (first && first.ambiguous ? "　（①读回的名字在文档里存在 ⇒ 可能是 PS 自己加了副本后缀）" : "") +
+            (first && first.error ? "　1st err=" + first.error : "") +
+            (second && second.error ? "　2nd err=" + second.error : "")
+          );
+        } finally {
+          try {
+            await ps.closeDocument(sc29.id);
+          } catch {
+            /* 忽略 */
+          }
+        }
+      }
+    }
+  } catch (e) {
+    rec(S29, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.3.5",
+    version: "0.3.6",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,
