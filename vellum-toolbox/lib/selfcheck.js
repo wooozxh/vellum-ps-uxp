@@ -3634,12 +3634,264 @@ async function run(ctx, deps) {
     rec(S35, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S36: 读当前选区（v0.3.9 新增，M3 决策④）
+     竞品「PS表格助手」的核心交互是：**用户用 PS 自带选框工具在画布上拉一个框**，
+     插件读这个框当表格的**位置 + 尺寸**。我方 `readSelectionBounds()` 其实一直在用
+     （`placeBaseCenter()` 算落点就靠它，v0.3.0 的 S25 也间接读过），但**从没单独钉过**，
+     而且从来没验过"**没有选区时**"那一侧 —— 那正是"有框用框、没框用默认"的分支条件。
+
+     判据两半（缺一不可）：
+       ① **对照**：刚建的临时文档**没有选区** ⇒ 必须读到 `null`（不能当成 0,0）
+       ② **目标**：建一个已知矩形（`setSelectionRect`，v0.3.0 已验）⇒ 读回**命中 ±1px**
+     ⚠️ 诚实边界：这里建的框与用户手拉的是**同一种文档状态**、走同一条读取代码路径，
+        但"真手拉一次"自检点不了 ⇒ 开工后让用户手工拉一次框复验最后一步。
+     ⚠️ 只作用在自建临时文档上，跑完关掉。 */
+  const S36 = "S36 区域输入 —— 读当前选区（『按画布上拉的框排版』的前提；含『无选区』对照）";
+  try {
+    const sc36 = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(选区)" });
+    if (!sc36 || !sc36.ok) {
+      rec(S36, false, "建临时文档失败：" + ((sc36 && sc36.error) || "未知"));
+    } else {
+      try {
+        const before = ps.readSelectionBounds();
+        const rect = { left: 60, top: 80, right: 260, bottom: 240 };
+        const mk36 = await ps.setSelectionRect(rect);
+        const after = ps.readSelectionBounds();
+        const hit = !!(after &&
+          Math.abs(after.left - rect.left) <= 1 && Math.abs(after.top - rect.top) <= 1 &&
+          Math.abs(after.right - rect.right) <= 1 && Math.abs(after.bottom - rect.bottom) <= 1);
+        const judge = before === null && mk36.ok === true && hit;
+        rec(
+          S36,
+          judge,
+          "①对照·新文档无选区=" + (before === null
+            ? "读到 null ✓（没有被当成 0,0）"
+            : "⚠️ 读到了 " + JSON.stringify(before) + "（无选区时读数不可信）") +
+          "　②目标·建选区=" + (mk36.ok ? "✓" : "✗" + mk36.error) +
+          "　读回=" + (after
+            ? [after.left, after.top, after.right, after.bottom].map((v) => Math.round(v)).join(",")
+            : "null") +
+          "（须 " + [rect.left, rect.top, rect.right, rect.bottom].join(",") + "）" +
+          "　读法=UXP DOM `doc.selection.bounds`" +
+          "　⇒ " + (judge
+            ? "「有框用框 / 没框用默认」这条分支条件是**可判的**（两边读数都能区分）"
+            : "⚠️ 未成立 —— 见分段读数")
+        );
+      } finally {
+        try {
+          await ps.closeDocument(sc36.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S36, false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S37: 对齐三档（v0.3.9 新增，M3 决策③「默认居中但要能调」）
+     v0.3.8 只验了 `align: center` 能设且读回（字段 `align` / 枚举族 `alignmentType`）。
+     用户要的是"**默认居中、但给用户调整**" ⇒ 左/中/右**三档都得能设**，不能只验中间那一档。
+     判据：三档逐个设置并**读回**，值必须等于目标（不看"命令没报错"）。
+     ⚠️ 只作用在自建临时文档上，跑完关掉。 */
+  const S37 = "S37 文字对齐三档（左 / 中 / 右）都能设且读回 —— 默认居中、但要允许调整";
+  try {
+    const sc37 = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(对齐)" });
+    if (!sc37 || !sc37.ok) {
+      rec(S37, false, "建临时文档失败：" + ((sc37 && sc37.error) || "未知"));
+    } else {
+      try {
+        const mk37 = await ps.makeTextLayerBox({
+          text: "对齐三档", box: { left: 40, top: 60, right: 360, bottom: 140 },
+          sizePt: 18, rgb: { r: 20, g: 20, b: 20 },
+        });
+        const rows = [];
+        let allOk = !!mk37.ok;
+        for (const v of ["left", "center", "right"]) {
+          const w = await ps.applyParagraphStyle({ align: { cls: "alignmentType", value: v } });
+          const tk = await ps.readTextKeyDesc();
+          const s = tk.ok ? ps.summarizeTextKey(tk.raw) : null;
+          const got = s && (s.paragraphAlign || s.paragraphJustification);
+          const ok = !!(w.ok && got && got.value === v);
+          if (!ok) allOk = false;
+          rows.push(v + "→" + ((got && got.value) || "?") + (ok ? "✓" : "✗"));
+        }
+        rec(
+          S37,
+          allOk,
+          "建层=" + (mk37.ok ? "✓" : "✗") +
+          "　字段=align　枚举族=alignmentType　三档：" + rows.join("　") +
+          "　⇒ " + (allOk
+            ? "左/中/右**都能设** ⇒ 「默认居中 + 用户可调」这条成立"
+            : "⚠️ 有档位没生效 —— 不要把某一档的结论推广到三档")
+        );
+      } finally {
+        try {
+          await ps.closeDocument(sc37.id);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+  } catch (e) {
+    rec(S37, false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S38: 样式配置「导出给别人」的能力盘点（v0.3.9 新增，M3 决策⑥）
+     用户明确要"样式配置保存/导出"（保存不用验，`store.js` 写 PluginData 早就通了）。
+     要验的是**导出**：把 JSON 交到用户能拿到的地方。
+     三条候选：① 让用户选保存位置 ② 让用户选文件夹再写 ③ 复制到剪贴板（最省事，直接粘给别人）。
+     ⚠️ ①②**都会弹系统对话框，自检点不了** ⇒ 只能验"API 在不在"；
+        ③ 只验方法存在，**不真的写剪贴板**（不拿用户的剪贴板做实验）。
+     基准：写进 PluginData 再原样读回（已知可行，防止"整条导出链路其实断了"）。 */
+  const S38 = "S38 样式配置导出 —— 存到用户选的位置 / 复制到剪贴板（API 盘点，含对照）";
+  try {
+    const uxp38 = (() => {
+      try {
+        return require("uxp");
+      } catch {
+        return null;
+      }
+    })();
+    const lfs38 = uxp38 && uxp38.storage && uxp38.storage.localFileSystem;
+    const hasSave = !!(lfs38 && typeof lfs38.getFileForSaving === "function");
+    const hasFolder = !!(lfs38 && typeof lfs38.getFolder === "function");
+    const cb38 = (() => {
+      try {
+        if (uxp38 && uxp38.clipboard) return uxp38.clipboard;
+      } catch {
+        /* 继续 */
+      }
+      try {
+        return require("clipboard");
+      } catch {
+        return null;
+      }
+    })();
+    const cbNames = ["copyText", "readText", "read", "write", "getContent", "setContent", "clear"];
+    const cbMethods = [];
+    if (cb38) {
+      for (const k of cbNames) {
+        try {
+          if (typeof cb38[k] === "function") cbMethods.push(k);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    }
+    // 基准：写进 PluginData 再读回（逐字）
+    let baseOk = false;
+    try {
+      await data.writeText("m3-export-probe.json", '{"probe":1}');
+      baseOk = (await data.readText("m3-export-probe.json", null)) === '{"probe":1}';
+    } catch {
+      baseOk = false;
+    }
+    const negOk = (function () {
+      try {
+        return typeof (uxp38 && uxp38.__notARealThing) === "undefined";
+      } catch {
+        return false;
+      }
+    })();
+    const judge = baseOk && (hasSave || hasFolder) && negOk;
+    rec(
+      S38,
+      judge,
+      "基准·PluginData 写入读回=" + (baseOk ? "逐字相同" : "✗") +
+      "　①getFileForSaving=" + hasSave + "（存到用户选的位置；⚠️ 真弹窗自检点不了）" +
+      "　②getFolder=" + hasFolder +
+      "　③剪贴板=" + (cb38 ? "有，方法=[" + cbMethods.join(",") + "]" : "没有") +
+      "（只验存在，不真写用户的剪贴板）" +
+      "　负对照·__notARealThing=" + (negOk ? "undefined ✓" : "⚠️ 竟有值 ⇒ 读数不可信") +
+      "　⇒ " + (judge
+        ? "样式配置「导出给别人」至少有 " + (hasSave ? "「另存为」" : "") +
+          (hasFolder ? "「选文件夹」" : "") + (cbMethods.indexOf("copyText") >= 0 ? " + 剪贴板" : "") + " 可走"
+        : "⚠️ 未成立 —— 见分段读数")
+    );
+  } catch (e) {
+    rec(S38, false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S39: xlsx（Excel 导入）需要的能力原语盘点（v0.3.9 新增，M3 决策⑦）
+     用户问"Excel 导入成本高在哪"。**不猜**：把 xlsx 这条路需要的原语逐个问一遍真机。
+     xlsx = **zip 容器（要 DEFLATE 解压）** + **若干 XML（要 XML 解析）**；
+     再叠加一个第三方 zip 库（官方 jszip-sample 用的是 `jszip@3.7` + **webpack 打包**，
+     而本插件是**无打包器**的纯 require 结构）⇒ 成本就在这几项上。
+     ⚠️ 这是**诊断项**：只记录"有什么/没什么"，不判生死。
+     判据只保证"读数机制可信"（负对照必须不存在 + 至少取到 5 项读数）。 */
+  const S39 = "S39 Excel 导入所需原语盘点（解压 / XML / 二进制 / 剪贴板，诊断项）";
+  try {
+    const g39 = typeof globalThis !== "undefined" ? globalThis : {};
+    const pick39 = (n) => {
+      try {
+        const v = g39[n];
+        if (v === undefined || v === null) return "无";
+        return typeof v === "function" ? "function" : typeof v;
+      } catch {
+        return "抛异常";
+      }
+    };
+    const names39 = [
+      "DecompressionStream", "CompressionStream", "DOMParser", "XMLSerializer",
+      "Blob", "File", "FileReader", "Response", "fetch", "atob", "btoa",
+      "TextDecoder", "TextEncoder", "Uint8Array", "ArrayBuffer", "Worker",
+    ];
+    const got39 = {};
+    for (const n of names39) got39[n] = pick39(n);
+    const hit39 = names39.filter((n) => got39[n] !== "无").length;
+    const neg39 = pick39("__notARealThing");
+    // 剪贴板**读**的存在性（"Excel 里复制 → 面板里粘贴"这条低成本路的前提）
+    let cbRead39 = "没有剪贴板对象";
+    try {
+      const c = (function () {
+        try {
+          return require("uxp").clipboard;
+        } catch {
+          /* 继续 */
+        }
+        try {
+          return require("clipboard");
+        } catch {
+          return null;
+        }
+      })();
+      if (c) {
+        const m = [];
+        for (const k of ["readText", "read", "getContent", "copyText"]) {
+          try {
+            if (typeof c[k] === "function") m.push(k);
+          } catch {
+            /* 忽略 */
+          }
+        }
+        cbRead39 = "有，方法=[" + m.join(",") + "]";
+      }
+    } catch (e) {
+      cbRead39 = "抛异常";
+    }
+    const judge = neg39 === "无" && hit39 >= 5;
+    rec(
+      S39,
+      judge,
+      "【诊断项】原语=" + JSON.stringify(got39) +
+      "　负对照·__notARealThing=" + neg39 + "（须「无」）" +
+      "　剪贴板读=" + cbRead39 +
+      "　⇒ 逐项解读：DecompressionStream=" + got39.DecompressionStream +
+      "（有它=纯前端解 zip 一条路）、DOMParser=" + got39.DOMParser +
+      "（没有它=XML 得自己抠或正则）、atob=" + got39.atob +
+      "　—— **本项只记录事实，不判可行性**"
+    );
+  } catch (e) {
+    rec(S39, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.3.8",
+    version: "0.3.9",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

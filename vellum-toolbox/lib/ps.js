@@ -2567,6 +2567,8 @@ module.exports = {
   readSelectionBounds,
   placeBaseCenter,
   setSelectionRect,
+  /* v0.3.9 追加：读选区（M3「按画布上的框排版」的读取端） */
+  readSelectionBounds,
   /* v0.3.3 新增：置入后精确校正（尺寸 + 位置一次做准） */
   applyLayerRect,
   /* v0.3.6 新增：置入的图层按素材名命名（去重 + 读回验证） */
