@@ -83,6 +83,26 @@
   .fig2{display:grid; grid-template-columns:1fr 1fr; gap:14px}
   .fig2 figure{margin:14px 0}
 
+  /* ================= 长条截图（插件面板）专用 =================
+     插件面板截图是 422×732 的"长条"（宽高比 ≈ 0.58）⇒ 满宽放会撑掉将近两屏高，
+     整本手册会被图压成一本画册。这里给三种排法：
+       figure.shot  —— 单张，收进一个有合适比例的容器（宽 270 ⇒ 高 ≈468）
+       .figside     —— 图文并排：左边正文，右边截图（把横向空间用起来）
+       .shots       —— 多张并排（都是竖图时才用）
+     窗口窄到放不下两栏时，.figside 自动落回上下排。 */
+  figure.shot{max-width:270px; margin:16px auto}
+  figure.shot>img{width:100%}
+  .figside{display:grid; grid-template-columns:minmax(0,1fr) 270px; gap:22px; align-items:start; margin:16px 0}
+  .figside>figure{margin:0; max-width:none}
+  .figside>figure>img{width:100%}
+  .figside>div>p:first-child{margin-top:0}
+  .figside>div>h3:first-child{margin-top:0; padding-top:0; border-top:none}
+  .figside>div>table:first-child{margin-top:0}
+  .figside>div>figure{margin:0}
+  .shots{display:grid; grid-template-columns:repeat(auto-fit,270px); gap:16px; justify-content:center; margin:16px 0}
+  .shots>figure{margin:0; max-width:none}
+  .shots>figure>img{width:100%}
+
   .call{border-radius:9px; padding:12px 15px; margin:14px 0; font-size:13.5px; border:1px solid}
   .call .h{font:700 11px/1 var(--mono); letter-spacing:.1em; display:block; margin-bottom:6px}
   .call.info{background:var(--accent-bg); border-color:#c7d2fe; color:#1e3a8a} .call.info .h{color:var(--accent)}
@@ -161,6 +181,9 @@
     .wrap{grid-template-columns:1fr}
     .rail{display:none}
     .tocfull{grid-template-columns:1fr}
+    /* 放不下两栏时，图文并排落回上下 */
+    .figside{grid-template-columns:1fr}
+    .figside>figure{max-width:270px; margin:0 auto}
   }
 
   /* ================= 样式样板页专用（手册正文用不到） ================= */

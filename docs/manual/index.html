@@ -218,13 +218,15 @@
 
     <section id="s1-5">
       <h2><span class="n">1.5</span>第一次打开该看到什么</h2>
-      <p>打开面板，第一屏是<b>功能选择页</b>：上面是插件名与版本，中间四行工具，最下面是「环境」——把当前 Photoshop 版本、UXP 版本、插件版本如实列出来，方便报错时截图。</p>
-      <figure>
-        <img src="images/01-首页.png" alt="插件首页（功能选择页）" />
-        <figcaption>图 1-1　首页：四行工具（① 调色板 / ② 素材库 / ③ 表格生成 / ④ AI-MCP），下方是环境信息</figcaption>
-      </figure>
-      <p>点任意一行进入该工具，工具页<b>左上角有一个返回箭头</b>，点它回到这一页。页面底部那条<b>状态栏</b>是全局的：它会把最近一次操作的结果（成功 / 失败原因）如实写在左下角。</p>
-      <div class="call ok"><span class="h">看到「④ AI-MCP」是灰的，是正常的</span>它确实还没做（见 <a href="#s2-7">2.7</a>）。其余三行都能点。</div>
+      <div class="figside">
+        <div>
+          <p>打开面板，第一屏是<b>功能选择页</b>：上面是插件名与版本，中间四行工具，最下面是「环境」——把当前 Photoshop 版本、UXP 版本、插件版本如实列出来，方便报错时截图。</p>
+          <p>点任意一行进入该工具，工具页<b>左上角有一个返回箭头</b>，点它回到这一页。页面底部那条<b>状态栏</b>是全局的：它会把最近一次操作的结果（成功 / 失败原因）如实写在左下角。</p>
+          <div class="call ok"><span class="h">看到「④ AI-MCP」是灰的，是正常的</span>它确实还没做（见 <a href="#s2-7">2.7</a>）。其余三行都能点。</div>
+        </div>
+        <figure><img src="images/01-首页.png" alt="插件首页（功能选择页）" />
+          <figcaption>图 1-1　首页：四行工具（① 调色板 / ② 素材库 / ③ 表格生成 / ④ AI-MCP），下方是环境信息</figcaption></figure>
+      </div>
     </section>
 
     <section id="s1-6">
@@ -267,22 +269,24 @@
     <section id="s2-2">
       <h2><span class="n">2.2</span>调色板：品牌色与我存的颜色</h2>
       <p>解决的是"每次都要手输公司色的 HEX"。上面一块是<b>品牌色</b>（固定的六个，由开发维护），下面一块是<b>我的颜色</b>（你自己存的常用色）。</p>
-      <figure>
-        <img src="images/02-调色板.png" alt="调色板页" />
-        <figcaption>图 2-1　调色板：顶部是当前前景 / 背景色读数，中间两排色块，底部写着四种点法各干什么</figcaption>
-      </figure>
-      <h3>四种点法（面板底部也印着）</h3>
-      <table>
-        <thead><tr><th style="width:180px">怎么点</th><th>结果</th></tr></thead>
-        <tbody>
-          <tr><td><b>左键</b></td><td>把颜色设成 Photoshop 的<b>前景色</b></td></tr>
-          <tr><td><b>Shift + 左键</b></td><td>把颜色设成 Photoshop 的<b>背景色</b></td></tr>
-          <tr><td><b>Alt + 左键</b></td><td><b>直接填充</b>当前图层或当前选区（<b>不改</b>前景 / 背景色）—— 想"啪一下铺满"用这个</td></tr>
-          <tr><td><b>右键</b> 或色块角上的 <span class="btnchip">✕</span></td><td>删掉这个颜色（<b>只有「我的颜色」能删</b>，品牌色删不掉）</td></tr>
-        </tbody>
-      </table>
-      <p>顶部那两行是<b>当前前景 / 背景色的读数</b>（如 <code>#E60012</code>）。它是个"回执"：点完色块如果这里没变，就说明没设上。鼠标停在色块上也能看到它的 HEX。</p>
-      <p><span class="btnchip">存当前色</span> 把当前前景色收进「我的颜色」（同一个颜色不会重复存）。</p>
+      <div class="figside">
+        <div>
+          <h3>四种点法（面板底部也印着）</h3>
+          <table>
+            <thead><tr><th style="width:150px">怎么点</th><th>结果</th></tr></thead>
+            <tbody>
+              <tr><td><b>左键</b></td><td>把颜色设成 Photoshop 的<b>前景色</b></td></tr>
+              <tr><td><b>Shift + 左键</b></td><td>把颜色设成 Photoshop 的<b>背景色</b></td></tr>
+              <tr><td><b>Alt + 左键</b></td><td><b>直接填充</b>当前图层或当前选区（<b>不改</b>前景 / 背景色）—— 想"啪一下铺满"用这个</td></tr>
+              <tr><td><b>右键</b> 或角上的 <span class="btnchip">✕</span></td><td>删掉这个颜色（<b>只有「我的颜色」能删</b>，品牌色删不掉）</td></tr>
+            </tbody>
+          </table>
+          <p>顶部那两行是<b>当前前景 / 背景色的读数</b>（如 <code>#E60012</code>）。它是个"回执"：点完色块如果这里没变，就说明没设上。鼠标停在色块上也能看到它的 HEX。</p>
+          <p><span class="btnchip">存当前色</span> 把当前前景色收进「我的颜色」（同一个颜色不会重复存）。</p>
+        </div>
+        <figure><img src="images/02-调色板.png" alt="调色板页" />
+          <figcaption>图 2-1　调色板：顶部是当前前景 / 背景色读数，中间两排色块，底部写着四种点法各干什么</figcaption></figure>
+      </div>
       <div class="call warn"><span class="h">Alt+左键填充：形状图层 / 调整图层会拒绝</span>填充只对<b>像素类</b>图层（普通图层、背景）有效。如果你选中的是一个形状图层、调整图层或者一个组，面板会<b>直接告诉你原因</b>，不会假装成功。想填它们，先栅格化，或者换个目标。</div>
       <div class="call info"><span class="h">品牌色现在是占位色</span>六个色块目前是占位值，等品牌 HEX 定稿后由开发一次性替换。「我的颜色」不受影响。</div>
     </section>
@@ -297,22 +301,22 @@
           <tr><td><b>通用库</b></td><td>不属于任何任务的常备素材（logo、字体、模板）。两层分组：<b>公司素材</b> / <b>个人收藏</b></td></tr>
         </tbody>
       </table>
-      <figure>
-        <img src="images/03-素材库-任务库.png" alt="素材库 - 任务库" />
-        <figcaption>图 2-2　任务库：顶部是库页签与项目筛选，下面是素材瀑布流；没选中素材时中间那行会提示"在下面选一张素材"</figcaption>
-      </figure>
-      <div class="fig2">
-        <figure><img src="images/04-素材库-通用库.png" alt="通用库" /><figcaption>图 2-3　通用库：顶部一排是分组筛选（全部 / 公司素材 / 个人收藏）</figcaption></figure>
-        <figure><img src="images/05-素材库-选中详情.png" alt="选中一张素材后的详情" /><figcaption>图 2-4　选中一张后：上方出现文件名、尺寸、来源与路径，右下是落点九宫格</figcaption></figure>
+      <div class="figside">
+        <div>
+          <h3>怎么翻</h3>
+          <ul>
+            <li><b>切库</b>：点顶部 <span class="btnchip">任务库</span> / <span class="btnchip">通用库</span> 页签，右边的数字是该库的素材总数。</li>
+            <li><b>筛分组</b>：页签下面那排按钮 / 下拉——任务库按<b>项目</b>筛，通用库按<b>分组</b>筛。</li>
+            <li><b>看大图</b>：缩略图是<b>瀑布流</b>（保持原图比例，不裁切），所以长图和方图会混在一列里，高度不齐是正常的。</li>
+            <li><b>手动刷新</b>：右上角 <span class="btnchip">刷新</span>。平时不用点，它自己会刷（见 <a href="#s3-3">3.3</a>）。</li>
+          </ul>
+          <p>面板最下面那条会写着现在看的是哪个库、多少张、来自哪个项目 —— 排查时先看它。</p>
+        </div>
+        <figure><img src="images/03-素材库-任务库.png" alt="素材库 - 任务库" />
+          <figcaption>图 2-2　任务库：顶部是库页签与项目筛选，下面是素材瀑布流；没选中素材时中间那行会提示"在下面选一张素材"</figcaption></figure>
       </div>
-      <h3>怎么翻</h3>
-      <ul>
-        <li><b>切库</b>：点顶部 <span class="btnchip">任务库</span> / <span class="btnchip">通用库</span> 页签，右边的数字是该库的素材总数。</li>
-        <li><b>筛分组</b>：页签下面那排按钮 / 下拉——任务库按<b>项目</b>筛，通用库按<b>分组</b>筛。</li>
-        <li><b>看大图</b>：缩略图是<b>瀑布流</b>（保持原图比例，不裁切），所以长图和方图会混在一列里，高度不齐是正常的。</li>
-        <li><b>手动刷新</b>：右上角 <span class="btnchip">刷新</span>。平时不用点，它自己会刷（见 <a href="#s3-3">3.3</a>）。</li>
-      </ul>
-      <p>面板最下面那条会写着现在看的是哪个库、多少张、来自哪个项目 —— 排查时先看它。</p>
+      <figure class="shot"><img src="images/04-素材库-通用库.png" alt="通用库" />
+        <figcaption>图 2-3　通用库：顶部一排是分组筛选（全部 / 公司素材 / 个人收藏）；卡片右下角标着来源</figcaption></figure>
       <div class="call info"><span class="h">视频 / PSD / PDF 的缩略图可能是空白的</span>这些格式取不到预览图，会显示一个灰色占位格。<b>不影响使用</b>，照样能放进画布。</div>
     </section>
 
@@ -328,13 +332,19 @@
           <tr><td><span class="btnchip">置入到画布</span></td><td>真的把图放进去。<b>放的是副本，原文件不动</b></td></tr>
         </tbody>
       </table>
-      <h3>落点是怎么算的</h3>
-      <ul>
-        <li><b>画布上有选区</b>：以<b>选区中心</b>为基准，九宫格是相对这个基准的位移。</li>
-        <li><b>画布上没有选区</b>：以<b>画布中心</b>为基准。</li>
-        <li>「居中」＝ 不动，就落在基准点上。</li>
-      </ul>
-      <div class="call warn"><span class="h">置入会把当前选区吃掉</span>这是 Photoshop 的行为，不是插件的。所以"框哪儿放哪儿"的正确用法是：<b>每次放图之前重新框一次选区</b>。</div>
+      <div class="figside">
+        <div>
+          <h3>落点是怎么算的</h3>
+          <ul>
+            <li><b>画布上有选区</b>：以<b>选区中心</b>为基准，九宫格是相对这个基准的位移。</li>
+            <li><b>画布上没有选区</b>：以<b>画布中心</b>为基准。</li>
+            <li>「居中」＝ 不动，就落在基准点上。</li>
+          </ul>
+          <div class="call warn"><span class="h">置入会把当前选区吃掉</span>这是 Photoshop 的行为，不是插件的。所以"框哪儿放哪儿"的正确用法是：<b>每次放图之前重新框一次选区</b>。</div>
+        </div>
+        <figure><img src="images/05-素材库-选中详情.png" alt="选中一张素材后的详情" />
+          <figcaption>图 2-4　选中一张后：上方出现文件名、尺寸、来源与路径，右侧是落点九宫格</figcaption></figure>
+      </div>
       <div class="call warn"><span class="h">置入的图，大小可能和你以为的不一样</span>PS 是<b>按物理尺寸</b>放图的：一张 300ppi 的图放进 72ppi 的画布，会按英寸换算，看起来"缩小"了。插件会按素材的像素尺寸尽量校正回原大小；但 <b>PSD / PDF 这类拿不到像素尺寸的素材不校正</b>，会保持 PS 给的样子 —— 手动缩放一下即可。</div>
       <div class="call info"><span class="h">图层的名字会变成素材名</span>置入后图层名取自素材名（去掉扩展名）；同名时自动加 <code>(2)</code>、<code>(3)</code>。智能对象内部记录的原始文件名改不了，那不在图层面板里显示。</div>
     </section>
@@ -342,40 +352,48 @@
     <section id="s2-5">
       <h2><span class="n">2.5</span>表格生成：CSV 变成图层</h2>
       <p>这个工具的产物不是一张"图片"，而是<b>一堆可以继续改的图层</b>：边框是细矩形、文字是普通文字图层。生成完你还能改字、改色、挪位置。</p>
-      <figure>
-        <img src="images/06-表格生成-未导入.png" alt="表格生成 - 还没导入数据" />
-        <figcaption>图 2-5　刚进来：上方是导入区，中间三块（置入方式 / 样式 / 按行批量出稿）都还没展开</figcaption>
-      </figure>
-      <h3>第一步：把表弄进来</h3>
-      <ol class="steps">
-        <li>点 <span class="btnchip">导入 CSV</span>，选一个 <code>.csv</code> / <code>.txt</code> / <code>.tsv</code> 文件。第一行默认当<b>表头</b>。</li>
-        <li>没有现成的 CSV？点下面那三个内置样例之一（<span class="btnchip">UTF-8</span> / <span class="btnchip">GBK</span> / <span class="btnchip">TSV</span>）先试试手感 —— 它们就在插件里，不联网。</li>
-      </ol>
-      <p>导入成功后，顶部会显示文件名与「N 行 · M 列」，下面一行写着<b>识别到的编码</b>。中间立刻出现表格<b>预览</b>。</p>
-      <figure>
-        <img src="images/07-表格生成-已导入.png" alt="表格生成 - 已导入数据" />
-        <figcaption>图 2-6　导入后：预览出来了，底部多了一行<b>预估</b>「…共 51 个图层」—— 生成前先告诉你这次要建多少层</figcaption>
-      </figure>
+      <div class="figside">
+        <div>
+          <h3>第一步：把表弄进来</h3>
+          <ol class="steps">
+            <li>点 <span class="btnchip">导入 CSV</span>，选一个 <code>.csv</code> / <code>.txt</code> / <code>.tsv</code> 文件。第一行默认当<b>表头</b>。</li>
+            <li>没有现成的 CSV？点下面那三个内置样例之一（<span class="btnchip">UTF-8</span> / <span class="btnchip">GBK</span> / <span class="btnchip">TSV</span>）先试试手感 —— 它们就在插件里，不联网。</li>
+          </ol>
+          <p>导入成功后，顶部会显示文件名与「N 行 · M 列」，下面一行写着<b>识别到的编码</b>。中间立刻出现表格<b>预览</b>。</p>
+        </div>
+        <figure><img src="images/06-表格生成-未导入.png" alt="表格生成 - 还没导入数据" />
+          <figcaption>图 2-5　刚进来：上方是导入区，中间三块（置入方式 / 样式 / 按行批量出稿）都还没展开</figcaption></figure>
+      </div>
       <div class="call ok"><span class="h">中文 CSV 不用先转码</span>插件自带 GBK 解码，<b>UTF-8 和 GBK 都能直接读</b>，Excel 另存为 CSV（默认就是 GBK）也能直接用。识别到什么编码会写在面板上。</div>
       <div class="call warn"><span class="h">Excel 换行 / 合并单元格会出事</span>导出的 CSV 里如果有<b>单元格内换行</b>，可能被拆成多行。建议在 Excel 里先"另存为 CSV"再导入，别直接把 .xlsx 改名。</div>
-      <h3>第二步：定"画在哪儿"（置入方式）</h3>
-      <table>
-        <thead><tr><th style="width:180px">选项</th><th>说明</th></tr></thead>
-        <tbody>
-          <tr><td><b>用当前选区</b></td><td>先拿选框工具在画布上框一块，表格就画在这块里（推荐：所见即所得）</td></tr>
-          <tr><td><b>落点锚</b></td><td>不选区也能用：按一个预设尺寸（默认 420×320）生成表格框。<b>画布很小时可能超出边界</b>，面板会提示</td></tr>
-        </tbody>
-      </table>
-      <h3>第三步：样式（可跳过）</h3>
-      <p>「样式」折叠块里有 <b>通用 / 表头 / 行</b> 三个页签：边框、底色、字号、文字颜色、行高表头高、内边距、列宽（等分或逐列改）。改完点 <span class="btnchip">保存样式</span> 会记住这套参数，下次打开还在。</p>
+      <div class="figside">
+        <div>
+          <h3>第二步：定"画在哪儿"（置入方式）</h3>
+          <table>
+            <thead><tr><th style="width:150px">选项</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><b>用当前选区</b></td><td>先拿选框工具在画布上框一块，表格就画在这块里（推荐：所见即所得）</td></tr>
+              <tr><td><b>落点锚</b></td><td>不选区也能用：按一个预设尺寸（默认 420×320）生成表格框。<b>画布很小时可能超出边界</b>，面板会提示</td></tr>
+            </tbody>
+          </table>
+          <h3>第三步：样式（可跳过）</h3>
+          <p>「样式」折叠块里有 <b>通用 / 表头 / 行</b> 三个页签：边框、底色、字号、文字颜色、行高表头高、内边距、列宽（等分或逐列改）。改完点 <span class="btnchip">保存样式</span> 会记住这套参数，下次打开还在。</p>
+        </div>
+        <figure><img src="images/07-表格生成-已导入.png" alt="表格生成 - 已导入数据" />
+          <figcaption>图 2-6　导入后：预览出来了，底部多了一行<b>预估</b>「…共 51 个图层」—— 生成前先告诉你这次要建多少层</figcaption></figure>
+      </div>
       <h3>第四步：生成</h3>
       <p>点 <span class="btnchip">生成表格</span>。生成完文档里会多出一个图层组，组名是「表格 · 文件名」，状态栏写着「✓ 已生成 …：图层 +N（预计 N），用时 X ms」。</p>
-      <div class="fig2">
-        <figure><img src="images/09-生成结果-画布.png" alt="生成出来的表格" /><figcaption>图 2-7　生成结果（画布 100%）：表头有底色，格线是四条细矩形拼的</figcaption></figure>
-        <figure><img src="images/10-生成结果-图层面板.png" alt="图层组内是一格一层的文字图层" /><figcaption>图 2-8　同一个表在图层面板里：一格一个文字层，名字带行列号（<code>文字 R4C2</code>），随时能改</figcaption></figure>
+      <figure><img src="images/09-生成结果-画布.png" alt="生成出来的表格" />
+        <figcaption>图 2-7　生成结果（画布 100%）：表头有底色，格线是四条细矩形拼的</figcaption></figure>
+      <div class="figside">
+        <div>
+          <div class="call info"><span class="h">图 2-7 里的棋盘格是 PS 的透明底</span>这张表<b>没填行底色</b>（底色是可选项），所以除了表头那一块，其余都是"只有线和文字"。在 <a href="#s2-5">样式</a> 里给「行」加个底色，它就会是一张带底纹的常规表。</div>
+          <div class="call warn"><span class="h">格子越多，等得越久</span>生成 51 个图层（5 列 × 6 行 + 边框）大约 3～7 秒；上百格要十几秒，而且文件会变重。<b>大表先想想是不是真要在 PS 里做。</b>面板每次都会先报预估层数。</div>
+        </div>
+        <figure><img src="images/10-生成结果-图层面板.png" alt="图层组内是一格一层的文字图层" />
+          <figcaption>图 2-8　同一个表在图层面板里：一格一个文字层，名字带行列号（<code>文字 R4C2</code>），随时能改</figcaption></figure>
       </div>
-      <div class="call info"><span class="h">图 2-7 里的棋盘格是 PS 的透明底</span>这张表<b>没填行底色</b>（底色是可选项），所以除了表头那一块，其余都是"只有线和文字"。在 <a href="#s2-5">样式</a> 里给「行」加个底色，它就会是一张带底纹的常规表。</div>
-      <div class="call warn"><span class="h">格子越多，等得越久</span>生成 51 个图层（5 列 × 6 行 + 边框）大约 3～7 秒；上百格要十几秒，而且文件会变重。<b>大表先想想是不是真要在 PS 里做。</b>面板每次都会先报预估层数。</div>
     </section>
 
     <section id="s2-6">
@@ -388,21 +406,23 @@
         <li><b>绑列</b>：表格里每一列是一行，每行三个选项 —— 「不绑定」或「第 1 / 2 / 3…个文字层」。把<b>列</b>绑到<b>图层</b>上（绑的是序号，不是名字）。</li>
       </ol>
       <p>底部会实时算给你看：「N 份 × M 处文字（共 K 次写入）… 预估 ≈X s」。确认无误，点 <span class="btnchip">生成 N 个稿件</span>。</p>
-      <h3>生成出来是什么</h3>
-      <ul>
-        <li>模板组被<b>复制 N 份</b>（一份对应表里一行），名字自动起成「稿件 3 · 开学季特训营」这种带行关键词的名字。</li>
-        <li>每份只替换<b>你绑定的那些文字</b>，其余保持模板原样。</li>
-        <li>副本按<b>网格自动排开</b>（默认 5 列），不会全叠在一起。</li>
-        <li><b>原件一根头发都不动。</b></li>
-      </ul>
-      <div class="call warn"><span class="h">现在只换文字，不换图</span>模板里的图片图层会被原样复制，但<b>不会</b>按行换成不同的图。需要换图的话，得先把图做成可替换的格式，等后续版本支持。</div>
-      <div class="call warn"><span class="h">格子里的空值会跳过</span>表里某个格子是空的，那处文字<b>保留模板原文</b>（而不是被写成空白）—— 这比"写空"更安全，但你得知道有这个行为。</div>
-      <div class="call warn"><span class="h">份数多会先问你一次</span>份数或写入次数超过闸门时，第一次点按钮只是把它变成「仍然生成 N 个（约 X s）」，<b>再点一次才真的开始</b>。这样就不会手滑一下等十分钟。</div>
-      <div class="call info"><span class="h">名字里的"文本"是什么</span>面板认模板时会列出组里的文字层（如「1. 标题」「2. 价格」）。这里的序号就是绑定用的序号；<b>即使 PS 后续把副本里的层改名（"标题 拷贝"），照序号绑也不会错位。</b></div>
-      <figure>
-        <img src="images/08-表格生成-已生成.png" alt="批量出稿完成后的面板" />
-        <figcaption>图 2-9　出稿完成后：底部状态栏写着「✓ 已生成 N 个稿件（实际耗时，预估 X s）」—— 预估准不准一眼就能看出来</figcaption>
-      </figure>
+      <div class="figside">
+        <div>
+          <h3>生成出来是什么</h3>
+          <ul>
+            <li>模板组被<b>复制 N 份</b>（一份对应表里一行），名字自动起成「稿件 3 · 开学季特训营」这种带行关键词的名字。</li>
+            <li>每份只替换<b>你绑定的那些文字</b>，其余保持模板原样。</li>
+            <li>副本按<b>网格自动排开</b>（默认 5 列），不会全叠在一起。</li>
+            <li><b>原件一根头发都不动。</b></li>
+          </ul>
+          <div class="call warn"><span class="h">现在只换文字，不换图</span>模板里的图片图层会被原样复制，但<b>不会</b>按行换成不同的图。需要换图的话，得先把图做成可替换的格式，等后续版本支持。</div>
+          <div class="call warn"><span class="h">格子里的空值会跳过</span>表里某个格子是空的，那处文字<b>保留模板原文</b>（而不是被写成空白）—— 这比"写空"更安全，但你得知道有这个行为。</div>
+          <div class="call warn"><span class="h">份数多会先问你一次</span>份数或写入次数超过闸门时，第一次点按钮只是把它变成「仍然生成 N 个（约 X s）」，<b>再点一次才真的开始</b>。这样就不会手滑一下等十分钟。</div>
+          <div class="call info"><span class="h">名字里的"文本"是什么</span>面板认模板时会列出组里的文字层（如「1. 标题」「2. 价格」）。这里的序号就是绑定用的序号；<b>即使 PS 后续把副本里的层改名（"标题 拷贝"），照序号绑也不会错位。</b></div>
+        </div>
+        <figure><img src="images/08-表格生成-已生成.png" alt="批量出稿完成后的面板" />
+          <figcaption>图 2-9　出稿完成后：底部状态栏写着「✓ 已生成 N 个稿件（实际耗时，预估 X s）」—— 预估准不准一眼就能看出来</figcaption></figure>
+      </div>
     </section>
 
     <section id="s2-7">
