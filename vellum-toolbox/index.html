@@ -1493,6 +1493,11 @@
         overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
       .tbl-src .cnt { flex: 0 0 auto; font-family: var(--vt-mono); font-size: 11px; color: var(--vt-tx3); margin-left: 8px; }
 
+      /* v0.4.2：内置样例那一行 —— 系统文件选择器自动化点不了，
+         所以给一条"不弹窗"的同源入口（读了字节之后的链路完全一样）。 */
+      .tbl-try { display: flex; align-items: center; margin: 0 0 8px; }
+      .tbl-try .lb { flex: 0 0 auto; font-size: 11px; color: var(--vt-tx3); }
+
       .tbl-empty { padding: 20px 4px; text-align: center; color: var(--vt-tx3); font-size: 12px; line-height: 1.75; }
       .tbl-enc { display: flex; align-items: flex-start; font-size: 11px; color: var(--vt-tx3); line-height: 1.55; margin: 0 0 8px; }
       .tbl-enc b { color: var(--vt-ok); font-weight: 400; }

@@ -3503,6 +3503,30 @@ async function run(ctx, deps) {
         return {};
       }
     })();
+    /* 🔴 v0.4.3：`getFileForOpening` **存在 ≠ 能用**。
+       v0.4.2 真机点了「导入 CSV」，拿到的错误是：
+         `Plugin is not permitted to access the file picker. Manifest entry not found.`
+       —— 因为 `requiredPermissions` 是空的（默认只有 `"plugin"` 沙箱权限）。
+       官方文档（UXP Filesystem Operations）：`localFileSystem` 可取
+         `"plugin"`（默认，仅沙箱）/ `"request"`（**允许用文件选择器请求用户授权**）/ `"fullAccess"`。
+       这一条**读插件自己的 manifest.json** 来判权限声明 —— 它是可自动化的**因果**判据
+       （错误文案点名的就是"manifest entry 缺失"），不必去弹那个系统窗口。
+       ⚠️ 它证明"门开着"，**不证明"对话框一定弹得出来"**（那一步只能人去点）。 */
+    let permDeclared = "(读不到 manifest)";
+    let permOk = false;
+    try {
+      const uxp35 = require("uxp");
+      const pf35 = await uxp35.storage.localFileSystem.getPluginFolder();
+      const mfEntry = await pf35.getEntry("manifest.json");
+      const mfText = await mfEntry.read();
+      const mfJson = JSON.parse(String(mfText));
+      const rp = mfJson.requiredPermissions || {};
+      permDeclared = String(rp.localFileSystem === undefined ? "(未声明 ⇒ 默认 plugin = 无文件选择器)" : rp.localFileSystem);
+      permOk = rp.localFileSystem === "request" || rp.localFileSystem === "fullAccess";
+    } catch (e) {
+      permDeclared = "(读 manifest 失败：" + ((e && e.message) || e) + ")";
+    }
+
     const hasOpen = !!(fs2 && typeof fs2.getFileForOpening === "function");
 
     /* ③ TextDecoder 位置探测（"一种读数都没有"不能算"测过了"） */
@@ -3611,12 +3635,13 @@ async function run(ctx, deps) {
        · "文本模式能不能解 GBK"是**平台事实**（答"不能"也不是 bug）⇒ 只作读数，不判生死
        · 基准（二进制往返）必须先成立，否则整条无结论 */
     const judge = base.ok === true && rt.ok === true && hasOpen === true &&
-      (TD ? bogus.threw === true : true);
+      (TD ? bogus.threw === true : true) && permOk === true;
 
     rec(
       S35,
       judge,
-      "getFileForOpening=" + (hasOpen ? "有（⚠️ 真弹窗自检点不了，这一半**没测**）" : "没有") +
+      "getFileForOpening=" + (hasOpen ? "API 存在" : "不存在") +
+      "　manifest.localFileSystem=" + permDeclared + (permOk ? " ✓（选择器已授权）" : " ✗（选择器会被拒）") +
       "　‖ ①基准·GBK 字节二进制往返=" + (base.ok ? "逐字节相同(" + base.hex + ")" : "✗" + base.error) +
       "　②文本模式读同一文件=" + (textMode.ok ? JSON.stringify(textMode.text) : "✗" + textMode.error) +
       "（解出「中文,A」⇒ 走系统代码页；乱码 ⇒ 文本模式不可靠）" +
@@ -3796,20 +3821,85 @@ async function run(ctx, deps) {
         return false;
       }
     })();
-    const judge = baseOk && (hasSave || hasFolder) && negOk;
+    /* 🔴 v0.4.3：「存在」不等于「能用」—— 这一条就是踩过坑的地方。
+       v0.3.9 的 S38 只问了"有没有这些方法"就写下"剪贴板 ✗"，而真机上
+       `getFileForOpening` 明明存在、一调却报 `Manifest entry not found`
+       （`requiredPermissions` 是空的）⇒ 同一顶帽子也会扣在剪贴板上。
+       现在改成：① 读自己的 manifest 判 `localFileSystem` / `clipboard` 是否声明；
+                 ② 剪贴板**真写一次再读回**（写进用户剪贴板的东西立刻被读回覆盖，无副作用）；
+                 ③ 剪贴板这条路本来就"有则更好、无则退回文件"，所以它**不参与判生死**。 */
+    let perm38 = "(读不到 manifest)";
+    let clipDeclared = "(未声明)";
+    try {
+      const uxp38b = require("uxp");
+      const pf38 = await uxp38b.storage.localFileSystem.getPluginFolder();
+      const mf38 = JSON.parse(String(await (await pf38.getEntry("manifest.json")).read()));
+      const rp38 = mf38.requiredPermissions || {};
+      perm38 = String(rp38.localFileSystem === undefined ? "(未声明 ⇒ 默认 plugin)" : rp38.localFileSystem);
+      clipDeclared = String(rp38.clipboard === undefined ? "(未声明)" : rp38.clipboard);
+    } catch (e) {
+      perm38 = "(失败：" + ((e && e.message) || e) + ")";
+    }
+    const perm38Ok = perm38 === "request" || perm38 === "fullAccess";
+
+    let clipTry = "没试（模块拿不到）";
+    let clipOk = false;
+    if (cb38) {
+      const wKey = ["copyText", "write", "setContent"].filter((k) => cbMethods.indexOf(k) >= 0)[0];
+      const rKey = ["readText", "read", "getContent"].filter((k) => cbMethods.indexOf(k) >= 0)[0];
+      if (!wKey) {
+        clipTry = "有模块但没有可写方法";
+      } else {
+        const probe = "vt-clip-" + Date.now();
+        /* ⚠️ 这是**用户的**剪贴板 ⇒ 先把旧内容存下来，验完**还原**
+           （无痕，和 palette.json 的备份同一个道理：自检不该留下痕迹） */
+        let keep = null;
+        let canRestore = false;
+        if (rKey) {
+          try {
+            keep = await cb38[rKey]();
+            canRestore = typeof keep === "string";
+          } catch {
+            canRestore = false;
+          }
+        }
+        try {
+          await cb38[wKey](probe);
+          if (rKey) {
+            const back = await cb38[rKey]();
+            clipOk = String(back) === probe;
+            clipTry = "写(" + wKey + ")+读(" + rKey + ")=" + JSON.stringify(String(back).slice(0, 24)) + (clipOk ? " ✓" : " ✗不一致");
+          } else {
+            clipTry = "写了(" + wKey + ")但模块没有读方法 ⇒ 只能算「写没抛错」";
+            clipOk = true;
+          }
+        } catch (e) {
+          clipTry = "调用抛错：" + ((e && e.message) || e);
+        }
+        if (canRestore) {
+          try {
+            await cb38[wKey](keep);
+            clipTry += "（已还原原内容）";
+          } catch {
+            clipTry += "（⚠️ 还原失败）";
+          }
+        }
+      }
+    }
+    const judge = baseOk && (hasSave || hasFolder) && perm38Ok && negOk;
     rec(
       S38,
       judge,
       "基准·PluginData 写入读回=" + (baseOk ? "逐字相同" : "✗") +
-      "　①getFileForSaving=" + hasSave + "（存到用户选的位置；⚠️ 真弹窗自检点不了）" +
-      "　②getFolder=" + hasFolder +
-      "　③剪贴板=" + (cb38 ? "有，方法=[" + cbMethods.join(",") + "]" : "没有") +
-      "（只验存在，不真写用户的剪贴板）" +
+      "　manifest.localFileSystem=" + perm38 + (perm38Ok ? " ✓" : " ✗（文件选择器会被拒）") +
+      "　①getFileForSaving=" + hasSave + "、getFolder=" + hasFolder + "（⚠️ 真弹窗自检点不了）" +
+      "　②剪贴板：manifest.clipboard=" + clipDeclared + "、模块=" +
+      (cb38 ? "有[" + cbMethods.join(",") + "]" : "拿不到") + "、**真写读回**=" + clipTry +
       "　负对照·__notARealThing=" + (negOk ? "undefined ✓" : "⚠️ 竟有值 ⇒ 读数不可信") +
       "　⇒ " + (judge
-        ? "样式配置「导出给别人」至少有 " + (hasSave ? "「另存为」" : "") +
-          (hasFolder ? "「选文件夹」" : "") + (cbMethods.indexOf("copyText") >= 0 ? " + 剪贴板" : "") + " 可走"
-        : "⚠️ 未成立 —— 见分段读数")
+        ? "样式配置「导出给别人」有路走：" + (hasSave ? "「另存为文件」✓" : "") +
+          (clipOk ? " + 剪贴板真能读写 ✓" : "（剪贴板不可用 ⇒ 只走文件，符合预期）")
+        : "⚠️ 未成立 —— 见分段读数（权限没声明的话，用户点了也是白点）")
     );
   } catch (e) {
     rec(S38, false, "抛异常：" + ((e && e.message) || e));
@@ -4033,6 +4123,134 @@ async function run(ctx, deps) {
     rec(S40, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S42: 面板整链（免弹窗版，v0.4.2 新增）
+     为什么要有它：面板上真正的「导入 CSV」要弹**系统文件选择器** —— 自检点不了、
+     自动化也点不了 ⇒ "解码 → 解析 → 预览 → 生成"这条链在真机上一直缺中间一段：
+     S40 是**绕过面板**直接调 `ps.buildTable`，S41 只验"挂得起来 + 控件几何"，
+     **"人在面板上点"这一段没人验**。
+     这里走「内置样例」（读插件自带 `samples/`，**同样 `read({format:binary})`、
+     同样 `csv.readBytes()`**），差的只有最后那一次 `getFileForOpening()`。
+
+     判据（期望值都是**独立算/写死**的，不复用被测模块的中间结果）：
+       ① 点芯片后预览行数 = 7（1 表头 + 6 数据）
+       ② 编码行显示 GBK，首个数据格 = 「开学季特训营」（写死的已知答案）
+       ③ 预估文案里出现「51 个图层」
+       ④ 点「生成表格」后：文档层数增量 **正好 51**
+       ⑤ 组名 = 「表格 · prices-2026-gbk」、状态栏出现「已生成」
+     🔴 期望层数**独立算**：7 行 × 5 列 = 35 文字 + 外框 4 + 内部横线 6 + 内部竖线 4
+        + 表头背景 1 + 组 1 = **51** */
+  const S42 = "S42 面板整链（免弹窗）：点内置 GBK 样例 → 预览 → 点「生成表格」→ 文档里真出 51 层";
+  try {
+    const txt = (id) => {
+      const el = document.getElementById(id);
+      return el ? String(el.textContent || "") : "";
+    };
+    const sc42 = await ps.createScratchDoc({ size: 500, name: "Vellum 自检临时文档(面板)" });
+    if (!sc42 || !sc42.ok) {
+      rec(S42, false, "建临时文档失败：" + ((sc42 && sc42.error) || "未知"));
+    } else {
+      /* 🔴 读数**先声明在外面**：第一版把它们放在会抛异常的那句之后，结果
+         `ps.findLayerDeep is not a function` 一抛，**一条读数都没留下**（只有异常文本）。
+         "只有一种读数的失败 = 没测" —— 反过来也成立：**读数必须比异常先到**。 */
+      let previewRows = -1;
+      let cell1 = "";
+      let encTxt = "";
+      let estTxt = "";
+      let added = -1;
+      let grpOk = false;
+      let statusTxt = "";
+      let finishedOk = false;
+      let stepErr = null;
+      const want = 7 * 5 + 4 + 6 + 4 + 1 + 1; // 51（独立算：35 文字 + 外框 4 + 横 6 + 竖 4 + 背景 1 + 组 1）
+      try {
+        await ctx.shell.showTool("table", "selfcheck");
+        await waitFor(() => document.getElementById("vt-tbl"), 6000);
+        const chip = document.getElementById("vt-tbl-sample-gbk");
+        if (!chip) {
+          stepErr = "面板上没有「GBK 样例」芯片（#vt-tbl-sample-gbk）";
+        } else {
+          const before = ps.countLayersDeep();
+
+          syntheticClick(chip, null);
+          await waitFor(() => {
+            const g = document.getElementById("vt-tbl-grid");
+            return g && g.children.length === 7 ? true : null;
+          }, 6000);
+
+          const gridEl = document.getElementById("vt-tbl-grid");
+          previewRows = gridEl ? gridEl.children.length : -1;
+          cell1 = gridEl && gridEl.children[1] && gridEl.children[1].children[0]
+            ? String(gridEl.children[1].children[0].textContent || "") : "";
+          encTxt = txt("vt-tbl-enc");
+          estTxt = txt("vt-tbl-estimate");
+
+          const genBtn = document.getElementById("vt-tbl-gen");
+          if (!genBtn) {
+            stepErr = "找不到「生成表格」按钮（#vt-tbl-gen）";
+          } else {
+            const statusBefore = txt("vt-status");
+            syntheticClick(genBtn, null);
+            /* 等的条件必须**就是要判的那个东西**，而且要"与点击前不同"：
+               · 只等"层数涨到 51" ⇒ 那只是第①批发完，阶段二还没完、状态栏还没写
+                 （v0.4.2 第一版就这么读早了，读到的还是"正在生成表格…"）；
+               · 只等"按钮从『正在生成…』恢复" ⇒ 又早了一步：`doGenerate` 在恢复按钮之后
+                 还要 `await` 一次日志落盘，然后才 `setStatus`（第二次就是这么错的）；
+               · 不要求"与点击前不同" ⇒ 同一个 PS 会话里连跑两轮时，会读到**上一轮的陈旧文案**。 */
+            await waitFor(() => (ps.countLayersDeep() - before >= want ? true : null), 30000);
+            added = ps.countLayersDeep() - before;
+            const finished = await waitFor(() => {
+              const t = txt("vt-status");
+              const looksDone = t.indexOf("已生成") >= 0 || t.indexOf("生成失败") >= 0 || t.indexOf("还不能生成") >= 0;
+              return looksDone && t !== statusBefore ? t : null;
+            }, 120000);
+            finishedOk = !!finished;
+            statusTxt = finished ? String(finished) : txt("vt-status");
+            /* 找组这一步单独兜住：v0.4.2 第一次跑就是这里抛的（`findLayerDeep` 当时没导出），
+               而它一抛，前面四条读数全跟着丢了 */
+            try {
+              grpOk = !!ps.findLayerDeep("表格 · prices-2026-gbk");
+            } catch (e) {
+              grpOk = false;
+              stepErr = "找组失败：" + ((e && e.message) || e);
+            }
+          }
+        }
+      } catch (e) {
+        stepErr = "步骤抛异常：" + ((e && e.message) || e);
+      }
+
+      const judge = stepErr === null && previewRows === 7 && encTxt.indexOf("GBK") >= 0 &&
+        cell1 === "开学季特训营" && estTxt.indexOf(String(want) + " 个图层") >= 0 &&
+        added === want && finishedOk && grpOk && statusTxt.indexOf("已生成") >= 0;
+
+      rec(
+        S42,
+        judge,
+        (stepErr ? "⚠ " + stepErr + "　" : "") +
+        "① 预览行数=" + previewRows + "/7" +
+        "　② 编码行=" + JSON.stringify(encTxt.slice(0, 22)) + "（须含 GBK）" +
+        "、首个数据格=" + JSON.stringify(cell1) + "（须「开学季特训营」）" +
+        "　③ 预估=" + JSON.stringify(estTxt.slice(0, 56)) +
+        "　④ 点生成后层数增量=" + added + "/" + want +
+        "（收尾=" + finishedOk + "）" +
+        "　⑤ 组「表格 · prices-2026-gbk」=" + grpOk +
+        "、状态栏=" + JSON.stringify(statusTxt.slice(0, 28)) +
+        "　⇒ " + (judge
+          ? "面板整链通：点样例 → 读字节 → GBK 解码 → 预览 → 点生成 → 文档里真出 " + want + " 层" +
+            "（**唯一没覆盖的**只剩系统文件选择器那一次弹窗）"
+          : "⚠️ 有项没中 —— 见分段读数（①②③ 与文档无关；④⑤ 需要文档与区域）")
+
+      );
+      try {
+        await ps.closeDocument(sc42.id);
+      } catch {
+        /* 忽略 */
+      }
+    }
+  } catch (e) {
+    rec(S42, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- S41: 表格面板真机挂载（v0.4.1 新增，M3a 的「面板」那一半）
      面板 800+ 行、控件**全是自绘**（`sp-*` 未注册，UXP 的 CSS/组件都是子集）
      ⇒ 离线只能验到**结构**（选择器在不在），"它到底能不能挂起来、控件有没有几何"
@@ -4148,7 +4366,7 @@ async function run(ctx, deps) {
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.4.1",
+    version: "0.4.3",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

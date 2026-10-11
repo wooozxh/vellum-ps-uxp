@@ -2685,27 +2685,55 @@ async function buildTable(plan, opts) {
       // 建层顺序是"从下往上"⇒ 图层面板里最上面那个 = **最后**建的那格
       kids.reverse();
       const n = Math.min(kids.length, plan.cells.length);
+      /* 🔴 v0.4.2 取证：这一段的三个 try/catch 以前**把错误全吞了**，
+         于是真机上"35 格只改名成功 1 个、花了 90 秒"只能靠猜。
+         现在每一步都记**成功数 + 首个错误原文 + 整段耗时** —— 失败要能被查。 */
+      out.kids = kids.length;
+      out.selected = 0;
+      out.phase2Ms = 0;
+      let selBad = 0;
+      let nameBad = 0;
+      let alignBad = 0;
+      const t2 = Date.now();
       for (let i = 0; i < n; i++) {
         const layer = kids[i];
         const cell = plan.cells[i];
         try {
           doc.activeLayers = [layer];
+          out.selected++;
         } catch (e) {
           /* 选不中就当这一格没处理，继续下一格 */
+          selBad++;
+          if (!out.firstSelectError) out.firstSelectError = "第 " + i + " 格：" + msg(e);
         }
         try {
           layer.name = tableCellName(cell);
           out.renamed++;
         } catch (e) {
           /* 单个改名失败不该拖垮整张表 */
+          nameBad++;
+          if (!out.firstNameError) out.firstNameError = "第 " + i + " 格：" + msg(e);
         }
         try {
           await batchPlay([paragraphStyleDesc({ align: { cls: "alignmentType", value: cell.align } })], {});
           out.aligned++;
         } catch (e) {
           /* 同上 */
+          alignBad++;
+          if (!out.firstAlignError) out.firstAlignError = "第 " + i + " 格：" + msg(e);
         }
       }
+      out.phase2Ms = Date.now() - t2;
+      out.selectBad = selBad;
+      out.nameBad = nameBad;
+      out.alignBad = alignBad;
+      note("m3 phase2 结束　格数 " + n + "　选中 " + out.selected + "（失败 " + selBad + "）" +
+        "　改名 " + out.renamed + "（失败 " + nameBad + "）" +
+        "　对齐 " + out.aligned + "（失败 " + alignBad + "）" +
+        "　耗时 " + out.phase2Ms + "ms" +
+        (out.firstSelectError ? "　首个选择错误=" + out.firstSelectError : "") +
+        (out.firstNameError ? "　首个改名错误=" + out.firstNameError : "") +
+        (out.firstAlignError ? "　首个对齐错误=" + out.firstAlignError : ""));
     }, "Vellum 工具箱：生成表格（" + plan.layers + " 个图层）");
   } catch (e) {
     note("m3 build 失败　" + msg(e));
@@ -2790,7 +2818,6 @@ module.exports = {
   readSelectionBounds,
   placeBaseCenter,
   setSelectionRect,
-  /* v0.3.9 追加：读选区（M3「按画布上的框排版」的读取端） */
   readSelectionBounds,
   /* v0.3.3 新增：置入后精确校正（尺寸 + 位置一次做准） */
   applyLayerRect,
@@ -2831,4 +2858,5 @@ module.exports = {
   duplicateActiveLayer,
   findTextLayerContents,
   sampleRectAvgColor,
+  findLayerDeep,
 };

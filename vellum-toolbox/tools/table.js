@@ -44,6 +44,25 @@ const PREF_FILE = "table-pref.json";
 const ANCHOR_W = 420;
 const ANCHOR_H = 320;
 
+/**
+ * 插件自带的样例数据（放在插件目录 `samples/` 里，随 ccx 一起走）。
+ *
+ * 为什么要有它：**面板里真正的"导入 CSV"要弹系统文件选择器，而系统弹窗
+ * 自检点不了、自动化也点不了** ⇒ 那样"解码 → 解析 → 预览 → 生成"这条链子
+ * 就永远只有"结构断言"没有"行为断言"。内置样例把这条链子补上：
+ * 除了最后那一次 `getFileForOpening()`，**走的是完全相同的读字节与解析路径**
+ * （同样 `read({format:binary})`、同样 `csv.readBytes()`）。
+ *
+ * 顺带它也是个真功能：第一次装插件的人不用先去找 CSV 就能看到效果。
+ * 三份分别压 **UTF-8 / GBK / TSV** 三种真实情况（GBK 是中文 Excel
+ * 「另存为 CSV」的默认编码，最容易踩）。
+ */
+const SAMPLE_SPECS = [
+  { id: "utf8", label: "UTF-8", file: "prices-2026.csv", note: "普通 UTF-8（带 CRLF）" },
+  { id: "gbk", label: "GBK", file: "prices-2026-gbk.csv", note: "GBK 编码（中文 Excel 另存为 CSV 的默认）" },
+  { id: "tsv", label: "TSV", file: "prices-2026-tab.tsv", note: "制表符分隔" },
+];
+
 let ctx = null;
 let binder = null;
 let root = null;
@@ -219,6 +238,17 @@ function renderTop() {
     const b = btn("换一个", "sm gh", "vt-tbl-reimport");
     b.onclick = () => doImport();
     refs.src.appendChild(b);
+  }
+
+  dom.clear(refs.trybar);
+  if (!S.fileName) {
+    refs.trybar.appendChild(el("span", "lb", null, "没有 CSV？用内置样例试："));
+    for (const sp of SAMPLE_SPECS) {
+      const b = btn(sp.label, "sm gh", "vt-tbl-sample-" + sp.id);
+      b.setAttribute("style", "margin-left:6px");
+      b.onclick = () => loadSample(sp.id);
+      refs.trybar.appendChild(b);
+    }
   }
 
   dom.clear(refs.enc);
@@ -519,32 +549,85 @@ async function doImport() {
   let entry = null;
   try {
     const lfs = require("uxp").storage.localFileSystem;
+    log.appendLog("table import ask 文件选择器（getFileForOpening types=csv,txt,tsv）");
     entry = await lfs.getFileForOpening({ types: ["csv", "txt", "tsv"] });
   } catch (e) {
-    setStatus("打开文件选择器失败：" + ((e && e.message) || e));
+    /* 🔴 这条也**必须写日志**：文件选择器弹不出来时，屏幕上只有一行会消失的状态文案，
+       事后在 boot.log 上查不到任何痕迹（v0.4.2 之前就是这样）。 */
+    const m = (e && e.message) || String(e);
+    log.appendLog("table import FAILED 文件选择器抛错：" + m);
+    setStatus("打开文件选择器失败：" + m);
     return;
   }
   if (!entry) {
+    log.appendLog("table import cancel 用户取消了文件选择");
     setStatus("没有选择文件");
     return;
   }
 
-  let res = null;
-  try {
-    const formats = (require("uxp").storage || {}).formats || {};
-    if (!formats.binary) {
-      setStatus("这个 UXP 版本没有二进制读 ⇒ 读不了 CSV（会只能按文本读，中文会被毁）");
-      return;
-    }
-    const buf = await entry.read({ format: formats.binary });
-    const u8 = new Uint8Array(buf);
-    res = csv.readBytes(u8);
-  } catch (e) {
-    setStatus("读文件失败：" + ((e && e.message) || e));
+  const formats = (require("uxp").storage || {}).formats || {};
+  if (!formats.binary) {
+    log.appendLog("table import FAILED 这个 UXP 版本没有 formats.binary");
+    setStatus("这个 UXP 版本没有二进制读 ⇒ 读不了 CSV（会只能按文本读，中文会被毁）");
     return;
   }
+  let u8 = null;
+  try {
+    const buf = await entry.read({ format: formats.binary });
+    u8 = new Uint8Array(buf);
+  } catch (e) {
+    const m = (e && e.message) || String(e);
+    log.appendLog("table import FAILED 读文件抛错：" + m);
+    setStatus("读文件失败：" + m);
+    return;
+  }
+  await ingest(u8, entry.name || "未命名", "picker");
+}
 
-  S.fileName = entry.name || "未命名";
+/**
+ * 读**插件自带**的样例文件（不弹任何系统窗口）。
+ * ⚠️ 这条入口的存在理由见 `SAMPLE_SPECS` 上面那段：系统弹窗自动化点不了，
+ *    而这条走的是**同样的字节读 + 同样的解码解析**，只少最后那一次 `getFileForOpening()`。
+ */
+async function loadSample(id) {
+  const spec = SAMPLE_SPECS.filter((s) => s.id === id)[0];
+  if (!spec) {
+    setStatus("没有这个样例：" + id);
+    return;
+  }
+  setStatus("正在读内置样例「" + spec.file + "」（" + spec.note + "）…");
+  let u8 = null;
+  try {
+    const uxp = require("uxp");
+    const formats = uxp.storage.formats || {};
+    const pf = await uxp.storage.localFileSystem.getPluginFolder();
+    const dir = await pf.getEntry("samples");
+    const entry = await dir.getEntry(spec.file);
+    const buf = await entry.read({ format: formats.binary });
+    u8 = new Uint8Array(buf);
+  } catch (e) {
+    const m = (e && e.message) || String(e);
+    setStatus("读不到内置样例「" + spec.file + "」：" + m + "　⇒ 用上面的「导入 CSV」自己选一个文件");
+    log.appendLog("table sample FAILED file=" + spec.file + " err=" + m);
+    return;
+  }
+  await log.appendLog("table sample load file=" + spec.file + " bytes=" + u8.length);
+  await ingest(u8, spec.file, "sample");
+}
+
+/**
+ * 把一批字节接进来：**解码 → 解析 → 预览 → 量区域**。
+ * 「导入 CSV」（系统弹窗）与「内置样例」共用这一段 —— 两条路的差别**只在怎么拿到字节**。
+ */
+async function ingest(u8, fileName, via) {
+  let res = null;
+  try {
+    res = csv.readBytes(u8);
+  } catch (e) {
+    res = { ok: false, error: (e && e.message) || String(e) };
+  }
+
+  S.fileName = fileName || "未命名";
   S.openCol = -1;
   if (!res.ok) {
     S.rows = null;
@@ -553,7 +636,7 @@ async function doImport() {
     S.encError = res.error || "读不了这个文件";
     S.encText = res.hex ? "（文件开头：" + res.hex + "）" : "";
     S.encWarn = true;
-    log.appendLog("table import FAILED file=" + S.fileName + " err=" + (res.error || "?"));
+    log.appendLog("table import FAILED file=" + S.fileName + " via=" + via + " err=" + (res.error || "?"));
   } else {
     S.rows = res.rows;
     S.encoding = res.encoding;
@@ -564,8 +647,8 @@ async function doImport() {
     if (res.note) S.encText += "　" + res.note;
     if (res.warnings && res.warnings.length) S.encText += "　" + res.warnings.join("；");
     rebuildNorm();
-    log.appendLog("table import ok file=" + S.fileName + " enc=" + res.encoding +
-      " rows=" + res.rows.length + " cols=" + (S.norm ? S.norm.cols : 0));
+    log.appendLog("table import ok file=" + S.fileName + " via=" + via + " enc=" + res.encoding +
+      " rows=" + res.rows.length + " cols=" + (S.norm ? S.norm.cols : 0) + " bytes=" + u8.length);
   }
   renderTop();
   renderGrid();
@@ -574,12 +657,20 @@ async function doImport() {
   setStatus(res.ok
     ? "已导入「" + S.fileName + "」：编码 " + S.encoding + "，" + S.rows.length + " 行"
     : "读不了「" + S.fileName + "」：" + S.encError);
+  return res;
 }
 
 async function doGenerate() {
   const plan = currentPlan();
   if (!plan || !plan.ok) {
-    setStatus("还不能生成：" + ((plan && plan.error) || "没有数据或没有区域"));
+    /* 🔴 这条**必须写日志**：v0.4.2 之前"还不能生成"只写状态栏，于是自检里那次失败
+       在 boot.log 上**一个字都没有**（连 `table build` 都没有），只能靠猜。
+       失败原因要同时到达"用户看得见的地方"和"事后能查的地方"。 */
+    const why = !S.norm ? "没有数据" : (!S.region ? ("没有可用区域：" + (S.regionError || "?")) : ((plan && plan.error) || "计划没成立"));
+    log.appendLog("table build REFUSED　why=" + why +
+      "　norm=" + (S.norm ? S.norm.body.length + "行×" + S.norm.cols + "列" : "无") +
+      "　region=" + (S.region ? S.region.from : "无"));
+    setStatus("还不能生成：" + ((plan && plan.error) || why || "没有数据或没有区域"));
     return;
   }
   if (S.busy) return;
@@ -608,6 +699,11 @@ async function doGenerate() {
   await log.appendLog(
     "table build ok=" + !!r.ok + " group=" + (r.group || "-") + " added=" + (r.added === undefined ? "-" : r.added) +
     "/" + (r.expected === undefined ? "-" : r.expected) + " ms=" + ms + " align=" + (r.alignMode || "-") +
+    (r.phase2Ms === undefined ? "" : " phase2=" + r.phase2Ms + "ms 选中" + r.selected + "/" + (r.cells || "?") +
+      " 改名" + r.renamed + " 对齐" + r.aligned +
+      (r.firstSelectError ? " selErr=" + r.firstSelectError : "") +
+      (r.firstNameError ? " nameErr=" + r.firstNameError : "") +
+      (r.firstAlignError ? " alignErr=" + r.firstAlignError : "")) +
     (r.error ? " err=" + r.error : "")
   );
   if (r.ok) {
@@ -669,6 +765,8 @@ function build() {
   const top = el("div", "tbl-top");
   refs.src = el("div", "tbl-src", "vt-tbl-src");
   top.appendChild(refs.src);
+  refs.trybar = el("div", "tbl-try", "vt-tbl-try");
+  top.appendChild(refs.trybar);
   refs.enc = el("div", "tbl-enc", "vt-tbl-enc");
   top.appendChild(refs.enc);
   refs.grid = el("div", "tbl-wrap", "vt-tbl-grid");

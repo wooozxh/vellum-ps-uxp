@@ -132,6 +132,19 @@ class El {
   addEventListener(type, fn) {
     (this._listeners[type] = this._listeners[type] || []).push(fn);
   }
+  /* v0.4.2：支持 `el.onclick = fn` 这种**属性式**绑定。
+     ⚠️ 这不是给 mock 加特权 —— 真机上确实支持：S41 点折叠块标题就是走
+     `gh.onclick = …` + syntheticClick，真机两轮都真的展开了（说明 UXP 认这个写法）。
+     之前 mock 只有 addEventListener，于是 tools/table.js 的按钮在离线**点不动**。 */
+  set onclick(fn) {
+    if (!this._listeners) this._listeners = Object.create(null);
+    if (fn) this._listeners.click = [fn];
+    else delete this._listeners.click;
+  }
+  get onclick() {
+    const a = this._listeners && this._listeners.click;
+    return (a && a[0]) || null;
+  }
   removeEventListener(type, fn) {
     const a = this._listeners[type];
     if (!a) return;
@@ -280,6 +293,21 @@ function makeFolder(prefix) {
 }
 
 const mockFolder = makeFolder("");
+
+/* v0.4.2：把**插件自带**的样例真读进虚拟盘，模拟 `getPluginFolder()`。
+   这样离线也能点面板里的「内置样例」，跑完整条"读字节 → 解码 → 预览"链路
+   （系统文件选择器自动化点不了，只能靠这条同源入口补上行为断言）。
+   ⚠️ mock 的二进制读是 `String(v)` + `charCodeAt` 还原字节 ⇒ 这里必须用 **latin1**
+   （一字符 = 一字节）读，才能逐字节一致 —— GBK 那份错一个字节，"中文"就整片解错。 */
+try {
+  const sampleDir = path.join(PKG, "samples");
+  dirs["samples"] = true;
+  for (const f of fs.readdirSync(sampleDir)) {
+    files["samples/" + f] = fs.readFileSync(path.join(sampleDir, f), "latin1");
+  }
+} catch (e) {
+  console.log("（离线：插件样例目录读不到，22d 会失败）" + ((e && e.message) || e));
+}
 
 const mockUxp = {
   storage: {
@@ -955,6 +983,57 @@ async function main() {
       (mountErr ? "挂载抛异常：" + mountErr + "　" : "挂载不抛异常　") +
         "选择器缺 " + missing.length + (missing.length ? "=[" + missing.join(",") + "]" : "") +
         "　（画面效果与几何仍只能上真机，见 S41）"
+    );
+    try {
+      tMod.unmount();
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  /* ---- 22d. 内置样例：**真点一次「GBK」芯片**（v0.4.2）
+     系统文件选择器自动化点不了 ⇒ 面板上给了一条"不弹窗"的同源入口
+     （只有"怎么拿到字节"不同：`getPluginFolder()` 而非 `getFileForOpening()`）。
+     这里测 **GBK** —— 三种编码里最容易踩的那种，也正是 v0.3.9 花了一整轮做的表。
+     判据用**独立算出来的期望值**（7 行 / 首格「开学季特训营」），不复用模块的中间结果。 */
+  {
+    const tMod = require(path.join(PKG, "tools", "table.js"));
+    let err = null;
+    try {
+      await tMod.mount(view, { setStatus() {} });
+      await sleep(200);
+      const chip = document.getElementById("vt-tbl-sample-gbk");
+      if (!chip) {
+        err = "找不到 GBK 样例芯片（#vt-tbl-sample-gbk）";
+      } else {
+        chip.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+        for (let i = 0; i < 40; i++) {
+          const g = document.getElementById("vt-tbl-grid");
+          if (g && g.children.length > 1) break;
+          await sleep(50);
+        }
+      }
+    } catch (e) {
+      err = (e && e.message) || String(e);
+    }
+
+    const srcTxt = (document.getElementById("vt-tbl-src") || {}).textContent || "";
+    const encTxt = (document.getElementById("vt-tbl-enc") || {}).textContent || "";
+    const grid = document.getElementById("vt-tbl-grid");
+    const rows = grid ? grid.children.length : 0;
+    // 期望值自己算：样例 7 行 CSV（1 表头 + 6 数据），预览渲染的是"表头 + 全部数据行"
+    const firstCell = grid && grid.children[1] && grid.children[1].children[0]
+      ? String(grid.children[1].children[0].textContent || "") : "";
+
+    check(
+      "22d 内置样例（GBK）：点芯片 → 读字节 → 查表解码 → 预览渲染",
+      err === null && String(srcTxt).indexOf("prices-2026-gbk.csv") >= 0 &&
+        String(encTxt).indexOf("GBK") >= 0 && rows === 7 && firstCell === "开学季特训营",
+      (err ? "异常：" + err + "　" : "") +
+        "源行=" + JSON.stringify(String(srcTxt).slice(0, 34)) +
+        "　编码行=" + JSON.stringify(String(encTxt).slice(0, 26)) +
+        "　预览行数=" + rows + "（须 7 = 表头 + 6 数据）" +
+        "　首个数据格=" + JSON.stringify(firstCell) + "（须 「开学季特训营」）"
     );
     try {
       tMod.unmount();
