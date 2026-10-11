@@ -1800,6 +1800,36 @@ async function main() {
     );
   }
 
+  /* ---- 48. 缺素材尺寸时的兜底（v0.3.5，源码级） ----
+     契约 §5.4 写明 `width`/`height` **可能为 null**（PSD / PDF / 视频探不到尺寸）。
+     没有兜底时 `anchorInfo()` 算不出来就整个不传 ⇒ 退回画布居中、**九宫格被静默忽略**。
+     现在退回"用置入后的**实际尺寸**只定位"。真机判据是自检 S28，这里守**接线**：
+       · ps.js 有 anchorPlace 分支，且打上 byActualSize 标记
+       · library.js 在"算不出素材尺寸、但画布尺寸有"时真的把它传下去
+       · 缩略图高度多一条 `naturalWidth/Height` 回落（否则那些卡片永远卡在 120px 保底）
+       · 失败文案带上 scope/id（v0.3.5 的 not_found 就是靠它一眼定位的） */
+  {
+    const psSrc = fs.readFileSync(path.join(PKG, "lib", "ps.js"), "utf8");
+    const libSrc = fs.readFileSync(path.join(PKG, "tools", "library.js"), "utf8");
+
+    const hasBranch = psSrc.indexOf("o.anchorPlace") >= 0;
+    const marksIt = psSrc.indexOf("fix.byActualSize = true") >= 0;
+    const libPassesAnchor =
+      libSrc.indexOf("anchorPlace:") >= 0 && libSrc.indexOf("needAnchorPlace") >= 0;
+    const thumbFallback =
+      libSrc.indexOf("function thumbBoxHFor(") >= 0 && libSrc.indexOf("thumbBoxHFor(c, w)") >= 0;
+    const errHasCtx = libSrc.indexOf('scope=" + sel.scope + " · id=" + a.id') >= 0;
+
+    check(
+      "48 缺素材尺寸的兜底接线齐备（只定位不改尺寸 + 缩略图按 natural 回落 + 报错带 scope/id）",
+      hasBranch && marksIt && libPassesAnchor && thumbFallback && errHasCtx,
+      "ps.js anchorPlace 分支=" + hasBranch + "　打 byActualSize 标记=" + marksIt +
+        "　library 传下去=" + libPassesAnchor +
+        "　缩略图 natural 回落=" + thumbFallback +
+        "　报错带 scope/id=" + errHasCtx
+    );
+  }
+
   /* ---- 生成浏览器预览（用的是同一份渲染代码产出的 DOM） ---- */
   let previewPath = null;
   if (WANT_PREVIEW) {

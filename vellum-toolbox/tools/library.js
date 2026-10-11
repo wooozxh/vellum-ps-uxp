@@ -142,8 +142,19 @@ function anchorInfo(a) {
     const why = !ps.hasDocument()
       ? "没有打开的文档"
       : "缺尺寸（画布 " + (dW || "?") + "×" + (dH || "?") +
-        " / 素材 " + ((a && a.width) || "?") + "×" + ((a && a.height) || "?") + "）→ 只能居中";
-    return { ok: false, note: why };
+        " / 素材 " + ((a && a.width) || "?") + "×" + ((a && a.height) || "?") + "）";
+    // 🔴 v0.3.5：**画布尺寸有、只是素材缺尺寸**（契约 §5.4：`width`/`height` 可能为 null，
+    // 比如 PSD / PDF 探不到）—— 这种情况**不放弃**：交给 placeFile 用
+    // "**置入后的实际尺寸**"只做**定位**（尺寸保持 PS 给的样子）。
+    // 以前这里直接返回"算不出来"，调用方于是什么都不传 ⇒ 退回画布居中，
+    // 用户选的九宫格被**静默忽略**（这才是真问题，而不是"缺尺寸"本身）。
+    return {
+      ok: false,
+      note: why + (dW > 0 && dH > 0 ? "→ 按置入后的实际尺寸只定位（不改尺寸）" : "→ 只能居中"),
+      docW: dW,
+      docH: dH,
+      needAnchorPlace: dW > 0 && dH > 0,
+    };
   }
   const base = ps.placeBaseCenter();
   const r = ps.anchorOffset(S.anchor, dW, dH, a.width, a.height, base.ok ? base : null);
@@ -772,6 +783,21 @@ function thumbBoxH(a, imgW) {
   return r ? clampThumbH(imgW * r) : 0;
 }
 
+/**
+ * 同上，但**多一条回落**：素材自己没有像素尺寸时（PSD / PDF / 视频 —— 契约 §5.4 允许 null），
+ * 改用**缩略图自身的比例**（`naturalWidth/Height`）来算。
+ * 没有这一步，那些卡片会永远停在 CSS 保底的 120px，在一屏瀑布流里格格不入
+ * （而它们的缩略图恰恰是**有**比例信息的）。
+ * ⚠️ 图片没加载完时 `naturalWidth` 为 0 ⇒ 返回 0；`loadThumbs` 读完会再触发一次重算。
+ */
+function thumbBoxHFor(c, imgW) {
+  let r = thumbRatio(c && c.asset);
+  if (!r && c && c.img && c.img.naturalWidth > 0 && c.img.naturalHeight > 0) {
+    r = c.img.naturalHeight / c.img.naturalWidth;
+  }
+  return r ? clampThumbH(imgW * r) : 0;
+}
+
 /** 卡片信息区（名称 + 元信息两行 + 卡片下内边距）的估算高度 —— 只用于"投放给哪一列"。 */
 const CARD_FOOT_H = 56;
 
@@ -913,7 +939,7 @@ async function relayoutThumbs(token) {
       if (!w) continue;
       seen++;
       if (!firstW) firstW = w;
-      const h = thumbBoxH(c.asset, w);
+      const h = thumbBoxHFor(c, w);
       if (h) {
         c.th.style.height = h + "px";
         done++;
@@ -970,6 +996,9 @@ async function loadThumbs(token) {
       }
     }
   }
+  // 图都读完了 ⇒ 那些"素材本身没尺寸、要靠缩略图比例"的卡片这时才拿得到比例，重算一次。
+  // （有 asset 尺寸的卡片不受影响：两次算出来是同一个高度，不会跳。）
+  if (token === loadToken && refs) relayoutThumbs(++layoutToken);
 }
 
 /* --------------------------------------------------------------- 详情 */
@@ -1360,6 +1389,9 @@ async function doInsert() {
       );
       status(
         "✗ 取原图失败：" + (res.error || "未知原因") +
+        // ⚠️ 把"请求的是哪一条"一并说出来 —— 用户报障时这一行就是能直接转给软件侧的原始读数。
+        //    v0.3.5 的 `not_found` 就是靠 scope+id 一眼看出"handoff 只认任务库"。
+        "　〔请求：scope=" + sel.scope + " · id=" + a.id + "〕" +
         (res.timedOut ? "　—— 确认 VellumDesk 在运行、且已开启插件联动" : "")
       );
       return { ok: false, reason: "handoff-timeout", error: res.error };
@@ -1403,6 +1435,11 @@ async function doInsert() {
     const placed = await ps.placeFile(inc.entry, {
       verify: "change",
       targetRect: ai.ok ? ai.rect : null,
+      // v0.3.5：缺素材尺寸时，退回"用置入后的实际尺寸只定位"（见 ps.js 的 anchorPlace 分支）
+      anchorPlace:
+        !ai.ok && ai.needAnchorPlace
+          ? { anchor: S.anchor, docW: ai.docW, docH: ai.docH }
+          : null,
       expectRect: ai.ok ? ai.rect : null,
     });
     await log.appendLog(

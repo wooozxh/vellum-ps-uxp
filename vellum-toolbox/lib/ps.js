@@ -1447,6 +1447,36 @@ async function placeFile(source, opts) {
   let fix = null;
   if (changed && wantRect) {
     fix = await applyLayerRect(wantRect);
+  } else if (changed && o.anchorPlace) {
+    /* ---- v0.3.5：素材**缺 `width`/`height`** 时的兜底（契约 §5.4：这两个字段可能为 null）----
+       拿不到像素尺寸 ⇒ 不知道"它本该多大" ⇒ 既**不猜**、也**不整个放弃**：
+       把 PS 给的实际尺寸**当成目标尺寸**，只做**定位**（尺寸保持原样）。
+       收益：落点九宫格照样生效；代价：尺寸由 PS 决定（本来也无从校正）。
+       ⚠️ 对照：没有这条兜底时 `anchorInfo()` 会返回"算不出来"，调用方于是**什么都不传**
+          ⇒ 退回最原始的置入（画布居中）——用户选的格子被**静默忽略**。 */
+    const b0 = readActiveLayerBounds();
+    if (!b0.ok) {
+      fix = { ok: false, error: "量不到置入后的尺寸：" + b0.error, steps: [] };
+    } else {
+      const aw = b0.bounds.right - b0.bounds.left;
+      const ah = b0.bounds.bottom - b0.bounds.top;
+      const ap = o.anchorPlace || {};
+      const r = anchorOffset(ap.anchor, ap.docW, ap.docH, aw, ah);
+      if (!r.ok || !(aw > 0) || !(ah > 0)) {
+        fix = { ok: false, error: "算锚点失败：" + (r.error || "实际尺寸为 0"), steps: [] };
+      } else {
+        fix = await applyLayerRect({
+          left: r.x,
+          top: r.y,
+          right: r.x + aw,
+          bottom: r.y + ah,
+        });
+        if (fix) {
+          fix.byActualSize = true; // 告诉调用方：这次是"只定位、没改尺寸"
+          fix.anchor = ap.anchor;
+        }
+      }
+    }
   }
 
   // 落点校验：读回真实 bounds。**判据是"落在期望矩形上"**，不是"命令没报错"。

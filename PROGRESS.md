@@ -1320,3 +1320,41 @@
   - ⏳ 窄面板适配 / 品牌 HEX / S17 / 下拉键盘 / 真鼠标拖拽 / S20c / 远端尚未 push
   - ℹ️ 软件侧 `docs/47`（变更后 1.5s 防抖自动重写镜像）上线后，"要点刷新才看得到新素材"的根因就没了
     —— 插件侧本来每 3 秒就自动对一次 revision
+
+## v0.3.5 · 通用库取图失败（not_found）+ 缺尺寸兜底（2026-10-11）
+
+**输入**：① 用户报**通用库素材置入失败**（截图 `✗ 取原图失败：not_found`），**任务库正常**；
+② 用户明确"一定会置入 **PSD / PDF**"，要求补兜底时**记得考虑缩略图**。
+
+- 🔴 **`not_found` 定性：软件侧的 handoff 没按 `scope` 查**（插件侧取证完整）
+  ```
+  15:49:18  req assetId=85   scope=brand → res ok=false  err=not_found
+  15:49:22  req assetId=112  scope=task  → res ok=true   incoming.jpg 627927 B  ✓
+  15:49:26  req assetId=56   scope=brand → res ok=false  err=not_found
+  15:49:30  req assetId=59   scope=brand → res ok=false  err=not_found
+  ```
+  插件传的 `scope` 与缩略图命名空间 `b<id>` 同源、**没传错**；任务库同时刻一次就通。
+  ⚠️ **真正的风险不是 not_found 而是串库** —— §5.5 写明两库 id 各自从 1 起，
+  只按 id 查一旦撞上会拷回**另一张图**。契约 §六 拓扑只写"按 assetId 反查"是**插件侧文档漏写**，
+  已在 `LINK-LOG` 补建议（`scope` 必填、必须在该 scope 内反查）+ 请软件侧改成 (scope, assetId)。
+  - 插件侧顺手改反馈：`not_found` → `…〔请求：scope=brand · id=59〕`（这一行就是能直接转给对方的读数）。
+- ✅ **缺 `width`/`height` 的兜底**（契约 §5.4：PSD/PDF/视频可能为 null）
+  - 以前 `anchorInfo()` 算不出就**什么都不传** ⇒ 退回画布居中、**九宫格被静默忽略**
+    —— 问题的本质不是"缺尺寸"，而是"**缺尺寸时整个功能一起放弃**"。
+  - 现在传 `anchorPlace:{anchor,docW,docH}`，`placeFile` 用**置入后的实际尺寸**当目标尺寸
+    ⇒ 只做 translate（scale 自然被跳过）⇒ **尺寸保持 PS 给的样子，落点照样落在格子上**。
+- ✅ **缩略图那条**（用户特意点出）：缺 `width/height` 的卡片盒子高度改用**缩略图自身的
+  `naturalWidth/Height`**（`thumbBoxHFor()`），`loadThumbs` 读完再重算一次 ——
+  否则那些卡片永远卡在 CSS 保底的 120px，在一屏瀑布流里格格不入。
+- **自证**：真机 **32/33**（`15:55:47`/`15:56:47`，`dur≈19.9s`），唯一 FAIL = 已知 S17；
+  离线 **52/52**（新增 48）。新增 **S28**：
+  `锚点=右上（画布 2000×2000）　走「只定位」那条路=true　落点=1078,0 (922×922)　尺寸未改=true`
+  ⚠️ **S28 第一版又是"样本没有区分度"**：画布取 400×400，素材被缩到填满 ⇒ "贴右上"和"贴左上"
+  都是 0,0，判据**碰巧成立**。改成 2000×2000（PS 不缩放）并要求 `left>0` 才真正测到。
+  —— 同一条纪律的**第三次**现场版（S26 目标取成画布尺寸 / S27 只剩 1 条 / 这条）。
+- **改动**：`lib/ps.js`、`tools/library.js`、`lib/selfcheck.js`（+S28）、`tools/offline-smoke.cjs`（+48）、
+  `index.js`/`manifest.json`（0.3.5）、`docs/31`（新）；跨项目 `LINK-LOG.md`
+- **遗留**
+  - 🔴 **软件侧修好 (scope, assetId) 之前，通用库素材仍然置入不了**（插件是被动读镜像的那一端，无解）
+  - ℹ️ PSD/PDF 的尺寸现状是"保持 PS 给的样子"；若将来觉得不合理，可让软件侧**读 PSD 文件头**补 `width/height`
+  - ⏳ 窄面板适配 / 品牌 HEX / S17 / 下拉键盘 / 真鼠标拖拽 / S20c / 远端尚未 push

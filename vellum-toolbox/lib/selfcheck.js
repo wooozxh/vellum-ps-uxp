@@ -2766,12 +2766,81 @@ async function run(ctx, deps) {
     rec(S26, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S28: 素材缺 `width`/`height` 时的兜底（v0.3.5 新增）
+     🔴 契约 §5.4 明确 `width`/`height` **可能为 null**（PSD / PDF / 视频探不到尺寸）。
+        没有兜底时，`anchorInfo()` 会返回"算不出来" ⇒ 调用方什么都不传
+        ⇒ 退回最原始的置入（画布居中）—— **用户选的落点九宫格被静默忽略**。
+     修法：拿不到尺寸时，把"PS 给的实际尺寸"当成目标尺寸，**只定位、不改尺寸**。
+
+     判据三条，都点在"这次到底做了什么"上（不是"没报错"）：
+       ① `fix.byActualSize === true` —— 确实走的是"只定位"这条路
+       ② 置入后**右上角贴住画布右上角**（±1px）—— 锚点真的生效了
+       ③ 校正前后**宽高一致** —— 这才叫"只定位"（不是偷偷缩放了一下）
+     ⚠️ 只作用在自建临时文档上，跑完关掉。 */
+  const S28 = "S28 缺素材尺寸时仍能定位（anchorPlace：只定位、不改尺寸）";
+  try {
+    const tf28 = await testThumbFile();
+    const e28 = tf28 ? await data.entryIn(tf28.dir, tf28.name) : null;
+    if (!e28) {
+      rec(S28, true, "【不适用】镜像里没有可用的测试图（" + ((tf28 && tf28.name) || "无") + "）");
+    } else {
+      /* 🔴 画布必须**明显大于**素材（这里 2000 > 缩略图换算后的 ~907）——
+         否则 PS 的"超出画布就等比缩到适应"会让素材**填满画布**，那时"贴右上"和"贴左上"
+         都是 0,0，**锚点生没生效根本测不出来**（第一版用 400×400，素材正好缩成 400×400，
+         判据 `0+400 == 400` 是**碰巧**成立的 —— 又一次"样本没有区分度"）。 */
+      const SIDE = 2000;
+      const sc28 = await ps.createScratchDoc({ size: SIDE, name: "Vellum 自检临时文档(兜底)" });
+      if (!sc28 || !sc28.ok) {
+        rec(S28, false, "建临时文档失败：" + ((sc28 && sc28.error) || "未知"));
+      } else {
+        try {
+          const p28 = await ps.placeFile(e28, {
+            verify: "change",
+            anchorPlace: { anchor: "tr", docW: SIDE, docH: SIDE },
+          });
+          const fx = p28.fix || null;
+          const fin = p28.rect || null;
+          const bW = fx && fx.before ? Math.round(fx.before.right - fx.before.left) : 0;
+          const bH = fx && fx.before ? Math.round(fx.before.bottom - fx.before.top) : 0;
+          const aW = fx && fx.after ? Math.round(fx.after.right - fx.after.left) : 0;
+          const aH = fx && fx.after ? Math.round(fx.after.bottom - fx.after.top) : 0;
+          const sizedSame = bW > 0 && bW === aW && bH === aH;
+          // ⚠️ 必须要求 `fin.left > 0` —— 素材若恰好填满画布，"右上"也会是 0,0，
+          //    那样这条判据就是"永远成立"（第一版正是这么过的）。
+          const atTopRight =
+            !!fin && fin.left > 0 &&
+            Math.abs(fin.left + fin.w - SIDE) <= 1 && Math.abs(fin.top) <= 1;
+          const byActual = !!(fx && fx.byActualSize);
+
+          rec(
+            S28,
+            byActual && atTopRight && sizedSame,
+            "锚点=右上（画布 " + SIDE + "×" + SIDE + "）" +
+            "　走「只定位」那条路=" + byActual +
+            "　落点=" + (fin ? fin.left + "," + fin.top + " (" + fin.w + "×" + fin.h + ")" : "?") +
+            "（须右上角贴 " + SIDE + ",0）" +
+            "　尺寸未改=" + sizedSame + "（" + bW + "×" + bH + " → " + aW + "×" + aH + "）" +
+            (fx && fx.error ? "　fixErr=" + fx.error : "")
+          );
+        } finally {
+          try {
+            await ps.closeDocument(sc28.id);
+          } catch {
+            /* 忽略 */
+          }
+        }
+      }
+    }
+  } catch (e) {
+    rec(S28, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.3.4",
+    version: "0.3.5",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,
