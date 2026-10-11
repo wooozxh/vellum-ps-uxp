@@ -2665,6 +2665,30 @@ async function main() {
       "3 条构造命令里命中 " + poisonedRename.filter(idRenameOk).length + " 条（必须**正好 1**）"
     );
 
+    /* ⑦ 观测完整性（v0.5.1）：位移耗时曾被一行 `out.moveMs = tMove;` **覆盖成恒 0** ——
+       而 `tMove` 声明后从未被赋值 ⇒ 真机 boot.log 里的「移动 0」是**假读数**，
+       真实位移耗时被藏在「总耗时 − dup − step2」里（约 460ms / 6 份）⇒ 待办「N=20+ 性能」是盲的。
+       这里做**源码级**断言（附负对照），防止它再被写回来。 */
+    const psSrcT = fs.readFileSync(path.join(PKG, "lib", "ps.js"), "utf8");
+    const tblSrcT = fs.readFileSync(path.join(PKG, "tools", "table.js"), "utf8");
+    const timingJudge = (src) => ({
+      realMove: /out\.moveMs\s*=\s*Date\.now\(\)\s*-\s*t3/.test(src),
+      noOverwrite: !/out\.moveMs\s*=\s*tMove/.test(src),
+      noDeadVar: !/\btMove\b/.test(src),
+      walkMeasured: /out\.walkMs\s*=\s*tWalk/.test(src) && /walkMs:\s*0/.test(src),
+    });
+    const tOK = timingJudge(psSrcT);
+    const tPoison = timingJudge(psSrcT.replace("out.walkMs = tWalk;", "out.moveMs = tMove;"));
+    const tblOk = /r\.walkMs/.test(tblSrcT) && /r\.moveMs/.test(tblSrcT) && /batch bind col=/.test(tblSrcT);
+    check(
+      "M3b 观测：位移耗时如实回传（不许被 `out.moveMs = tMove` 覆盖）+ 遍历单独计时 + 面板打全",
+      tOK.realMove && tOK.noOverwrite && tOK.noDeadVar && tOK.walkMeasured && !tPoison.noOverwrite && tblOk,
+      "真值赋值=" + tOK.realMove + "　无覆盖行=" + tOK.noOverwrite + "　无死变量 tMove=" + tOK.noDeadVar +
+      "　遍历单独计时=" + tOK.walkMeasured + "　负对照抓到覆盖=" + (!tPoison.noOverwrite) +
+      "　面板引用 walkMs/moveMs/绑定日志=" + tblOk +
+      "　⇒ 位移与遍历的耗时都能被量到；`step2Ms` **不含**位移（面板日志已写明）"
+    );
+
     mockApp.documents.length = 0;
   } catch (e) {
     check("M3 命令形状离线断言（自身抛异常）", false, (e && e.message) || String(e));

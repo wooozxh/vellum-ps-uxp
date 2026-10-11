@@ -3046,7 +3046,7 @@ async function exportByRows(plan, opts) {
      S48 会**两个都单条验**再决定（AM move 拿组当 target 只动一个子层，所以这里是逐叶层发）。 */
   const moveVia = o.moveVia === "am" ? "am" : "dom";   // 默认走"选中+translate"（AM move 不认目标）
   const out = {
-    ok: false, dupMs: 0, dupCount: 0, step2Ms: 0, writesMs: 0, moveMs: 0,
+    ok: false, dupMs: 0, dupCount: 0, step2Ms: 0, walkMs: 0, writesMs: 0, moveMs: 0,
     copies: 0, newLayers: 0, writes: 0, writesWant: 0, moved: 0, leafMoves: 0, moves: null,
     missing: [], firstError: null, error: null,
   };
@@ -3074,9 +3074,10 @@ async function exportByRows(plan, opts) {
   }
   out.dupMs = Date.now() - t0;
 
-  /* ② **新的模态**里读副本 + 写文字 + 移动 */
+  /* ② **新的模态**里读副本 + 写文字。
+     ⚠️ 位移在 **③**，**不在 `step2Ms` 里** —— `step2Ms` 只包住"遍历图层树 + 写文字"这一段。 */
   let tWrite = 0;
-  let tMove = 0;
+  let tWalk = 0;
   const t1 = Date.now();
   try {
     await runModal(async () => {
@@ -3094,7 +3095,9 @@ async function exportByRows(plan, opts) {
           if (l.layers && l.layers.length) walkNew(l.layers, nm);
         }
       };
+      const tw0 = Date.now();
       walkNew(doc.layers, "(顶层)");
+      tWalk += Date.now() - tw0;
       out.newLayers = Object.keys(fresh).length;
 
       for (const cp of plan.copies) {
@@ -3114,7 +3117,9 @@ async function exportByRows(plan, opts) {
             if (k.layers && k.layers.length) collect(k.layers);
           }
         };
+        const tc0 = Date.now();
         collect(g.layers);
+        tWalk += Date.now() - tc0;
         for (let i = 0; i < plan.writes.length; i++) {
           const wr = plan.writes[i];
           if (wr.copy !== cp.index) continue;
@@ -3187,7 +3192,7 @@ async function exportByRows(plan, opts) {
     out.moveMs += Date.now() - tm0;
   }
   out.writesMs = tWrite;
-  out.moveMs = tMove;
+  out.walkMs = tWalk;
   if (!out.error) {
     out.ok = out.copies === plan.n && out.writes === plan.writeCount;
     if (!out.ok) {

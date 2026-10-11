@@ -4674,10 +4674,14 @@ async function run(ctx, deps) {
         /* ⚠️ 允许 ±1：bounds 是整数，同一套字形在不同实例上会差 1px（实测 53/92 vs 计划 52/93） */
         const moveOk = dx0 !== null && Math.abs(dx0 - plan.copies[0].dx) <= 1 &&
           Math.abs(dy0 - plan.copies[0].dy) <= 1;
-        const judge = r.ok === true && r.copies === 3 && r.writes === 6 && r.moved === 3 &&
+        /* 🔴 v0.5.1：`r.moveMs > 0` 是**真机**守卫 —— 曾经有一行 `out.moveMs = tMove;` 把它覆盖成恒 0
+           （而 `tMove` 从未被赋值），日志里的「移动 0」是**假读数**、位移成本完全不可见。
+           本用例有非零网格位移 ⇒ 位移必然耗时 ⇒ 非零即证明计时回传链路是活的。 */
+        const judge = r.ok === true && r.copies === 3 && r.writes === 6 && r.moved === 3 && r.moveMs > 0 &&
           namesOk && c1ok && c2ok && c3ok && tplOk && moveOk;
-        await log.appendLog("S48 明细：r=" + JSON.stringify({ ok: r.ok, copies: r.copies, writes: r.writes, writesWant: r.writesWant, moved: r.moved }) +
-          " 耗时 dup=" + r.dupMs + "ms step2=" + r.step2Ms + "ms（写 " + r.writesMs + " / 移动 " + r.moveMs + "）" +
+        await log.appendLog("S48 明细：r=" + JSON.stringify({ ok: r.ok, copies: r.copies, writes: r.writes, writesWant: r.writesWant, moved: r.moved, moveMs: r.moveMs }) +
+          " 耗时 dup=" + r.dupMs + "ms step2=" + r.step2Ms + "ms（遍历 " + r.walkMs + " / 写文字 " + r.writesMs + "）" +
+          " 位移=" + r.moveMs + "ms（" + r.moved + " 份，**不在 step2 里**）" +
           " 计划预估=" + plan.estimatedMs + "ms　副本名=" + JSON.stringify(got.copyNames) +
           "　原件=" + JSON.stringify(got.tplTexts) + "　副本1=" + JSON.stringify(got.c1 && got.c1.texts) +
           "　位移=" + JSON.stringify([dx0, dy0]) + "（须 " + JSON.stringify([plan.copies[0].dx, plan.copies[0].dy]) + "）" +
@@ -4688,6 +4692,7 @@ async function run(ctx, deps) {
           S48,
           judge,
           "复制 " + r.copies + "/3 份、写 " + r.writes + "/6 处、移动 " + r.moved + "/3" +
+          "（位移耗时 " + r.moveMs + "ms > 0 —— 计时回传是活的）" +
           "　副本名对=" + namesOk + "（" + JSON.stringify(got.copyNames) + "）" +
           "　第1份=" + JSON.stringify(got.c1 && got.c1.texts) + (c1ok ? " ✓" : " ✗") +
           "　第2份=" + JSON.stringify(got.c2 && got.c2.texts) + (c2ok ? " ✓" : " ✗") +
@@ -4698,7 +4703,7 @@ async function run(ctx, deps) {
           (mAm.targetMoved ? "动" : "**不动**") + "/对照组" + (mAm.otherUnmoved ? "不动" : "**动了**") +
           "、DOM translate=" + (mDom.targetMoved ? "动" : "**不动**") + "/对照组" + (mDom.otherUnmoved ? "不动" : "**动了**") +
           " ⇒ 两个原语都**只认当前活动层**，实现改走「先选中、再 translate」" +
-          "　耗时：复制批次 " + r.dupMs + "ms / 阶段二 " + r.step2Ms + "ms（写 " + r.writesMs + "、移动 " + r.moveMs + "）" +
+          "　耗时：复制批次 " + r.dupMs + "ms / 阶段二 " + r.step2Ms + "ms（遍历 " + r.walkMs + "、写文字 " + r.writesMs + "）/ 位移 " + r.moveMs + "ms" +
           "、计划预估 " + plan.estimatedMs + "ms" +
           (r.error ? "　err=" + r.error : "") +
           "　⇒ " + (judge

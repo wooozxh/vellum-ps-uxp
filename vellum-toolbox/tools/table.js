@@ -565,6 +565,8 @@ function renderBindGroup() {
   );
   g.gb.appendChild(field("模板来源", chips("vt-tbl-tplpick", gItems, S.tplName || "", (v) => {
     S.tplName = v || "";
+    /* 观测：纯 UI 状态变更也要留痕，否则"点了没生效"查不到 */
+    log.appendLog("batch tplpick " + (v ? "指定=「" + v + "」" : "跟随选中"));
     savePref();
     refreshTemplate().then(() => { if (alive()) renderBindGroup(); });
   })));
@@ -602,6 +604,11 @@ function renderBindGroup() {
         if (!S.bind) S.bind = {};
         if (v) S.bind[c] = v; else delete S.bind[c];
         S.bigOk = false;
+        /* 观测：绑定是纯 UI 状态，不落日志的话"点了没生效"就只剩猜 */
+        const tl = (S.tpl && S.tpl.textLayers) ? S.tpl.textLayers[Number(v)] : null;
+        log.appendLog("batch bind col=" + c + "「" + nm + "」→ " +
+          (v === "" || v === undefined || v === null ? "不绑定" : ("文字层 #" + (Number(v) + 1) + " " + (tl ? tl.name : "?"))) +
+          "（已绑 " + Object.keys(S.bind || {}).length + "/" + S.norm.header.length + "）");
         savePref();
         renderBindGroup();
       })));
@@ -700,7 +707,8 @@ async function doExport() {
   S.bigOk = false;
   await log.appendLog("batch export " + (r.ok ? "ok" : "FAILED") + " n=" + plan.n + " copies=" + r.copies + "/" + plan.n +
     " writes=" + r.writes + "/" + r.writesWant + " moved=" + r.moved + " ms=" + ms +
-    " dup=" + r.dupMs + "ms(" + r.dupCount + "条) step2=" + r.step2Ms + "ms（写 " + r.writesMs + " / 移动 " + r.moveMs + "）" +
+    " dup=" + r.dupMs + "ms(" + r.dupCount + "条) step2=" + r.step2Ms + "ms（遍历 " + r.walkMs + " / 写文字 " + r.writesMs + "）" +
+    " 位移=" + r.moveMs + "ms(" + r.moved + " 份 逐份选中→translate，**不在 step2 里**)" +
     " newLayers=" + r.newLayers +
     (r.missing && r.missing.length ? " missing=" + r.missing.slice(0, 3).join("；") : "") +
     (r.firstError ? " firstErr=" + r.firstError : "") + (r.error ? " err=" + r.error : ""));
