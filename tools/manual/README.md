@@ -35,6 +35,19 @@ PY=C:/Users/<你>/.workbuddy/binaries/python/envs/default/Scripts/python.exe
 "$PY" tools/manual/shoot_win.py keys   --pid <PID> --index 0  --combo ctrl+1
 ```
 
+## 排版：长条截图用哪几个类
+
+插件面板截图是 **422×732 的长条**（宽高比 ≈0.58）—— 满宽放一张就占掉近两屏，整本会被图压成画册。
+`manual.css` 里为此加了三个类（都在窄屏自动回落）：
+
+| 类 | 用途 | 尺寸 |
+|---|---|---|
+| `figure.shot` | 单张竖图，收进一个有合适比例的容器 | 宽 270 ⇒ 高 ≈468 |
+| `.figside` | **图文并排**：左文右图，把横向空间用起来（首选） | 左 `1fr` + 右 270 |
+| `.shots` | 多张竖图并排 | `repeat(auto-fit,270px)`，居中 |
+
+横图（比如画布上生成出来的表，1112×542）**照旧用满宽的 `figure`**，别塞进容器。
+
 ## 踩过的坑（都会让"看起来做了"其实没做）
 
 - 🔴 **UXP 面板是一个独立顶层窗口**，不在 PS 主窗口的 `PrintWindow` 结果里
