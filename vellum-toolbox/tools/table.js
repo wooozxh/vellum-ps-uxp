@@ -361,9 +361,7 @@ function renderDrawer() {
   );
   refs.drawer.appendChild(field("绑到图层",
     chips("vt-tbl-colbind", itemsD, (S.bind || {})[c], (v) => {
-      if (!S.bind) S.bind = {};
-      if (v) S.bind[c] = v; else delete S.bind[c];
-      S.bigOk = false;
+      setBind(c, v);
       savePref();
       renderDrawer();
       renderBindGroup();
@@ -601,9 +599,7 @@ function renderBindGroup() {
     const nm = String(S.norm.header[c] || ("第 " + (c + 1) + " 列"));
     g.gb.appendChild(field(nm.length > 7 ? nm.slice(0, 7) + "…" : nm,
       chips("vt-tbl-bind-" + c, items, (S.bind || {})[c], (v) => {
-        if (!S.bind) S.bind = {};
-        if (v) S.bind[c] = v; else delete S.bind[c];
-        S.bigOk = false;
+        setBind(c, v);
         /* 观测：绑定是纯 UI 状态，不落日志的话"点了没生效"就只剩猜 */
         const tl = (S.tpl && S.tpl.textLayers) ? S.tpl.textLayers[Number(v)] : null;
         log.appendLog("batch bind col=" + c + "「" + nm + "」→ " +
@@ -628,6 +624,19 @@ function renderBindGroup() {
     g.gb.appendChild(note("这份数/写入次数超过闸门（份数 ≤" + plan.limits.rows + "、写入 ≤" + plan.limits.writes +
       "）—— **再点一次按钮**就真的开始（约 " + shortMs(plan.estimatedMs) + "）。不会静默截断。"));
   }
+}
+
+/**
+ * 设置某列的绑定 —— **面板里唯一的写入口**（绑定表 + 列抽屉两个控件共用，别各写一行）。
+ * 🔴 值 `0` 是**合法序号**（模板里第 1 个文字层）⇒ **绝不能用 `if (v)` 判空**：
+ *   `v = 0` 会被当成"没绑"直接 `delete` 掉，表现出来就是「点第 1 个图层 UI 毫无反应」（v0.5.2 真机反馈）。
+ *   与 `lib/batch.js` 的 `isUnbound()`（"0 不能当没绑"）是同一条纪律的两端。
+ */
+function setBind(col, v) {
+  if (!S.bind) S.bind = {};
+  if (v === "" || v === undefined || v === null) delete S.bind[col];
+  else S.bind[col] = v;
+  S.bigOk = false;
 }
 
 /** 一行"可选项芯片"（自绘：不用 `<select>` —— UXP 里外观改不动；也不用浮层 —— 面板会被 overflow 裁掉）。

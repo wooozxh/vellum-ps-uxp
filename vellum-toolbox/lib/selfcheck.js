@@ -5121,6 +5121,141 @@ async function run(ctx, deps) {
     rec(S42, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S49: 绑定**第 1 个文字层**（序号 0）能生效（v0.5.2 新增）
+     用户真机反馈原话：「**模板的第一个图层不能被绑定，点击 UI 不更新**」。
+     根因：面板里 `if (v) S.bind[c] = v; else delete S.bind[c];` —— 序号 `0` 是**合法绑定**
+     （模板里第 1 个文字层）却被当成假值直接删掉。`lib/batch.js` 那条纪律（0 不能当没绑）修过了，
+     **面板的两个入口漏了**（绑定表 + 列抽屉）。
+     判据读**界面**：chip 高亮 / 警告行 / 出稿按钮就绪 —— 用户看到的就是这三样。
+     🔴 期望值不许依赖残留状态：先写一份**基线偏好**（无 bind），跑完原样还原（同 S42 的套路）。 */
+  const S49 = "S49 绑定第 1 个文字层（序号 0）能生效 —— 高亮挪过去 + 警告「4 列没绑定」+ 出稿按钮就绪";
+  try {
+    const sc49 = await ps.createScratchDoc({ size: 600, name: "Vellum 自检临时文档(绑定)" });
+    if (!sc49 || !sc49.ok) {
+      rec(S49, false, "建临时文档失败：" + ((sc49 && sc49.error) || "未知"));
+    } else {
+      const txt49 = (id) => {
+        const e = document.getElementById(id);
+        return e ? String(e.textContent || "") : "";
+      };
+      /* ⚠️ 不用 `Array.prototype.slice.call(NodeList)`（UXP 的 children 是类数组，不保证能 slice）*/
+      const kids49 = (box) => {
+        const out = [];
+        const n = box && box.children ? box.children.length : 0;
+        for (let i = 0; i < n; i++) out.push(box.children[i]);
+        return out;
+      };
+      const classOf49 = (e) => String((e && e.getAttribute("class")) || "");
+      let chipLabels = [];
+      let onIdx = [];
+      let warnTxt = "";
+      let btnTxt = "";
+      let tplInfo = "";
+      let stepErr = null;
+      const prefRaw49 = await data.readText("table-pref.json", "");
+      let prefTouched49 = false;
+      try {
+        await data.writeText("table-pref.json",
+          '{"variant":1,"regionSource":"selection","headerRow":true,"style":{}}');
+        prefTouched49 = true;
+      } catch (e) {
+        stepErr = "写基线偏好失败：" + ((e && e.message) || e);
+      }
+      try {
+        await ps.activateDocument(sc49.id);
+        const TPLX = "vt-s49-版式";
+        await ps.runModal(async () => {
+          await ps.batchPlay([ps.groupMakeDesc(TPLX)], {});
+          await ps.batchPlay([
+            ps.textLayerBoxDesc({ text: "甲", box: { left: 40, top: 40, right: 200, bottom: 80 }, sizePt: 18, rgb: { r: 0, g: 0, b: 0 } }),
+            ps.textLayerBoxDesc({ text: "乙", box: { left: 40, top: 100, right: 200, bottom: 140 }, sizePt: 18, rgb: { r: 0, g: 0, b: 0 } }),
+          ], {});
+        }, "Vellum：S49 建模板（1 组 + 2 文字层）");
+        await ps.runModal(async () => {
+          let hit = null;
+          const walk = (arr) => {
+            for (const l of arr || []) {
+              if (hit) return;
+              if (l.kind === "group" && String(l.name) === TPLX) { hit = l; return; }
+              if (l.layers && l.layers.length) walk(l.layers);
+            }
+          };
+          walk(ps.app.activeDocument.layers);
+          if (!hit) throw new Error("找不到 " + TPLX);
+          ps.app.activeDocument.activeLayers = [hit];
+        }, "Vellum：S49 选中模板组（面板靠「跟随选中」认模板）");
+
+        await ctx.shell.showTool("table", "selfcheck");
+        await waitFor(() => document.getElementById("vt-tbl"), 6000);
+        const schip49 = document.getElementById("vt-tbl-sample-gbk");
+        if (!schip49) {
+          stepErr = "找不到 GBK 样例芯片（#vt-tbl-sample-gbk）";
+        } else {
+          syntheticClick(schip49, null);
+          await waitFor(() => {
+            const g = document.getElementById("vt-tbl-grid");
+            return g && g.children.length === 7 ? true : null;
+          }, 6000);
+          const tplBtn49 = document.getElementById("vt-tbl-tplre");
+          if (!tplBtn49) {
+            stepErr = "找不到「重新检测模板」（#vt-tbl-tplre）";
+          } else {
+            syntheticClick(tplBtn49, null);
+            await waitFor(() => document.getElementById("vt-tbl-bind-0"), 6000);
+            const boxA = document.getElementById("vt-tbl-bind-0");
+            const chipsA = kids49(boxA);
+            chipLabels = chipsA.map((e) => String(e.textContent || ""));
+            const hitChip = chipsA[1];        // items[1] = 模板里**第 1 个**文字层（序号 0）
+            if (!hitChip) {
+              stepErr = "绑定芯片只有 " + chipsA.length + " 个（至少要有「不绑定」+ 1 个文字层）";
+            } else {
+              syntheticClick(hitChip, null);
+              /* 等的条件**就是**要判的那个东西：高亮挪到第 1 项 */
+              await waitFor(() => {
+                const box = document.getElementById("vt-tbl-bind-0");
+                if (!box) return null;
+                const cs = kids49(box);
+                return (cs[1] && classOf49(cs[1]).split(/\s+/).indexOf("on") >= 0) ? true : null;
+              }, 6000);
+              const boxB = document.getElementById("vt-tbl-bind-0");
+              const chipsB = kids49(boxB);
+              onIdx = chipsB
+                .map((e, i) => (classOf49(e).split(/\s+/).indexOf("on") >= 0 ? i : -1))
+                .filter((i) => i >= 0);
+              warnTxt = txt49("vt-tbl-bindwarn");
+              btnTxt = txt49("vt-tbl-docs");
+              tplInfo = txt49("vt-tbl-tplinfo");
+            }
+          }
+        }
+      } catch (e) {
+        stepErr = "步骤抛异常：" + ((e && e.message) || e);
+      }
+      const judge49 = stepErr === null && chipLabels.length === 3 &&
+        onIdx.length === 1 && onIdx[0] === 1 &&
+        warnTxt.indexOf("4 列没绑定") >= 0 && btnTxt.indexOf("生成 6 个稿件") >= 0;
+      rec(
+        S49,
+        judge49,
+        "绑定芯片 = " + JSON.stringify(chipLabels) + "（须 3 个：不绑定 + 2 个文字层）" +
+        "　点「1. x」后高亮在第 " + JSON.stringify(onIdx) + " 个（须 [1]）" +
+        "　警告行 = " + JSON.stringify(warnTxt.slice(0, 40)) + "（须含「4 列没绑定」）" +
+        "　出稿按钮 = " + JSON.stringify(btnTxt) + "（须「生成 6 个稿件」）" +
+        "　模板行 = " + JSON.stringify(tplInfo.slice(0, 44)) +
+        (stepErr ? "　⚠️ " + stepErr : "") +
+        "　⇒ " + (judge49
+          ? "序号 0 是**合法绑定**：点得动、界面跟着变、出稿计划成立（用户报的「点第 1 个图层没反应」不复现）"
+          : "⚠️ 有项没中 —— 见上面读数")
+      );
+      if (prefTouched49) {
+        try { await data.writeText("table-pref.json", prefRaw49 || "{}"); } catch { /* 忽略 */ }
+      }
+      try { await ps.closeDocument(sc49.id); } catch { /* 忽略 */ }
+    }
+  } catch (e) {
+    rec(S49, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- S41: 表格面板真机挂载（v0.4.1 新增，M3a 的「面板」那一半）
      面板 800+ 行、控件**全是自绘**（`sp-*` 未注册，UXP 的 CSS/组件都是子集）
      ⇒ 离线只能验到**结构**（选择器在不在），"它到底能不能挂起来、控件有没有几何"

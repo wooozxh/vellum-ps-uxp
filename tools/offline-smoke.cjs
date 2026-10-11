@@ -2689,6 +2689,92 @@ async function main() {
       "　⇒ 位移与遍历的耗时都能被量到；`step2Ms` **不含**位移（面板日志已写明）"
     );
 
+    /* ⑧ 绑定：模板里**第 1 个**文字层（序号 0）必须绑得上（v0.5.2 真机反馈）
+       症状 = 用户原话「模板的第一个图层不能被绑定，点击 UI 不更新」。
+       根因 = 面板里 `if (v) S.bind[c] = v; else delete S.bind[c];` —— `v = 0` 是**合法序号**
+       （模板第 1 个文字层）却被当成假值 ⇒ 直接 delete ⇒ 高亮不挪、计划仍说"一列都没绑上"。
+       `lib/batch.js` 里那条纪律（"0 不能当没绑"）修过了，**面板这两个入口漏了**。
+       这条**真点一次**（离线 mock 能挂真面板 + 派发 click），判据读**界面**（chip 高亮 + 警告行），
+       不复用内部变量 —— 用户看到的就是这两样。 */
+    try {
+      const tMod = require(path.join(PKG, "tools", "table.js"));
+      const tplG = {
+        id: 900, name: "离线模板组", kind: "group",
+        bounds: { left: 0, top: 0, right: 120, bottom: 90 },
+        layers: [
+          { id: 901, name: "标题", kind: "text", textItem: { contents: "旧标题" } },
+          { id: 902, name: "价格", kind: "text", textItem: { contents: "0" } },
+        ],
+      };
+      fakeDoc.layers = [tplG];
+      fakeDoc.activeLayers = [tplG];              // 模板来源 = 当前选中的组
+      mockApp.documents.length = 0;
+      mockApp.documents.push(fakeDoc);
+
+      await tMod.mount(view, { setStatus() {} });
+      await sleep(200);
+      const schip = document.getElementById("vt-tbl-sample-gbk");   // 先有数据，绑定表才渲染
+      if (schip) schip.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      for (let i = 0; i < 40; i++) {
+        const g = document.getElementById("vt-tbl-grid");
+        if (g && g.children.length > 1) break;
+        await sleep(50);
+      }
+      const tplBtn = document.getElementById("vt-tbl-tplre");       // 认模板
+      if (tplBtn) tplBtn.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      for (let i = 0; i < 40; i++) {
+        if (document.getElementById("vt-tbl-bind-0")) break;
+        await sleep(50);
+      }
+      const boxA = document.getElementById("vt-tbl-bind-0");
+      const chipsA = boxA ? Array.prototype.slice.call(boxA.children) : [];
+      const labels = chipsA.map((e) => String(e.textContent || ""));
+      const hit = chipsA[1];                                        // items[1] = 第 1 个文字层（序号 0）
+      if (hit) hit.dispatchEvent(new Event("click", { bubbles: true, cancelable: true }));
+      await sleep(200);
+
+      const boxB = document.getElementById("vt-tbl-bind-0");
+      const chipsB = boxB ? Array.prototype.slice.call(boxB.children) : [];
+      const onIdx = chipsB
+        .map((e, i) => (String(e.getAttribute("class") || "").split(/\s+/).indexOf("on") >= 0 ? i : -1))
+        .filter((i) => i >= 0);
+      const warnEl = document.getElementById("vt-tbl-bindwarn");
+      const warnTxt = warnEl ? String(warnEl.textContent || "") : "";
+      // 期望值独立算：样例 5 列，只绑第 1 列 ⇒ 未绑 **4** 列
+      check(
+        "22h-6 绑定：模板第 1 个文字层（序号 0）点得动 —— 高亮挪过去 + 警告说「4 列没绑定」",
+        chipsA.length === 3 && labels[0].indexOf("不绑定") >= 0 && labels[1] === "1. 标题" &&
+          onIdx.length === 1 && onIdx[0] === 1 && warnTxt.indexOf("4 列没绑定") >= 0,
+        "绑定芯片 = " + JSON.stringify(labels) + "　点后高亮在第 " + JSON.stringify(onIdx) + " 个（须 [1]）" +
+          "　警告行 = " + JSON.stringify(warnTxt.slice(0, 48)) + "（须含「4 列没绑定」）"
+      );
+      try { tMod.unmount(); } catch { /* 忽略 */ }
+    } catch (e) {
+      check("22h-6 绑定：模板第 1 个文字层（序号 0）点得动", false, "步骤抛异常：" + ((e && e.message) || String(e)));
+    }
+    fakeDoc.layers = [];
+    fakeDoc.activeLayers = [{ id: 201, name: "图层 1", kind: "pixel" }];
+    mockApp.documents.length = 0;
+
+    /* ⑨ 源码守卫：面板**不许**再用 `if (v) S.bind[...]` 判空（序号 0 会被当假值删掉）。
+       附负对照：把旧写法塞回去，判据必须抓住。 */
+    const tblSrc2 = fs.readFileSync(path.join(PKG, "tools", "table.js"), "utf8");
+    const bindJudge = (src) => ({
+      hasHelper: /function setBind\s*\(\s*col\s*,\s*v\s*\)/.test(src),
+      noFalsyZero: !/if\s*\(\s*v\s*\)\s*S\.bind\[/.test(src),
+      usesHelper: (src.match(/setBind\(c, v\)/g) || []).length,
+      nullGuard: /v === "" \|\| v === undefined \|\| v === null/.test(src),
+    });
+    const bOK = bindJudge(tblSrc2);
+    const bPoison = bindJudge(tblSrc2.replace("setBind(c, v);", "if (v) S.bind[c] = v; else delete S.bind[c];"));
+    check(
+      "22h-7 源码守卫：绑定只有唯一的 setBind() 写入口，且不再用 `if (v)` 判空",
+      bOK.hasHelper && bOK.noFalsyZero && bOK.usesHelper === 2 && bOK.nullGuard && !bPoison.noFalsyZero,
+      "唯一写入口 setBind()=" + bOK.hasHelper + "　无 `if (v) S.bind`=" + bOK.noFalsyZero +
+      "　两个入口都调它=" + bOK.usesHelper + "（须 2）　显式判空=" + bOK.nullGuard +
+      "　负对照抓到旧写法=" + (!bPoison.noFalsyZero)
+    );
+
     mockApp.documents.length = 0;
   } catch (e) {
     check("M3 命令形状离线断言（自身抛异常）", false, (e && e.message) || String(e));

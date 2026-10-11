@@ -103,12 +103,16 @@ function planExport(req) {
    *  （`标题` → `标题 拷贝`），**按名字配对直接失效**（S48 第一轮实测：3 份副本一处都没写上）。
    *  副本的子层顺序与模板一致 ⇒ 按**序号**配对才稳。名字只用来显示给用户。 */
   const validBind = {};
-  const bound = (c) => {
+  /* ⚠️ 名字是 `isUnbound` 不是 `bound` —— 它**返回 true 表示"没绑"**。
+     第一版叫 `bound` 而语义相反，读 `if (bound(c)) continue;` 会把人绕进去
+     （"看起来一样/读起来相反的两处"与 `docs/42`/`docs/47` 是同族坑）。
+     🔴 `0` 是**合法序号**（模板里第 1 个文字层），只有 `undefined/null/""` 才算没绑。 */
+  const isUnbound = (c) => {
     const v = bindings[c];
-    return v === undefined || v === null || v === "";    // ⚠️ 0 是合法序号，不能当"没绑"
+    return v === undefined || v === null || v === "";
   };
   for (let c = 0; c < header.length; c++) {
-    if (bound(c)) continue;
+    if (isUnbound(c)) continue;
     const idx = Number(bindings[c]);
     if (!isFinite(idx) || Math.floor(idx) !== idx || idx < 0 || idx >= tplNames.length) {
       /* 绑了一个模板里没有的层 —— 说清楚是哪一列、模板里到底有什么（最常见的配置错误） */
@@ -123,7 +127,7 @@ function planExport(req) {
     return { ok: false, error: "一列都没绑上（模板组里的文字层：" + (tplNames.length ? tplNames.join(" / ") : "无") + "）" };
   }
   const unbound = [];
-  for (let c = 0; c < header.length; c++) if (bound(c)) unbound.push(c);
+  for (let c = 0; c < header.length; c++) if (isUnbound(c)) unbound.push(c);
   if (unbound.length) {
     warnings.push("有 " + unbound.length + " 列没绑定（" +
       unbound.map((c) => brief(header[c], 8)).join(" / ") + "）—— 这些列不会写进版面，不拦你");
