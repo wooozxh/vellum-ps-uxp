@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vellum 工具箱 · 插件使用手册</title>
+<link rel="icon" href="images/logo-128.png" />
+<link rel="stylesheet" href="manual.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="in">
+    <a class="brand" href="#top">
+      <img src="images/logo-128.png" alt="Vellum" />
+      <span class="tx">Vellum 工具箱<i>PS 插件使用手册</i></span>
+    </a>
+    <nav class="topnav">
+      <a href="#ch1">装它</a>
+      <a href="#ch2">四个工具</a>
+      <a href="#ch3">与工作台配合</a>
+      <a href="#ch4">出问题怎么办</a>
+      <a href="#ch5">速查</a>
+    </nav>
+    <div class="right">
+      <div class="searchbox">
+        <span class="mag">⌕</span>
+        <input id="q" type="search" placeholder="搜索手册…" autocomplete="off" />
+        <div class="hits" id="hits"></div>
+      </div>
+      <a class="gh gh-ico" href="https://github.com/wooozxh/vellum-ps-uxp" target="_blank" rel="noreferrer"
+         title="插件仓库：github.com/wooozxh/vellum-ps-uxp" aria-label="插件仓库（GitHub）">
+        <svg width="19" height="19" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A7.995 7.995 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+</header>
+
+<div class="wrap" id="top">
+  <div>
+
+    <!-- ============ 封面 ============ -->
+    <header class="cover">
+      <img class="logo" src="images/logo.png" alt="Vellum" />
+      <span class="tag">PLUGIN MANUAL · v0.5.2</span>
+      <h1>Vellum 工具箱 使用手册</h1>
+      <p class="lede">装在 Photoshop 里的一个小面板。做三件事：把公司品牌色一键送进 PS、把「Vellum工作台」里的素材一键放上画布、把一张表格（CSV）变成可以在 PS 里继续编辑的图层。素材始终在你本机硬盘上，不走网络。</p>
+      <div class="kv">
+        <div><b>0.5.2</b>插件版本</div>
+        <div><b>Photoshop 2024 及以上</b>适用版本</div>
+        <div><b>Windows 10 / 11 · 64 位</b>适用系统</div>
+        <div><b>2026-10-12</b>手册更新</div>
+        <div><b>10 张</b>界面截图</div>
+        <div><b>内部使用</b>分发范围</div>
+      </div>
+    </header>
+
+    <!-- ============ 怎么用这份手册 ============ -->
+    <section>
+      <h2><span class="n">读</span>怎么用这份手册</h2>
+      <p>这份手册写给<b>第一次装这个插件的人</b>。整本只有五章，从头读一遍二十分钟；也可以按下面三种急事直接跳。</p>
+      <div class="grid3" style="margin-top:14px">
+        <div class="mini"><div class="t">我要把它装上</div><div class="d">直接看 <a href="#s1-3">1.3 安装</a>。装完回来看 <a href="#s1-5">1.5 第一次打开</a>。</div></div>
+        <div class="mini"><div class="t">我想知道它能干嘛</div><div class="d">看 <a href="#ch2">第二部分</a>，四个工具一页一个，都配了截图。</div></div>
+        <div class="mini"><div class="t">它不干活 / 报错</div><div class="d">先看 <a href="#s4-1">4.1 常见问题</a>，九成的问题在那里。</div></div>
+      </div>
+
+      <h3>阅读约定</h3>
+      <table>
+        <thead><tr><th style="width:132px">记号</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><span class="btnchip">按钮名</span></td><td>面板上真实存在的按钮 / 开关，按这个名字去找就能找到</td></tr>
+          <tr><td><code>路径</code></td><td>磁盘上的目录或文件名</td></tr>
+          <tr><td><span style="color:var(--accent);font-weight:700">信息</span></td><td>补充说明、设计意图 —— 不理解也不影响操作</td></tr>
+          <tr><td><span style="color:var(--warn);font-weight:700">注意</span></td><td>容易踩的坑，看一眼能省一次返工</td></tr>
+          <tr><td><span style="color:var(--danger);font-weight:700">危险</span></td><td>可能造成数据丢失，动手前必须读</td></tr>
+        </tbody>
+      </table>
+      <div class="call info"><span class="h">关于截图</span>手册里的面板截图是在 <b>PS 27.2</b> 上实测抓的。素材内容取自演示环境（示例 CSV、示例素材），你机器上看到的是你自己的文件，界面结构完全一致。</div>
+    </section>
+
+    <!-- ============ 目录 ============ -->
+    <section class="tocsec">
+      <h2><span class="n">目录</span>全手册目录</h2>
+      <div class="tocfull">
+        <div class="grp">第一部分 · 装它</div>
+        <a href="#s1-1"><b>1.1</b>这个插件是干什么的</a>
+        <a href="#s1-2"><b>1.2</b>装之前：两件前提</a>
+        <a href="#s1-3"><b>1.3</b>安装（两条路：同事用 .ccx，开发机用 UDT）</a>
+        <a href="#s1-4"><b>1.4</b>装完在 PS 里去哪找它</a>
+        <a href="#s1-5"><b>1.5</b>第一次打开该看到什么</a>
+        <a href="#s1-6"><b>1.6</b>更新 / 卸载 / 换电脑</a>
+
+        <div class="grp">第二部分 · 四个工具</div>
+        <a href="#s2-1"><b>2.1</b>首页：四个入口</a>
+        <a href="#s2-2"><b>2.2</b>调色板：品牌色与我存的颜色</a>
+        <a href="#s2-3"><b>2.3</b>素材库：素材从哪来、怎么翻</a>
+        <a href="#s2-4"><b>2.4</b>素材库：选中一张，放进画布</a>
+        <a href="#s2-5"><b>2.5</b>表格生成：CSV 变成图层</a>
+        <a href="#s2-6"><b>2.6</b>按行批量出稿：一张表套一个版式</a>
+        <a href="#s2-7"><b>2.7</b>AI-MCP：还没开放</a>
+
+        <div class="grp">第三部分 · 它和工作台怎么配合</div>
+        <a href="#s3-1"><b>3.1</b>数据是怎么过去的</a>
+        <a href="#s3-2"><b>3.2</b>软件里要开的两个开关</a>
+        <a href="#s3-3"><b>3.3</b>多久会刷新</a>
+
+        <div class="grp">第四部分 · 出问题怎么办</div>
+        <a href="#s4-1"><b>4.1</b>常见问题（照着现象查）</a>
+        <a href="#s4-2"><b>4.2</b>已知限制</a>
+
+        <div class="grp">第五部分 · 速查</div>
+        <a href="#s5-1"><b>5.1</b>所有按钮速查表</a>
+        <a href="#s5-2"><b>5.2</b>术语表</a>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <div class="chapterhead" id="ch1">
+      <div class="kick">PART ONE</div>
+      <h2 class="ct">装它</h2>
+      <p>一个 .ccx 文件，双击，重启 Photoshop。这一章把装之前要确认的两件事、装完去哪找、以及怎么卸载都写清楚。</p>
+    </div>
+
+    <section id="s1-1">
+      <h2><span class="n">1.1</span>这个插件是干什么的</h2>
+      <p>它叫 <b>Vellum 工具箱</b>，是装在 Photoshop 里的一个<b>面板</b>（不是独立软件）。打开它，里面是一条竖着的功能列表：</p>
+      <table>
+        <thead><tr><th style="width:150px">工具</th><th>一句话</th></tr></thead>
+        <tbody>
+          <tr><td>调色板</td><td>公司品牌色 + 你自己存的常用色。点一下就把颜色送进 PS 的前景 / 背景色，或者直接填满当前图层</td></tr>
+          <tr><td>素材库</td><td>把「Vellum工作台」里的任务素材和通用素材，直接放到当前画布上</td></tr>
+          <tr><td>表格生成</td><td>导入一个 CSV，在 PS 里生成一张<b>能继续编辑</b>的表格（一格一个文字图层），还能按行批量出稿</td></tr>
+          <tr><td>AI-MCP</td><td>还没开放（见 <a href="#s2-7">2.7</a>）</td></tr>
+        </tbody>
+      </table>
+      <h3>它不做什么</h3>
+      <ul>
+        <li><b>它不管理文件。</b>素材的增删改查全在「Vellum工作台」里做，插件只是把已经整理好的东西取过来用。</li>
+        <li><b>它不动你的原文件。</b>往画布上放素材时，插件拿到的是一份<b>副本</b>。</li>
+        <li><b>它不上网。</b>数据只在你本机硬盘上的插件目录里转，没有云端、没有账号。</li>
+      </ul>
+      <div class="call info"><span class="h">和「Vellum工作台」的关系</span>一句话：<b>工作台负责"存和管"，插件负责"用"。</b>两者装在同一个插件数据目录里对接，插件<b>只读</b>，写入永远由工作台做（见 <a href="#s3-1">3.1</a>）。</div>
+    </section>
+
+    <section id="s1-2">
+      <h2><span class="n">1.2</span>装之前：两件前提</h2>
+      <table>
+        <thead><tr><th style="width:170px">要确认的事</th><th>怎么确认</th></tr></thead>
+        <tbody>
+          <tr><td><b>Photoshop 2024 或更高</b></td><td>PS 菜单 <code>帮助 → 关于 Photoshop</code> 看版本号。<b>低于 2024（v25）装不上</b> —— 插件在清单里就写了最低版本，PS 会直接拒收</td></tr>
+          <tr><td><b>装好「Vellum工作台」</b></td><td>插件本身能独立工作（调色板、表格生成不需要它），但<b>素材库那一格必须有工作台</b>才有东西</td></tr>
+        </tbody>
+      </table>
+      <div class="call warn"><span class="h">先装哪个都行，但先开工作台会省事</span>插件能自己找出工作台同步过来的数据目录；先装工作台并打开一次「插件联动」，插件装好后素材库立刻就是满的。反过来先装插件也完全没问题，只是素材库会先是空的。</div>
+      <p>系统要求：<b>Windows 10 / 11 64 位</b>。macOS 也能装，但本手册的截图与路径都按 Windows 写。</p>
+    </section>
+
+    <section id="s1-3">
+      <h2><span class="n">1.3</span>安装（两条路：同事用 .ccx，开发机用 UDT）</h2>
+      <p>插件打出来的安装包是一个 <code>.ccx</code> 文件（<code>com.vellum.toolbox_PS.ccx</code>）。<b>它不需要数字签名，双击就能装</b> —— 这一点和老的 CEP 插件（.zxp，要签名）不一样。</p>
+      <div class="figure-svg">
+        <svg viewBox="0 0 640 96" width="100%" height="96" role="img" aria-label="安装流程：双击 ccx → Adobe 安装器接管 → 重启 PS → 窗口 / 插件菜单">
+          <rect x="6" y="26" width="132" height="44" rx="8" fill="#eef2ff" stroke="#1a56db" stroke-width="1"/>
+          <text x="72" y="46" text-anchor="middle" font-size="12.5" fill="#1e3a8a">拿到 .ccx 文件</text>
+          <text x="72" y="62" text-anchor="middle" font-size="11" fill="#1e3a8a">（同事发来的 / 仓库里）</text>
+          <path d="M142 48 L188 48" stroke="#7b8494" stroke-width="1" fill="none"/>
+          <path d="M182 43 L190 48 L182 53" stroke="#7b8494" stroke-width="1" fill="none"/>
+          <rect x="194" y="26" width="132" height="44" rx="8" fill="#eef2ff" stroke="#1a56db" stroke-width="1"/>
+          <text x="260" y="46" text-anchor="middle" font-size="12.5" fill="#1e3a8a">双击它</text>
+          <text x="260" y="62" text-anchor="middle" font-size="11" fill="#1e3a8a">Adobe 安装器接管</text>
+          <path d="M330 48 L376 48" stroke="#7b8494" stroke-width="1" fill="none"/>
+          <path d="M370 43 L378 48 L370 53" stroke="#7b8494" stroke-width="1" fill="none"/>
+          <rect x="382" y="26" width="118" height="44" rx="8" fill="#eef2ff" stroke="#1a56db" stroke-width="1"/>
+          <text x="441" y="46" text-anchor="middle" font-size="12.5" fill="#1e3a8a">重启 PS</text>
+          <text x="441" y="62" text-anchor="middle" font-size="11" fill="#1e3a8a">（完全退出再开）</text>
+          <path d="M504 48 L550 48" stroke="#7b8494" stroke-width="1" fill="none"/>
+          <path d="M544 43 L552 48 L544 53" stroke="#7b8494" stroke-width="1" fill="none"/>
+          <rect x="556" y="26" width="80" height="44" rx="8" fill="#ecfdf5" stroke="#0f7b52" stroke-width="1"/>
+          <text x="596" y="46" text-anchor="middle" font-size="12" fill="#065f46">菜单里</text>
+          <text x="596" y="62" text-anchor="middle" font-size="12" fill="#065f46">找到它</text>
+        </svg>
+      </div>
+      <h3>路一：同事用这条（正式安装）</h3>
+      <ol class="steps">
+        <li>拿到 <code>com.vellum.toolbox_PS.ccx</code>，<b>双击</b>它。</li>
+        <li>等 Adobe 的安装器走完（系统会弹一个进度条，走完自己关）。装完文件落在 Adobe 的插件目录里，不需要你选位置。</li>
+        <li><b>把 Photoshop 完全退出，再重新打开</b> —— 插件是开机时加载的，不重启看不到。</li>
+        <li>按 <a href="#s1-4">1.4</a> 的说法去菜单里把它叫出来。</li>
+      </ol>
+      <div class="call warn"><span class="h">"双击没反应"多半不是坏了</span>Adobe 的 `.ccx` 靠 <b>Creative Cloud 桌面版</b>里的一个组件来装。如果这台机器<b>从来没装过 Creative Cloud</b>，双击可能什么都不发生。两个办法：① 装一次 Creative Cloud 桌面版（免费，登录不是必须）；② 改用下面的"路二"从开发工具加载。</div>
+
+      <h3>路二：开发机 / 临时试用（UXP Developer Tool）</h3>
+      <p>如果只是想先看看、或者在改插件本身，可以不打包，用官方的 <b>UXP Developer Tool</b>（简称 UDT，免费）直接加载源码：</p>
+      <ol class="steps">
+        <li>装 <b>UXP Developer Tool</b>（Adobe 官方，随 Creative Cloud 一起装，或从 Adobe 官网单独下）。</li>
+        <li>打开它 → 点 <span class="btnchip">Add Plugin</span> → 选插件目录里的 <code>manifest.json</code>。</li>
+        <li>点 <span class="btnchip">Load</span> / <span class="btnchip">Load &amp; Watch</span>，再回 Photoshop 把面板叫出来。</li>
+      </ol>
+      <div class="call warn"><span class="h">开发态和正式装是两套数据</span>用 UDT 加载的那一份，数据存在 <code>…\PluginsStorage\PHSP\&lt;版本&gt;\Developer\</code>；双击 .ccx 装的那一份存在 <code>…\External\</code>。<b>两边互不相通</b>：开发态里存的「我的颜色」、看过的素材，切到正式版都是空的（反过来也一样）。同一台机器上如果两种都装了，PS 的插件菜单里可能<b>出现两个同名面板</b> —— 建议只留一个。</div>
+    </section>
+
+    <section id="s1-4">
+      <h2><span class="n">1.4</span>装完在 PS 里去哪找它</h2>
+      <p>重启 Photoshop 之后，从菜单里叫它出来：</p>
+      <table>
+        <thead><tr><th style="width:200px">你要的</th><th>去哪点</th></tr></thead>
+        <tbody>
+          <tr><td><b>面板</b>（主界面）</td><td>菜单 <code>窗口 → 插件 → Vellum 工具箱</code>。它会以<b>浮窗</b>出现（约 420×680）；想固定就把它拖到 PS 右侧的面板区里停靠</td></tr>
+          <tr><td><b>三个快捷命令</b></td><td>菜单里的 <code>插件</code>（有的版本叫 <code>增效工具</code>）→「Vellum 工具箱：品牌主色 → 前景色 / 背景色 / 填充当前图层或选区」</td></tr>
+        </tbody>
+      </table>
+      <div class="call warn"><span class="h">面板停在哪，PS 记不住</span>PS 不允许插件自己声明停靠位置，<b>位置只能你自己拖</b>。拖好之后它会跟着工作区一起被记住 —— 但如果你是用 UDT 开发态加载的，位置不会被记住（这是 Adobe 的规矩，不是插件的问题）。</div>
+      <div class="call info"><span class="h">没在菜单里看到？</span>按顺序排查：① PS 是不是真的重启过（完全退出，不是最小化）；② <code>帮助 → 关于 Photoshop</code> 里的版本是不是 2024 及以上；③ 是不是装到了另一个 PS 版本上（机器上装了多个 PS 时，.ccx 只会装进它认识的那个）。</div>
+    </section>
+
+    <section id="s1-5">
+      <h2><span class="n">1.5</span>第一次打开该看到什么</h2>
+      <p>打开面板，第一屏是<b>功能选择页</b>：上面是插件名与版本，中间四行工具，最下面是「环境」——把当前 Photoshop 版本、UXP 版本、插件版本如实列出来，方便报错时截图。</p>
+      <figure>
+        <img src="images/01-首页.png" alt="插件首页（功能选择页）" />
+        <figcaption>图 1-1　首页：四行工具（① 调色板 / ② 素材库 / ③ 表格生成 / ④ AI-MCP），下方是环境信息</figcaption>
+      </figure>
+      <p>点任意一行进入该工具，工具页<b>左上角有一个返回箭头</b>，点它回到这一页。页面底部那条<b>状态栏</b>是全局的：它会把最近一次操作的结果（成功 / 失败原因）如实写在左下角。</p>
+      <div class="call ok"><span class="h">看到「④ AI-MCP」是灰的，是正常的</span>它确实还没做（见 <a href="#s2-7">2.7</a>）。其余三行都能点。</div>
+    </section>
+
+    <section id="s1-6">
+      <h2><span class="n">1.6</span>更新 / 卸载 / 换电脑</h2>
+      <h3>更新版本</h3>
+      <p>拿到新的 <code>.ccx</code>，<b>直接双击覆盖安装</b>即可，不用先卸载。装完一样要重启 PS。</p>
+      <div class="call info"><span class="h">更新会保留你的东西</span>「我的颜色」、表格样式偏好这些都存在插件数据目录里，覆盖安装不动它们。</div>
+      <h3>卸载</h3>
+      <ol class="steps">
+        <li>打开 <b>Creative Cloud 桌面版</b> → 左侧 <span class="btnchip">管理插件</span> / <span class="btnchip">Marketplace</span> → 找到「Vellum 工具箱」→ 卸载。</li>
+        <li>或者用系统的「添加或删除程序」：插件会以一条独立的项出现在列表里。</li>
+      </ol>
+      <p>如果控制面板里删不干净（残留目录），可以手动删掉插件数据目录 —— 但<b>删它等于把你的偏好一起删了</b>：</p>
+      <div class="call danger"><span class="h">手动删目录之前先想清楚</span>插件数据目录在 <code>%APPDATA%\Adobe\UXP\PluginsStorage\PHSP\&lt;PS大版本&gt;\External\com.vellum.toolbox\</code>。里面有 <code>PluginData\palette.json</code>（我的颜色）、<code>table-pref.json</code>（表格样式）等。<b>删掉不可恢复。</b>另外这个目录也是「Vellum工作台」往里写素材镜像的地方，删之前先在软件里关掉插件联动。</div>
+      <h3>换电脑</h3>
+      <p>新电脑：装 PS → 装插件（.ccx 或 UDT）→ 装「Vellum工作台」并指向你的工作区目录。插件自己不存素材，所以<b>没有什么需要搬的</b>；只有「我的颜色」想带过去的话，把老机器上的 <code>palette.json</code> 拷到新机器同样的路径下即可。</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <div class="chapterhead" id="ch2">
+      <div class="kick">PART TWO</div>
+      <h2 class="ct">四个工具</h2>
+      <p>一页一个。每个工具都先说"它解决什么"，再逐块说明界面，最后给出边界（哪些它不做）。</p>
+    </div>
+
+    <section id="s2-1">
+      <h2><span class="n">2.1</span>首页：四个入口</h2>
+      <p>首页就是那四行。每行左边是图标与一句话说明，右边是<b>号位</b>（↑1 ~ ↑4）和箭头。号位是固定的，报错时说"第 3 行"大家都懂。</p>
+      <table>
+        <thead><tr><th style="width:150px">行</th><th>副标题</th><th>要什么前提</th></tr></thead>
+        <tbody>
+          <tr><td>① 调色板</td><td>品牌色与我保存的颜色</td><td>无。打开就能用</td></tr>
+          <tr><td>② 素材库</td><td>任务库与通用库，一点置入</td><td>需要「Vellum工作台」同步过素材</td></tr>
+          <tr><td>③ 表格生成</td><td>表格绑定图层、批量出稿</td><td>无。有一个 CSV 就行</td></tr>
+          <tr><td>④ AI-MCP</td><td>把面板能力开放给 AI 客户端</td><td><b>尚未开放</b></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="s2-2">
+      <h2><span class="n">2.2</span>调色板：品牌色与我存的颜色</h2>
+      <p>解决的是"每次都要手输公司色的 HEX"。上面一块是<b>品牌色</b>（固定的六个，由开发维护），下面一块是<b>我的颜色</b>（你自己存的常用色）。</p>
+      <figure>
+        <img src="images/02-调色板.png" alt="调色板页" />
+        <figcaption>图 2-1　调色板：顶部是当前前景 / 背景色读数，中间两排色块，底部写着四种点法各干什么</figcaption>
+      </figure>
+      <h3>四种点法（面板底部也印着）</h3>
+      <table>
+        <thead><tr><th style="width:180px">怎么点</th><th>结果</th></tr></thead>
+        <tbody>
+          <tr><td><b>左键</b></td><td>把颜色设成 Photoshop 的<b>前景色</b></td></tr>
+          <tr><td><b>Shift + 左键</b></td><td>把颜色设成 Photoshop 的<b>背景色</b></td></tr>
+          <tr><td><b>Alt + 左键</b></td><td><b>直接填充</b>当前图层或当前选区（<b>不改</b>前景 / 背景色）—— 想"啪一下铺满"用这个</td></tr>
+          <tr><td><b>右键</b> 或色块角上的 <span class="btnchip">✕</span></td><td>删掉这个颜色（<b>只有「我的颜色」能删</b>，品牌色删不掉）</td></tr>
+        </tbody>
+      </table>
+      <p>顶部那两行是<b>当前前景 / 背景色的读数</b>（如 <code>#E60012</code>）。它是个"回执"：点完色块如果这里没变，就说明没设上。鼠标停在色块上也能看到它的 HEX。</p>
+      <p><span class="btnchip">存当前色</span> 把当前前景色收进「我的颜色」（同一个颜色不会重复存）。</p>
+      <div class="call warn"><span class="h">Alt+左键填充：形状图层 / 调整图层会拒绝</span>填充只对<b>像素类</b>图层（普通图层、背景）有效。如果你选中的是一个形状图层、调整图层或者一个组，面板会<b>直接告诉你原因</b>，不会假装成功。想填它们，先栅格化，或者换个目标。</div>
+      <div class="call info"><span class="h">品牌色现在是占位色</span>六个色块目前是占位值，等品牌 HEX 定稿后由开发一次性替换。「我的颜色」不受影响。</div>
+    </section>
+
+    <section id="s2-3">
+      <h2><span class="n">2.3</span>素材库：素材从哪来、怎么翻</h2>
+      <p>素材库<b>不生产素材</b>，它显示的是「Vellum工作台」同步过来的清单与缩略图。上面有两个<b>库</b>（页签）：</p>
+      <table>
+        <thead><tr><th style="width:150px">库</th><th>装什么</th></tr></thead>
+        <tbody>
+          <tr><td><b>任务库</b></td><td>挂在某个任务下面的素材。按<b>项目 → 任务</b>分组，可以按项目筛</td></tr>
+          <tr><td><b>通用库</b></td><td>不属于任何任务的常备素材（logo、字体、模板）。两层分组：<b>公司素材</b> / <b>个人收藏</b></td></tr>
+        </tbody>
+      </table>
+      <figure>
+        <img src="images/03-素材库-任务库.png" alt="素材库 - 任务库" />
+        <figcaption>图 2-2　任务库：顶部是库页签与项目筛选，下面是素材瀑布流；没选中素材时中间那行会提示"在下面选一张素材"</figcaption>
+      </figure>
+      <div class="fig2">
+        <figure><img src="images/04-素材库-通用库.png" alt="通用库" /><figcaption>图 2-3　通用库：顶部一排是分组筛选（全部 / 公司素材 / 个人收藏）</figcaption></figure>
+        <figure><img src="images/05-素材库-选中详情.png" alt="选中一张素材后的详情" /><figcaption>图 2-4　选中一张后：上方出现文件名、尺寸、来源与路径，右下是落点九宫格</figcaption></figure>
+      </div>
+      <h3>怎么翻</h3>
+      <ul>
+        <li><b>切库</b>：点顶部 <span class="btnchip">任务库</span> / <span class="btnchip">通用库</span> 页签，右边的数字是该库的素材总数。</li>
+        <li><b>筛分组</b>：页签下面那排按钮 / 下拉——任务库按<b>项目</b>筛，通用库按<b>分组</b>筛。</li>
+        <li><b>看大图</b>：缩略图是<b>瀑布流</b>（保持原图比例，不裁切），所以长图和方图会混在一列里，高度不齐是正常的。</li>
+        <li><b>手动刷新</b>：右上角 <span class="btnchip">刷新</span>。平时不用点，它自己会刷（见 <a href="#s3-3">3.3</a>）。</li>
+      </ul>
+      <p>面板最下面那条会写着现在看的是哪个库、多少张、来自哪个项目 —— 排查时先看它。</p>
+      <div class="call info"><span class="h">视频 / PSD / PDF 的缩略图可能是空白的</span>这些格式取不到预览图，会显示一个灰色占位格。<b>不影响使用</b>，照样能放进画布。</div>
+    </section>
+
+    <section id="s2-4">
+      <h2><span class="n">2.4</span>素材库：选中一张，放进画布</h2>
+      <p>点一张缩略图选中它，上方会出现详情区，从右到左是三件事：<b>这张图是什么</b> → <b>放哪儿</b> → <b>放进去</b>。</p>
+      <table>
+        <thead><tr><th style="width:170px">你会看到</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td>文件名 / 尺寸 / 来源</td><td>来源是「公司」还是「我的」，以及它在库里的分组位置</td></tr>
+          <tr><td>完整路径</td><td>磁盘上的真实位置，方便你去资源管理器里找</td></tr>
+          <tr><td><b>落点九宫格</b></td><td>决定图落在画布的哪个位置：九个格子＝左上 / 上中 / 右上 / 左中 / 居中 / 右中 / 左下 / 下中 / 右下。<b>默认居中</b></td></tr>
+          <tr><td><span class="btnchip">置入到画布</span></td><td>真的把图放进去。<b>放的是副本，原文件不动</b></td></tr>
+        </tbody>
+      </table>
+      <h3>落点是怎么算的</h3>
+      <ul>
+        <li><b>画布上有选区</b>：以<b>选区中心</b>为基准，九宫格是相对这个基准的位移。</li>
+        <li><b>画布上没有选区</b>：以<b>画布中心</b>为基准。</li>
+        <li>「居中」＝ 不动，就落在基准点上。</li>
+      </ul>
+      <div class="call warn"><span class="h">置入会把当前选区吃掉</span>这是 Photoshop 的行为，不是插件的。所以"框哪儿放哪儿"的正确用法是：<b>每次放图之前重新框一次选区</b>。</div>
+      <div class="call warn"><span class="h">置入的图，大小可能和你以为的不一样</span>PS 是<b>按物理尺寸</b>放图的：一张 300ppi 的图放进 72ppi 的画布，会按英寸换算，看起来"缩小"了。插件会按素材的像素尺寸尽量校正回原大小；但 <b>PSD / PDF 这类拿不到像素尺寸的素材不校正</b>，会保持 PS 给的样子 —— 手动缩放一下即可。</div>
+      <div class="call info"><span class="h">图层的名字会变成素材名</span>置入后图层名取自素材名（去掉扩展名）；同名时自动加 <code>(2)</code>、<code>(3)</code>。智能对象内部记录的原始文件名改不了，那不在图层面板里显示。</div>
+    </section>
+
+    <section id="s2-5">
+      <h2><span class="n">2.5</span>表格生成：CSV 变成图层</h2>
+      <p>这个工具的产物不是一张"图片"，而是<b>一堆可以继续改的图层</b>：边框是细矩形、文字是普通文字图层。生成完你还能改字、改色、挪位置。</p>
+      <figure>
+        <img src="images/06-表格生成-未导入.png" alt="表格生成 - 还没导入数据" />
+        <figcaption>图 2-5　刚进来：上方是导入区，中间三块（置入方式 / 样式 / 按行批量出稿）都还没展开</figcaption>
+      </figure>
+      <h3>第一步：把表弄进来</h3>
+      <ol class="steps">
+        <li>点 <span class="btnchip">导入 CSV</span>，选一个 <code>.csv</code> / <code>.txt</code> / <code>.tsv</code> 文件。第一行默认当<b>表头</b>。</li>
+        <li>没有现成的 CSV？点下面那三个内置样例之一（<span class="btnchip">UTF-8</span> / <span class="btnchip">GBK</span> / <span class="btnchip">TSV</span>）先试试手感 —— 它们就在插件里，不联网。</li>
+      </ol>
+      <p>导入成功后，顶部会显示文件名与「N 行 · M 列」，下面一行写着<b>识别到的编码</b>。中间立刻出现表格<b>预览</b>。</p>
+      <figure>
+        <img src="images/07-表格生成-已导入.png" alt="表格生成 - 已导入数据" />
+        <figcaption>图 2-6　导入后：预览出来了，底部多了一行<b>预估</b>「…共 51 个图层」—— 生成前先告诉你这次要建多少层</figcaption>
+      </figure>
+      <div class="call ok"><span class="h">中文 CSV 不用先转码</span>插件自带 GBK 解码，<b>UTF-8 和 GBK 都能直接读</b>，Excel 另存为 CSV（默认就是 GBK）也能直接用。识别到什么编码会写在面板上。</div>
+      <div class="call warn"><span class="h">Excel 换行 / 合并单元格会出事</span>导出的 CSV 里如果有<b>单元格内换行</b>，可能被拆成多行。建议在 Excel 里先"另存为 CSV"再导入，别直接把 .xlsx 改名。</div>
+      <h3>第二步：定"画在哪儿"（置入方式）</h3>
+      <table>
+        <thead><tr><th style="width:180px">选项</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><b>用当前选区</b></td><td>先拿选框工具在画布上框一块，表格就画在这块里（推荐：所见即所得）</td></tr>
+          <tr><td><b>落点锚</b></td><td>不选区也能用：按一个预设尺寸（默认 420×320）生成表格框。<b>画布很小时可能超出边界</b>，面板会提示</td></tr>
+        </tbody>
+      </table>
+      <h3>第三步：样式（可跳过）</h3>
+      <p>「样式」折叠块里有 <b>通用 / 表头 / 行</b> 三个页签：边框、底色、字号、文字颜色、行高表头高、内边距、列宽（等分或逐列改）。改完点 <span class="btnchip">保存样式</span> 会记住这套参数，下次打开还在。</p>
+      <h3>第四步：生成</h3>
+      <p>点 <span class="btnchip">生成表格</span>。生成完文档里会多出一个图层组，组名是「表格 · 文件名」，状态栏写着「✓ 已生成 …：图层 +N（预计 N），用时 X ms」。</p>
+      <div class="fig2">
+        <figure><img src="images/09-生成结果-画布.png" alt="生成出来的表格" /><figcaption>图 2-7　生成结果（画布 100%）：表头有底色，格线是四条细矩形拼的</figcaption></figure>
+        <figure><img src="images/10-生成结果-图层面板.png" alt="图层组内是一格一层的文字图层" /><figcaption>图 2-8　同一个表在图层面板里：一格一个文字层，名字带行列号（<code>文字 R4C2</code>），随时能改</figcaption></figure>
+      </div>
+      <div class="call info"><span class="h">图 2-7 里的棋盘格是 PS 的透明底</span>这张表<b>没填行底色</b>（底色是可选项），所以除了表头那一块，其余都是"只有线和文字"。在 <a href="#s2-5">样式</a> 里给「行」加个底色，它就会是一张带底纹的常规表。</div>
+      <div class="call warn"><span class="h">格子越多，等得越久</span>生成 51 个图层（5 列 × 6 行 + 边框）大约 3～7 秒；上百格要十几秒，而且文件会变重。<b>大表先想想是不是真要在 PS 里做。</b>面板每次都会先报预估层数。</div>
+    </section>
+
+    <section id="s2-6">
+      <h2><span class="n">2.6</span>按行批量出稿：一张表套一个版式</h2>
+      <p>这是表格页最下面那块。它解决的是：<b>我有一张数据表，和一个搭好的版式，要出 N 份长得一样、只有内容不同的稿。</b>（等价于 PS 原生的"图像 → 变量 → 数据组"，但那一套在 UXP 里调不到，插件自己实现了一套。）</p>
+      <h3>怎么用（三步）</h3>
+      <ol class="steps">
+        <li><b>准备版式</b>：在 PS 里搭一个图层组当模板 —— 里面放若干<b>文字图层</b>，每个文字层就是"将来被替换的位置"。</li>
+        <li><b>认模板</b>：在画布上<b>选中那个组</b>，回到面板。面板会自动认出它并显示「将复制「组名」的 N 个文字层」。认错了就用「模板来源」手动指定，或点 <span class="btnchip">重新检测模板</span>。</li>
+        <li><b>绑列</b>：表格里每一列是一行，每行三个选项 —— 「不绑定」或「第 1 / 2 / 3…个文字层」。把<b>列</b>绑到<b>图层</b>上（绑的是序号，不是名字）。</li>
+      </ol>
+      <p>底部会实时算给你看：「N 份 × M 处文字（共 K 次写入）… 预估 ≈X s」。确认无误，点 <span class="btnchip">生成 N 个稿件</span>。</p>
+      <h3>生成出来是什么</h3>
+      <ul>
+        <li>模板组被<b>复制 N 份</b>（一份对应表里一行），名字自动起成「稿件 3 · 开学季特训营」这种带行关键词的名字。</li>
+        <li>每份只替换<b>你绑定的那些文字</b>，其余保持模板原样。</li>
+        <li>副本按<b>网格自动排开</b>（默认 5 列），不会全叠在一起。</li>
+        <li><b>原件一根头发都不动。</b></li>
+      </ul>
+      <div class="call warn"><span class="h">现在只换文字，不换图</span>模板里的图片图层会被原样复制，但<b>不会</b>按行换成不同的图。需要换图的话，得先把图做成可替换的格式，等后续版本支持。</div>
+      <div class="call warn"><span class="h">格子里的空值会跳过</span>表里某个格子是空的，那处文字<b>保留模板原文</b>（而不是被写成空白）—— 这比"写空"更安全，但你得知道有这个行为。</div>
+      <div class="call warn"><span class="h">份数多会先问你一次</span>份数或写入次数超过闸门时，第一次点按钮只是把它变成「仍然生成 N 个（约 X s）」，<b>再点一次才真的开始</b>。这样就不会手滑一下等十分钟。</div>
+      <div class="call info"><span class="h">名字里的"文本"是什么</span>面板认模板时会列出组里的文字层（如「1. 标题」「2. 价格」）。这里的序号就是绑定用的序号；<b>即使 PS 后续把副本里的层改名（"标题 拷贝"），照序号绑也不会错位。</b></div>
+      <figure>
+        <img src="images/08-表格生成-已生成.png" alt="批量出稿完成后的面板" />
+        <figcaption>图 2-9　出稿完成后：底部状态栏写着「✓ 已生成 N 个稿件（实际耗时，预估 X s）」—— 预估准不准一眼就能看出来</figcaption>
+      </figure>
+    </section>
+
+    <section id="s2-7">
+      <h2><span class="n">2.7</span>AI-MCP：还没开放</h2>
+      <p>首页第 ④ 行「AI-MCP · 把面板能力开放给 AI 客户端」现在是<b>灰的</b>：规划中，尚未排期。点它会提示"还没上"。</p>
+      <p>它的设想是把面板里的动作（设色、置入素材、生成表格…）暴露成 AI 客户端能直接调用的工具。<b>在此之前，插件不会和任何外部 AI 通信。</b></p>
+    </section>
+
+    <!-- ============================================================ -->
+    <div class="chapterhead" id="ch3">
+      <div class="kick">PART THREE</div>
+      <h2 class="ct">它和「Vellum工作台」怎么配合</h2>
+      <p>只有素材库那一格需要工作台。这一章说清"数据是怎么过去的"—— 弄明白这个，绝大多数"插件里没有东西"的问题就自己解释通了。</p>
+    </div>
+
+    <section id="s3-1">
+      <h2><span class="n">3.1</span>数据是怎么过去的</h2>
+      <p>不是"插件去连软件"，而是<b>软件把清单写好，插件去读</b>：</p>
+      <div class="figure-svg">
+        <svg viewBox="0 0 640 132" width="100%" height="132" role="img" aria-label="Vellum工作台写入插件数据目录，PS 插件只读">
+          <rect x="6" y="30" width="180" height="66" rx="8" fill="#eef2ff" stroke="#1a56db" stroke-width="1"/>
+          <text x="96" y="54" text-anchor="middle" font-size="13" fill="#1e3a8a">Vellum工作台</text>
+          <text x="96" y="72" text-anchor="middle" font-size="11" fill="#1e3a8a">存素材 / 管分组 / 出缩略图</text>
+          <text x="96" y="88" text-anchor="middle" font-size="11" fill="#1e3a8a">（唯一会写的那一端）</text>
+          <path d="M190 63 L268 63" stroke="#7b8494" stroke-width="1" fill="none"/>
+          <path d="M260 58 L270 63 L260 68" stroke="#7b8494" stroke-width="1" fill="none"/>
+          <text x="229" y="54" text-anchor="middle" font-size="11" fill="#7b8494">写</text>
+          <rect x="274" y="30" width="180" height="66" rx="8" fill="#fffbeb" stroke="#a16207" stroke-width="1"/>
+          <text x="364" y="52" text-anchor="middle" font-size="12.5" fill="#713f12">插件数据目录</text>
+          <text x="364" y="70" text-anchor="middle" font-size="10.5" fill="#713f12">…\PluginsStorage\PHSP\27\</text>
+          <text x="364" y="85" text-anchor="middle" font-size="10.5" fill="#713f12">External\com.vellum.toolbox\</text>
+          <path d="M458 63 L536 63" stroke="#7b8494" stroke-width="1" fill="none"/>
+          <path d="M528 58 L538 63 L528 68" stroke="#7b8494" stroke-width="1" fill="none"/>
+          <text x="497" y="54" text-anchor="middle" font-size="11" fill="#7b8494">只读</text>
+          <rect x="542" y="30" width="94" height="66" rx="8" fill="#ecfdf5" stroke="#0f7b52" stroke-width="1"/>
+          <text x="589" y="58" text-anchor="middle" font-size="12" fill="#065f46">PS 插件</text>
+          <text x="589" y="76" text-anchor="middle" font-size="11" fill="#065f46">显示 / 置入</text>
+        </svg>
+      </div>
+      <p>这个目录里躺着素材清单（<code>manifest.json</code> / <code>task.json</code> / <code>brand.json</code>）和缩略图。插件<b>每 3 秒</b>看一次它有没有变，变了就重新读一遍 —— 所以你在软件里改完东西，插件那边会自己跟上。</p>
+      <div class="call info"><span class="h">数据不出本机</span>整条链路都在本机硬盘上，没有网络、没有云端、没有账号。「插件数据目录」这个叫法容易误解 —— 它就是本机的一个文件夹。</div>
+    </section>
+
+    <section id="s3-2">
+      <h2><span class="n">3.2</span>软件里要开的两个开关</h2>
+      <p>打开「Vellum工作台」→ 点顶栏的 <span class="btnchip">插件</span>：</p>
+      <table>
+        <thead><tr><th style="width:200px">开关</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><span class="btnchip">启用插件联动</span></td><td><b>总开关</b>。关掉之后插件里什么都看不到、也置入不了。平时保持勾上</td></tr>
+          <tr><td>分组上的 <span class="btnchip">同步</span> 开关</td><td>通用库每个分组右边有一个。<b>父组关掉，子组跟着关</b>；「未分组」里的素材默认<b>不过去</b> —— 想让插件看到，把它归到某个分组里</td></tr>
+        </tbody>
+      </table>
+      <div class="call warn"><span class="h">最常见的"插件是空的"</span>三种：① 总开关没开；② 素材在「未分组」里；③ 那个分组的同步开关是关的。按这三条倒着查，基本一次命中。</div>
+      <p>设置项里还有一个「插件数据目录」。<b>一般不用填</b>：装好插件后软件会自己扫到并显示「已发现 N 个插件目录」。扫不到时才手填，或点 <span class="btnchip">选择目录</span>。</p>
+    </section>
+
+    <section id="s3-3">
+      <h2><span class="n">3.3</span>多久会刷新</h2>
+      <table>
+        <thead><tr><th style="width:200px">你做的事</th><th>插件多久看到</th></tr></thead>
+        <tbody>
+          <tr><td>在软件里改素材 / 改分组</td><td>软件<b>约 1.5 秒</b>后写盘，插件<b>最多再 3 秒</b>发现 ⇒ 最坏 <b>4～5 秒</b></td></tr>
+          <tr><td>还没有装插件时先开的素材库</td><td>插件启动后第一次读就有</td></tr>
+        </tbody>
+      </table>
+      <p>等不及就点面板右上角的 <span class="btnchip">刷新</span>，或者软件里点一次 <span class="btnchip">同步到插件</span>。</p>
+      <div class="call warn"><span class="h">"改了没反应"先等 5 秒</span>如果 5 秒后还是旧的，再去查 <a href="#s3-2">3.2</a> 的两个开关。<b>不要靠反复点刷新来判断</b> —— 刷新只是"立刻看一眼现在盘上是什么"。</div>
+    </section>
+
+    <!-- ============================================================ -->
+    <div class="chapterhead" id="ch4">
+      <div class="kick">PART FOUR</div>
+      <h2 class="ct">出问题怎么办</h2>
+      <p>照着"现象"查。每条都先给最可能的原因，再给下一步动作。</p>
+    </div>
+
+    <section id="s4-1">
+      <h2><span class="n">4.1</span>常见问题（照着现象查）</h2>
+      <details class="faq"><summary>PS 的菜单里找不到「Vellum 工具箱」？</summary>
+        <p>按顺序：① Photoshop <b>完全退出</b>再打开过吗（不是最小化）；② <code>帮助 → 关于 Photoshop</code> 里是不是 2024（v25）及以上；③ 是不是装到了另一个 PS 版本上（机器上多版本时容易装错）。</p>
+      </details>
+      <details class="faq"><summary>双击 .ccx 没有任何反应？</summary>
+        <p>多半是这台机器<b>没有 Creative Cloud 桌面版</b>（`.ccx` 靠它里面的组件来安装）。装一次免费版 Creative Cloud，或者改用 UXP Developer Tool 加载源码（见 <a href="#s1-3">1.3 路二</a>）。</p>
+      </details>
+      <details class="faq"><summary>素材库里一张素材都没有 / 少了很多？</summary>
+        <p>三个开关问题，倒着查：① 软件里 <span class="btnchip">启用插件联动</span> 是不是勾着；② 那些素材是不是躺在「未分组」里（那里不同步）；③ 它们所在分组的 <span class="btnchip">同步</span> 开关是不是关着。都不对的话，在软件里点一次 <span class="btnchip">同步到插件</span>，看结果里的目录数是不是 0。</p>
+      </details>
+      <details class="faq"><summary>在软件里改了东西，插件里一直是旧的？</summary>
+        <p>正常最多 4～5 秒（见 <a href="#s3-3">3.3</a>）。超过 10 秒还不动，点一次软件的 <span class="btnchip">同步到插件</span> 强制刷。<b>另外确认软件还开着</b> —— 关掉软件后插件就停在最后一次同步的样子。</p>
+      </details>
+      <details class="faq"><summary>置入的时候提示"取图失败"？</summary>
+        <p>面板左下角会写清失败原因（比如 <code>〔请求：scope=brand · id=59〕</code>）。先确认「Vellum工作台」<b>正在运行</b>且插件联动是开着的；还不行就把那行字截图发开发 —— 那是能直接定位的原始读数。</p>
+      </details>
+      <details class="faq"><summary>置入进去了，但位置 / 大小不对？</summary>
+        <p>位置：检查右下角九宫格选的是哪一格；<b>注意置入会吃掉选区</b>，所以"框哪儿放哪儿"要每次重新框。大小：PSD / PDF 这类拿不到像素尺寸的素材不校正，会保持 PS 给的大小，手动缩放一下即可（见 <a href="#s2-4">2.4</a>）。</p>
+      </details>
+      <details class="faq"><summary>点「批量出稿」提示"还不能出稿"？</summary>
+        <p>看冒号后面那句：<b>"一列都没绑上"</b> ⇒ 去绑定表把列绑到文字层上；<b>"还没有模板"</b> ⇒ 先在画布上选中你的版式图层组；<b>"模板组里没有文字层"</b> ⇒ 出稿靠换文字，模板里必须有文字图层。</p>
+      </details>
+      <details class="faq"><summary>一键填充（Alt+左键）说"当前不可用"？</summary>
+        <p>你选中的是<b>形状图层 / 调整图层 / 图层组</b>。填充只对像素类图层有效。面板会明确说出是哪种图层挡住的 —— 看完再决定要不要先栅格化。</p>
+      </details>
+      <details class="faq"><summary>生成表格花了很久，PS 像卡住了？</summary>
+        <p>格子多时（上百格）确实要十几秒，期间 PS 会短暂不接受操作，这是正常的。面板会先告诉你预估层数。如果超过一分钟没动静，看面板左下角的状态栏。</p>
+      </details>
+      <details class="faq"><summary>想把插件里的东西全部复位（颜色、样式偏好）？</summary>
+        <p>删掉插件数据目录里的 <code>palette.json</code> / <code>table-pref.json</code>，再重启 PS。⚠️ 这是<b>不可恢复</b>的删除，动手前看 <a href="#s1-6">1.6</a> 里的红框。</p>
+      </details>
+    </section>
+
+    <section id="s4-2">
+      <h2><span class="n">4.2</span>已知限制</h2>
+      <table>
+        <thead><tr><th style="width:230px">限制</th><th>说明 / 影响</th></tr></thead>
+        <tbody>
+          <tr><td>批量出稿只换文字，不换图</td><td>模板里的图片会被原样复制，不会按行替换</td></tr>
+          <tr><td>纯色填充图层改不了色</td><td>这是 PS 本身的限制（形状图层、背景图层不受影响）。改色时插件会如实告诉你，不会假装成功</td></tr>
+          <tr><td>PSD / PDF 素材不校正尺寸</td><td>拿不到像素尺寸，会保持 PS 给的大小</td></tr>
+          <tr><td>面板停靠位置不跟随工作区</td><td>用 UDT 开发态加载时不记住位置；正式安装后由 PS 自己记住</td></tr>
+          <tr><td>快捷键不一定生效</td><td>PS 对插件声明的快捷键支持不完整，<b>请以菜单为准</b></td></tr>
+          <tr><td>表格样式导出的通道有限</td><td>目前只能靠文件保存（没有剪贴板）；Excel 导入暂不支持，请先转 CSV</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ============================================================ -->
+    <div class="chapterhead" id="ch5">
+      <div class="kick">PART FIVE</div>
+      <h2 class="ct">速查</h2>
+      <p>不用通读，放在手边随时翻。</p>
+    </div>
+
+    <section id="s5-1">
+      <h2><span class="n">5.1</span>所有按钮速查表</h2>
+      <table>
+        <thead><tr><th style="width:170px">按钮</th><th style="width:150px">在哪</th><th>做什么</th></tr></thead>
+        <tbody>
+          <tr><td><span class="btnchip">导入 CSV</span></td><td>表格生成</td><td>选一个 CSV / TXT / TSV 文件读进来</td></tr>
+          <tr><td><span class="btnchip">UTF-8</span> / <span class="btnchip">GBK</span> / <span class="btnchip">TSV</span></td><td>表格生成（空态）</td><td>载入插件自带的样例，用来试手 / 排查</td></tr>
+          <tr><td><span class="btnchip">换一个</span></td><td>表格生成（顶部）</td><td>换一个文件重新导入</td></tr>
+          <tr><td><span class="btnchip">保存样式</span></td><td>表格生成（底部）</td><td>记住当前这套表格样式，下次打开还在</td></tr>
+          <tr><td><span class="btnchip">生成表格</span></td><td>表格生成（底部）</td><td>在当前文档里生成表格图层组</td></tr>
+          <tr><td><span class="btnchip">重新检测模板</span></td><td>按行批量出稿</td><td>重新读一次当前选中的图层组当模板</td></tr>
+          <tr><td><span class="btnchip">生成 N 个稿件</span></td><td>按行批量出稿（底部）</td><td>复制模板 N 份并逐份换文字</td></tr>
+          <tr><td><span class="btnchip">置入到画布</span></td><td>素材库详情区</td><td>把选中的素材以副本形式放进当前画布</td></tr>
+          <tr><td><span class="btnchip">刷新</span></td><td>素材库（右上）</td><td>立刻重新读一次素材清单</td></tr>
+          <tr><td><span class="btnchip">存当前色</span></td><td>调色板</td><td>把当前前景色收进「我的颜色」</td></tr>
+          <tr><td><span class="btnchip">✕</span> / 右键</td><td>调色板色块</td><td>删掉这个颜色（只有「我的颜色」能删）</td></tr>
+        </tbody>
+      </table>
+      <p>软件（「Vellum工作台」）这边要用的按钮，见软件手册的「全部按钮速查表」：<span class="btnchip">插件</span>、<span class="btnchip">启用插件联动</span>、<span class="btnchip">同步到插件</span>、<span class="btnchip">选择目录</span>。</p>
+    </section>
+
+    <section id="s5-2">
+      <h2><span class="n">5.2</span>术语表</h2>
+      <table>
+        <thead><tr><th style="width:170px">词</th><th>意思</th></tr></thead>
+        <tbody>
+          <tr><td>面板 / 插件</td><td>装在 Photoshop 里的这个小窗口。「工具」是面板里的一个页面</td></tr>
+          <tr><td>工作台</td><td>「Vellum工作台」，那个管素材的桌面软件。插件是它的下游</td></tr>
+          <tr><td>任务库 / 通用库</td><td>素材的两大来源。任务库挂在任务下；通用库是不属于任何任务的常备件</td></tr>
+          <tr><td>镜像 / 插件数据目录</td><td>工作台把素材清单和缩略图写成的本机副本，插件只读这一个目录</td></tr>
+          <tr><td>置入</td><td>把素材以<b>副本</b>形式放进当前画布（不动原文件）</td></tr>
+          <tr><td>落点 / 九宫格</td><td>决定素材落在画布哪个位置的九个格子</td></tr>
+          <tr><td>模板 / 绑定</td><td>"模板"是你的版式图层组；"绑定"是把表里某一列指到模板里的某个文字层</td></tr>
+          <tr><td>出稿</td><td>复制模板 N 份、逐份换文字、排开 —— 一次产出 N 个稿</td></tr>
+          <tr><td>UDT</td><td>UXP Developer Tool，Adobe 官方的插件开发 / 调试工具（开发态加载用）</td></tr>
+          <tr><td>.ccx</td><td>插件的安装包格式，双击安装</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      <div class="fl">
+        <img src="images/logo-128.png" alt="Vellum" />
+        <span>Vellum 工具箱 · PS 插件使用手册 · v0.5.2 · 2026-10-12</span>
+      </div>
+      <span>配套文档：Vellum工作台 用户使用手册（软件侧）</span>
+    </footer>
+
+  </div>
+
+  <aside class="rail" id="rail"></aside>
+</div>
+
+<button class="totop" id="totop" title="回到顶部" aria-label="回到顶部">↑</button>
+
+<script>
+/* ============ 右侧「本页内容」（跟随滚动重画） ============ */
+(function () {
+  var rail = document.getElementById('rail')
+  var secs = [].slice.call(document.querySelectorAll('section[id], .chapterhead[id]'))
+  var lastId = ''
+  function rebuild() {
+    var y = window.scrollY + 90, cur = secs[0]
+    for (var i = 0; i < secs.length; i++) if (secs[i].offsetTop <= y) cur = secs[i]
+    if (!cur || cur.id === lastId) return
+    lastId = cur.id
+    var box = cur.querySelectorAll('h3')
+    var h2 = cur.querySelector('h2')
+    var html = '<a href="#' + cur.id + '" class="on">' + (h2 ? h2.innerText.replace(/^\S+\s*/, '') : '') + '</a>'
+    for (var j = 0; j < box.length; j++) {
+      var t = box[j].innerText.trim()
+      if (!box[j].id) box[j].id = cur.id + '-h' + j
+      html += '<a class="lv3" href="#' + box[j].id + '">' + t + '</a>'
+    }
+    rail.innerHTML = '<div class="cap">本页内容</div>' + html
+  }
+  var pending = false
+  function onScroll() {
+    if (pending) return
+    pending = true
+    requestAnimationFrame(function () { pending = false; rebuild() })
+  }
+  window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('resize', onScroll, { passive: true })
+  rebuild()
+})()
+
+/* ============ 搜索（索引：目录 + 章节标题） ============ */
+(function () {
+  var q = document.getElementById('q'), hits = document.getElementById('hits')
+  var idx = [].slice.call(document.querySelectorAll('.tocfull a, section[id] > h2, section[id] > h3, .chapterhead h2.ct')).map(function (el) {
+    var a = el.tagName === 'A' ? el : null
+    var target = a ? document.querySelector(a.getAttribute('href')) : el.closest('[id]')
+    var id = a ? a.getAttribute('href').slice(1) : (target ? target.id : '')
+    if (el.tagName === 'H3' && !el.id) el.id = id + '-h'
+    return {
+      title: el.innerText.replace(/\s+/g, ' ').trim(),
+      id: el.tagName === 'H3' ? el.id : id,
+      where: a ? '目录' : ((el.closest('.chapterhead') ? '章节' : '小节'))
+    }
+  }).filter(function (x) { return x.id && x.title })
+  function run() {
+    var v = q.value.trim().toLowerCase()
+    if (!v) { hits.classList.remove('on'); hits.innerHTML = ''; return }
+    var m = idx.filter(function (x) { return x.title.toLowerCase().indexOf(v) > -1 }).slice(0, 12)
+    hits.innerHTML = m.length
+      ? m.map(function (x) { return '<a href="#' + x.id + '"><b>' + x.title + '</b><span>' + x.where + ' · #' + x.id + '</span></a>' }).join('')
+      : '<div class="none">没有找到「' + q.value + '」。试试换成按钮名，例如「置入到画布」「生成表格」「导入 CSV」。</div>'
+    hits.classList.add('on')
+  }
+  q.addEventListener('input', run)
+  q.addEventListener('focus', run)
+  hits.addEventListener('click', function (e) { if (e.target.closest('a')) { hits.classList.remove('on'); q.value = '' } })
+  document.addEventListener('click', function (e) { if (!e.target.closest('.searchbox')) hits.classList.remove('on') })
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { hits.classList.remove('on'); q.blur() } })
+})()
+
+/* ============ 回到顶部 ============ */
+(function () {
+  var b = document.getElementById('totop')
+  window.addEventListener('scroll', function () { b.classList.toggle('on', window.scrollY > 800) }, { passive: true })
+  b.addEventListener('click', function () { window.scrollTo({ top: 0, behavior: 'smooth' }) })
+})()
+</script>
+</body>
+</html>

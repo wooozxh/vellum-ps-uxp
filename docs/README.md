@@ -83,6 +83,13 @@
 
 ## 相关
 
+- **插件的用户手册在 `docs/manual/`**：`index.html`（多文件版，配 `manual.css` + `images/`）、
+  `Vellum工具箱-插件使用手册（单文件）.html`（图片全内联，发给同事用）、同名 `.pdf`。
+  样式**直接沿用软件侧** `D:\proj_media\docs\manual\manual.css` 与 `styleguide.html`（两份手册长得一样）；
+  体检 `python tools/manual/check.py`（六项：版本号 / 目录对账 / 图片 / 标签配对 / 类名白名单 / 产物新鲜度）。
+  🔴 截图由 `tools/manual/shoot_win.py` 抓 —— **PowerShell 执行策略禁 `.ps1`、内联 `Add-Type` 被安全策略拦**，
+  所以走 **Python + ctypes 直调 user32/gdi32**（`PrintWindow` / `SetCursorPos` / `mouse_event` / `keybd_event`）。
+  ⚠️ UXP 面板是**独立顶层窗口**（约 422×732），能单独截，不用裁主窗口。
 - 项目档案四件套在**根目录**（`PROJECT.md` / `PROGRESS.md` / `DECISIONS.md` / `NEXT.md`）——
   那是 AI 的入职材料，改技术选型或项目范围时要同步更新
 - `official-samples/` 在项目根，不在本目录（独立 git 仓库，未入库）

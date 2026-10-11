@@ -50,3 +50,7 @@ vellum-toolbox/verify-keep.flag
 *.tif
 *.tiff
 Test_project/
+
+# 插件手册的两个大产物（脚本可重建：tools/manual/make_single.py 与 Edge 无头 print-to-pdf，不入库）
+docs/manual/*.pdf
+docs/manual/*单文件*.html
