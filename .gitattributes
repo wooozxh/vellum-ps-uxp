@@ -23,7 +23,10 @@
 # M3 表格生成的**测试样例**：解析器要覆盖 CRLF / BOM / GBK 这些真实情况
 # ⇒ 必须逐字节原样保存，**不能**被 `* text=auto eol=lf` 归一（CRLF 会变 LF、
 #   GBK 那份会更糟）。这既便利断言，也保证"样例就是真实文件"。
-samples/* -text -diff -eol
+# ⚠️ 用 `**/samples/*`（带斜杠的模式是锚定的）：根目录 `samples/` 与
+#    插件目录 `vellum-toolbox/samples/` **两处都要覆盖** —— 第一版只写了
+#    `samples/*`，于是插件里那份仍被 git 警告要换行归一（自己踩了一次）。
+**/samples/* -text -diff -eol
 
 # GBK 解码表是生成物（tools/gen-gbk-table.py），保持文本但别被换行归一污染。
 vellum-toolbox/lib/gbk-table.js text
