@@ -1871,6 +1871,38 @@ async function main() {
     );
   }
 
+  /* ---- 50. 下拉触发条三个片段「同盒」（v0.3.7，源码级） ----
+     用户报「数字比文字高一点」：`vertical-align: top` 对纯文本与 inline-block 的语义不同
+     （前者贴"内容区顶"、后者贴"盒子顶"，差约 3px）。
+     修法是把计数/箭头也做成 20px 高的 inline-block ⇒ 三个片段用同一套盒子语义。 */
+  {
+    const css = fs.readFileSync(path.join(PKG, "index.html"), "utf8");
+    const rule = (sel) => {
+      const i = css.indexOf(sel);
+      if (i < 0) return "";
+      const open = css.indexOf("{", i);
+      if (open < 0) return "";
+      const close = css.indexOf("}", open);
+      return close < 0 ? "" : css.slice(open, close);
+    };
+    // 带逗号 ⇒ 只会命中那条**组选择器**，不会命中后面 .fs-n 自己的规则块
+    const numBlk = rule(".fsel .fs-n,");
+    const tBlk = rule(".fsel .fs-t {");
+    const ib = /display:\s*inline-block/.test(numBlk);
+    const hh = /height:\s*20px/.test(numBlk);
+    const lh = /line-height:\s*20px/.test(numBlk);
+    const va = /vertical-align:\s*top/.test(numBlk);
+    const tOk = /display:\s*inline-block/.test(tBlk) && /vertical-align:\s*top/.test(tBlk);
+
+    check(
+      "50 下拉触发条三个片段同盒（计数/箭头也是 20px inline-block，不再比文字高一点）",
+      ib && hh && lh && va && tOk,
+      "计数/箭头：display:inline-block=" + ib + "　height:20px=" + hh +
+        "　line-height:20px=" + lh + "　vertical-align:top=" + va +
+        "　（对照 .fs-t 本来就是 inline-block+top=" + tOk + "）"
+    );
+  }
+
   /* ---- 生成浏览器预览（用的是同一份渲染代码产出的 DOM） ---- */
   let previewPath = null;
   if (WANT_PREVIEW) {

@@ -2895,12 +2895,63 @@ async function run(ctx, deps) {
     rec(S29, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S30: 下拉触发条里三个片段「同顶同高」（v0.3.7 新增）
+     用户 2026-10-11 报：「下拉菜单控件文字旁边的数字都会高一点」。
+     根因：`vertical-align: top` 对**纯文本**与**inline-block** 的语义不同 ——
+        · inline-block ⇒ 它的**盒子顶**贴行盒顶（盒内文字居中）；
+        · 纯文本 ⇒ **内容区顶**贴行盒顶，而内容区只有 ~13px、行盒 20px
+          ⇒ 它比居中位置**高约 3px**。
+     修法：`.fs-t` / `.fs-n` / `.fs-cv` 全部做成 20px 高的 inline-block。
+     判据：三个片段的 `offsetTop` 一致、`offsetHeight` 一致（±1px）——
+        **盒对齐 + 盒内文字居中 ⇒ 视觉上就是对齐的**（文字本身的渲染位置量不到，
+        但"同盒"是可测的、且是这件事的充分条件）。
+     ⚠️ 当前库里没有下拉触发条时（不构成筛选时不画）记「不适用」，不判失败。 */
+  const S30 = "S30 下拉触发条三个片段同顶同高（计数/箭头不再比文字高一点）";
+  try {
+    const probes = [];
+    for (const id of ["vt-lib-subsel", "vt-lib-projsel"]) {
+      const el = document.getElementById(id);
+      if (el && el.children && el.children.length >= 2) probes.push({ id: id, el: el });
+    }
+    if (!probes.length) {
+      rec(S30, true, "【不适用】当前界面里没有下拉触发条（不构成筛选时不画）—— 本条不判失败");
+    } else {
+      let allOk = true;
+      const bits = [];
+      for (const p of probes) {
+        const tops = [];
+        const hs = [];
+        const names = [];
+        for (let i = 0; i < p.el.children.length; i++) {
+          const c = p.el.children[i];
+          const cls = String((c.getAttribute && c.getAttribute("class")) || "");
+          const first = cls.split(/\s+/)[0];
+          if (first !== "fs-t" && first !== "fs-n" && first !== "fs-cv") continue;
+          names.push(first);
+          tops.push(c.offsetTop || 0);
+          hs.push(c.offsetHeight || 0);
+        }
+        const dt = tops.length ? Math.max.apply(null, tops) - Math.min.apply(null, tops) : 99;
+        const dh = hs.length ? Math.max.apply(null, hs) - Math.min.apply(null, hs) : 99;
+        const ok = tops.length >= 2 && dt <= 1 && dh <= 1;
+        if (!ok) allOk = false;
+        bits.push(
+          p.id + "[" + names.join(",") + "]　top=" + tops.join("/") +
+          "　高=" + hs.join("/") + (ok ? " ✓" : " ✗")
+        );
+      }
+      rec(S30, allOk, bits.join("　‖　") + "　（须 top 与高都一致，±1px）");
+    }
+  } catch (e) {
+    rec(S30, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.3.6",
+    version: "0.3.7",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

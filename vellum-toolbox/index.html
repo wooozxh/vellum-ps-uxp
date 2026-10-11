@@ -1049,8 +1049,15 @@
         vertical-align: top;
       }
 
+      /* 计数 / 箭头：**必须也做成 20px 高的 inline-block**，光写 `vertical-align: top` 不够 ——
+         `top` 对**纯文本**是把「内容区顶部」贴到行盒顶（内容区只有 ~13px、行盒 20px
+         ⇒ 它比居中位置**高约 3px**），而对 inline-block 才是「盒子顶贴行盒顶」（盒内文字居中）。
+         两者混用 = 用户 2026-10-11 报的「数字比文字高一点」。 */
       .fsel .fs-n,
       .fsel .fs-cv {
+        display: inline-block;
+        height: 20px;
+        line-height: 20px;
         vertical-align: top;
       }
 
