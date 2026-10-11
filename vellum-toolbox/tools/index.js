@@ -20,9 +20,10 @@
 
 const palette = require("./palette.js");
 const library = require("./library.js");
+const table = require("./table.js");
 
 /** 已实现的工具（首页可点）。 */
-const tools = [palette, library];
+const tools = [palette, library, table];
 
 /**
  * 规划中的工具（首页显示为灰行，点了给提示）。
@@ -30,13 +31,6 @@ const tools = [palette, library];
  * 名称与副标题按用户 2026-10-10 的指定（「表格生成」「AI-MCP」）。
  */
 const planned = [
-  {
-    id: "table",
-    title: "表格生成",
-    subtitle: "表格绑定图层，批量出稿",
-    badge: "M3",
-    note: "M3 开工。重绘形态已定：每格一个文字图层 + 矢量线条，插入后可继续编辑。",
-  },
   {
     id: "mcp",
     title: "AI-MCP",

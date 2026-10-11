@@ -187,6 +187,8 @@ const caps = require("./caps.js");
 const cssprobe = require("./cssprobe.js");
 const icons = require("./icons.js");
 const mirror = require("./mirror.js");
+const csv = require("./csv.js");
+const tbl = require("./table.js");
 
 const REPORT_FILE = "selfcheck.json";
 /** 自检色：刻意取一个几乎不会撞上品牌占位色的值，让「值确实变了」判据有意义。 */
@@ -3886,12 +3888,154 @@ async function run(ctx, deps) {
     rec(S39, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S40: 生成表格端到端（v0.4.0 新增，M3a 的核心）
+     这是 M3「表格生成」第一次把整条链子跑通：
+       CSV 文本 →（自己解码）→（自己解析）→ 归一化 → 布局计划 → 一次 batchPlay 落地
+
+     判据全部**读回**（不看"命令没报错"）：
+       ① CSV 解析：字段内的逗号与引号转义必须对（这是最容易错的地方）
+       ② 图层数增量 **正好等于** 计划里的层数（多一层少一层都算错）
+       ③ 建出来的东西在**一个组**里，组名就是我们要的
+       ④ 最后一个文字层：**文字内容** / **图层名** / **段落对齐** 三项都要命中
+          —— 后两项是本轮的两个**未知**：`make textLayer` 里给 `name` 会不会被接受、
+             建层时就带 `paragraphStyleRange` 会不会生效，都靠这一条钉死
+       ⑤ 线条用**像素**验：在第一条横线所在的区域取样，必须命中线色
+       ⚠️ 只作用在自建临时文档上，跑完不保存关掉。 */
+  const S40 = "S40 生成表格端到端 —— CSV 解析 → 布局 → 落地（层数/组/文字/图层名/对齐/线条取色）";
+  try {
+    const CSV_TEXT = '名称,价格,备注\r\n"图一,终稿","1.20","含税"\r\n图二,3.40,普通\r\n图三,5.00,"含""引号"""\r\n';
+    const parsed = csv.readBytes(csv.encodeUtf8(CSV_TEXT));
+    const csvOk = !!(parsed.ok && parsed.rows.length === 4 && parsed.rows[0][0] === "名称" &&
+      parsed.rows[1][0] === "图一,终稿" && parsed.rows[3][2] === '含"引号"');
+
+    const sc40 = await ps.createScratchDoc({ size: 400, name: "Vellum 自检临时文档(表格)" });
+    if (!sc40 || !sc40.ok) {
+      rec(S40, false, "建临时文档失败：" + ((sc40 && sc40.error) || "未知"));
+    } else {
+      try {
+        const norm = parsed.ok ? tbl.normalizeRows(parsed.rows, true) : null;
+        const region = { left: 40, top: 40, right: 280, bottom: 240 };
+        const plan = norm && norm.cols
+          ? tbl.layoutTable({ header: norm.header, body: norm.body, region: region, style: {} })
+          : null;
+        if (!plan || !plan.ok) {
+          rec(S40, false, "布局计划没成立：" + ((plan && plan.error) || "没有归一化出表"));
+        } else {
+          const r = await ps.buildTable(plan, { name: "自检表格" });
+          const last = plan.cells[plan.cells.length - 1];
+
+          // ③ 组是否存在（递归找，名字要**正好**是我们要的）
+          let grpFound = false;
+          let grpCount = 0;
+          try {
+            const walk = (arr) => {
+              for (const l of arr || []) {
+                if (l.kind === "group") { grpCount++; if (String(l.name) === "自检表格") grpFound = true; }
+                if (l.layers && l.layers.length) walk(l.layers);
+              }
+            };
+            walk(ps.app.activeDocument.layers);
+          } catch { /* 忽略 */ }
+
+          // ④ 最后一个文字层：内容 / 名字 / 对齐
+          const li = ps.layerInfo();
+          const pr = ps.textItemProbe();
+          const tk = await ps.readTextKeyDesc();
+          const sm = tk.ok ? ps.summarizeTextKey(tk.raw) : null;
+          const gotAlign = sm && (sm.paragraphAlign || sm.paragraphJustification);
+          const wantName = ps.tableCellName(last);
+
+          /* ⑤ 线条：**按 bounds 认出那条线**（v0.4.1 起线条不再靠名字），再用 DOM 选中它取样 */
+          const target = plan.lines.filter((l) => l.kind === "h")[0];
+          let lineSample = { ok: false, error: "没有横线" };
+          if (target) {
+            try {
+              let picked = null;
+              await ps.runModal(async () => {
+                const doc = ps.app.activeDocument;
+                let grp = null;
+                const walk = (arr) => {
+                  for (const l of arr || []) {
+                    if (grp) return;
+                    if (l.kind === "group" && String(l.name) === "自检表格") { grp = l; return; }
+                    if (l.layers && l.layers.length) walk(l.layers);
+                  }
+                };
+                walk(doc.layers);
+                if (!grp) throw new Error("找不到组");
+                const num = (v) => (v && typeof v === "object" && "_value" in v ? v._value : v);
+                const near = (a, b) => Math.abs(Number(num(a)) - Number(b)) <= 1;
+                for (const s of (grp.layers || [])) {
+                  if (s.kind !== "solidColor" || !s.bounds) continue;
+                  const b = s.bounds;
+                  if (near(b.left, target.rect.left) && near(b.top, target.rect.top) &&
+                      near(b.right, target.rect.right) && near(b.bottom, target.rect.bottom)) { picked = s; break; }
+                }
+                if (!picked) throw new Error("组里找不到 bounds 等于第一条横线的形状层");
+                doc.activeLayers = [picked];
+              }, "Vellum 工具箱：按 bounds 找到第一条横线");
+              lineSample = await ps.sampleRectAvgColor({
+                left: target.rect.left + 4, top: target.rect.top,
+                right: target.rect.right - 4, bottom: target.rect.bottom,
+              });
+            } catch (e) {
+              lineSample = { ok: false, error: (e && e.message) || String(e) };
+            }
+          }
+          const lc = plan.style.lineColor;
+          const lineOk = !!(lineSample.ok && lineSample.rgb &&
+            Math.abs(lineSample.rgb.r - lc.r) <= 25 &&
+            Math.abs(lineSample.rgb.g - lc.g) <= 25 &&
+            Math.abs(lineSample.rgb.b - lc.b) <= 25);
+
+          const addedOk = r.ok && r.added === plan.layers;
+          const nameOk = !!(li.ok && li.name === wantName);
+          const textOk = !!(pr.values && pr.values.contents === last.text);
+          const alignOk = !!(gotAlign && gotAlign.value === last.align);
+          const phaseOk = r.alignMode === "inline" ||
+            (r.renamed === plan.cells.length && r.aligned === plan.cells.length);
+          const judge = csvOk && addedOk && grpFound && nameOk && textOk && alignOk && phaseOk;
+          const judgeAll = judge && lineOk;
+
+          rec(
+            S40,
+            judgeAll,
+            "① CSV=" + (csvOk ? "解析对（含字段内逗号与双引号转义）" : "✗ 解析不对") +
+            "　② 层数=" + (r.added === undefined ? "?" : r.added) + "/" + plan.layers +
+            (addedOk ? " ✓" : " ✗") +
+            "（组 " + grpCount + " 个，名字命中=" + grpFound + "）" +
+            "　③ 文字=" + JSON.stringify((pr.values && pr.values.contents) || "") +
+            "（须 " + JSON.stringify(last.text) + "）" + (textOk ? "✓" : "✗") +
+            "　④ 图层名=" + JSON.stringify((li && li.name) || "") +
+            "（须 " + JSON.stringify(wantName) + "）" + (nameOk ? "✓" : "✗") +
+            "　⑤ 对齐=" + ((gotAlign && gotAlign.value) || "?") +
+            "（须 " + last.align + "）" + (alignOk ? "✓" : "✗") +
+            "　⑥ 阶段二（DOM 改名 + AM 对齐）=" + r.renamed + "/" + plan.cells.length +
+            " 改名 · " + r.aligned + "/" + plan.cells.length + " 对齐" + (phaseOk ? " ✓" : " ✗") +
+            "　⑦ 线条取色=" + (lineSample.ok ? lineSample.hex : "取不到（" + (lineSample.error || "?") + "）") +
+            "（须 " + ps.rgbToHex(lc) + "，±25）" + (lineOk ? "✓" : "✗") +
+            (r.error ? "　err=" + r.error : "") +
+            (r.phase2Error ? "　phase2=" + r.phase2Error : "") +
+            "　⇒ " + (judgeAll
+              ? "整条链子通：CSV → 计划 → 落地；图层名/对齐/线条全部读回命中，且**全是已验原语**"
+              : (judge ? "⚠️ 只剩线条取色没中 —— 表格本身是对的"
+                : "⚠️ 有项没中 —— 见分段读数"))
+          );
+        }
+      } finally {
+        try { await ps.closeDocument(sc40.id); } catch { /* 忽略 */ }
+      }
+    }
+  } catch (e) {
+    rec(S40, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.3.9",
+    version: "0.4.0",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

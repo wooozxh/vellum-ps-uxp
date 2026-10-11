@@ -1835,7 +1835,8 @@ function rectShapeMakeDesc(rect, rgb, opts) {
       _obj: "strokeStyle",
       strokeStyleVersion: 2,
       strokeEnabled: !!o.stroke,
-      fillEnabled: true,
+      // v0.4.0：外框要"只描边不填充"（表格外框就是一整圈线）⇒ 允许关掉填充
+      fillEnabled: o.fill !== false,
       strokeStyleLineWidth: px(o.strokeWidth || 2),
       strokeStyleLineDashOffset: { _unit: "pointsUnit", _value: 0 },
       strokeStyleMiterLimit: 100,
@@ -1934,31 +1935,57 @@ function textLayerBoxDesc(opts) {
     _obj: "RGBColor",
     red: clamp255(rgb.r), grain: clamp255(rgb.g), blue: clamp255(rgb.b),
   };
+  const using = {
+    _obj: "textLayer",
+    textKey: text,
+    textShape: [
+      {
+        _obj: "textShape",
+        char: { _enum: "char", _value: "box" },
+        bounds: {
+          _obj: "rectangle",
+          top: px(b.top), left: px(b.left), bottom: px(b.bottom), right: px(b.right),
+        },
+      },
+    ],
+    textStyleRange: [
+      {
+        _obj: "textStyleRange",
+        from: 0,
+        to: text.length,
+        textStyle: style,
+      },
+    ],
+  };
+
+  /* v0.4.0：建层时就带上图层名。
+     ⚠️ `make textLayer` 里 `name` 是否被接受**由 S40 钉死**（录制样例里 `make contentLayer`
+     是有 `name` 的，textLayer 这一路没有官方样例）⇒ 不生效的话图层面板里会是一串
+     "文字图层 n"，那时得换命名策略。 */
+  if (o.name) using.name = String(o.name);
+
+  /* v0.4.0：**建层时就带上段落对齐**（表格每格的居中/右对齐）。
+     依据：`align` 这个字段名与枚举族 `alignmentType` 都是 v0.3.8/v0.3.9
+     从 `readTextKeyDesc()` **读回来的**（不是猜的），见 docs/35 S32 与 docs/37。
+     能不能在建层这一发里就生效由 S40 钉死；不生效则退回"建完再 select + set"（buildTable 的 post 模式）。 */
+  if (o.align && o.align.value) {
+    using.paragraphStyleRange = [
+      {
+        _obj: "paragraphStyleRange",
+        from: 0,
+        to: text.length,
+        paragraphStyle: {
+          _obj: "paragraphStyle",
+          align: { _enum: o.align.cls || "alignmentType", _value: String(o.align.value) },
+        },
+      },
+    ];
+  }
+
   return {
     _obj: "make",
     _target: [{ _ref: "textLayer" }],
-    using: {
-      _obj: "textLayer",
-      textKey: text,
-      textShape: [
-        {
-          _obj: "textShape",
-          char: { _enum: "char", _value: "box" },
-          bounds: {
-            _obj: "rectangle",
-            top: px(b.top), left: px(b.left), bottom: px(b.bottom), right: px(b.right),
-          },
-        },
-      ],
-      textStyleRange: [
-        {
-          _obj: "textStyleRange",
-          from: 0,
-          to: text.length,
-          textStyle: style,
-        },
-      ],
-    },
+    using: using,
     _options: { dialogOptions: "dontDisplay" },
   };
 }
@@ -2506,6 +2533,180 @@ async function sampleRectAvgColor(rect) {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ★ v0.4.0：M3「表格生成」—— 把 lib/table.js 算好的计划落到文档里
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 一次 `batchPlay` 发完（v0.3.8 实测：批量 37.5ms/层 vs 逐条 267ms/层，差 7.8 倍
+ * —— 模态进出才是大头）⇒ **绝不逐条发**。
+ *
+ * 建层顺序 = 最终 z 序（PS 新建的层在上）：
+ *   背景（最下）→ 线条 → 外框 → 文字（最上）
+ *
+ * 全部落在**一个图层组**里，组内每层都带**有意义的名字**（「线 · 横 3」「文字 R2C1 秋季提高班」）
+ * —— "可继续编辑"这条需求的灵魂就在这：用户打开图层面板要看得懂，而不是一堆"文字图层 12"。
+ */
+
+/** 按**图层名**选中（AM 的 `_target` 支持 `_name`；post 模式的对齐就靠它回头逐个改）。 */
+function selectLayerByNameDesc(name) {
+  return {
+    _obj: "select",
+    _target: [{ _ref: "layer", _name: String(name) }],
+    _options: { dialogOptions: "dontDisplay" },
+  };
+}
+
+/** 递归找一个图层（按名字 / 可选按 kind）。找不到返回 null。 */
+function findLayerDeep(name, kind) {
+  let hit = null;
+  try {
+    const walk = (arr) => {
+      for (const l of arr || []) {
+        if (hit) return;
+        if (String(l.name) === String(name) && (!kind || l.kind === kind)) {
+          hit = l;
+          return;
+        }
+        if (l.layers && l.layers.length) walk(l.layers);
+      }
+    };
+    walk(app.activeDocument.layers);
+  } catch {
+    return null;
+  }
+  return hit;
+}
+
+/** 表头/单元格的图层名（截断到安全长度，图层名有上限） */
+function tableCellName(cell) {
+  const head = cell.role === "header" ? "表头 C" + (cell.col + 1) : "文字 R" + cell.row + "C" + (cell.col + 1);
+  let t = String(cell.text).replace(/[\r\n]+/g, " ");
+  if (t.length > 18) t = t.slice(0, 18) + "…";
+  return t ? head + " " + t : head;
+}
+
+/**
+ * 把计划落进当前文档。
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * 🔴 v0.4.1 **返工记录**（一轮真机事故换来的，务必别再犯）
+ * ════════════════════════════════════════════════════════════════════════════
+ * v0.4.0 的写法是"把 `name` 与 `paragraphStyleRange` 直接塞进 `make textLayer`
+ * 描述符、48 条命令一次发完"。真机一跑：**自检卡死、PS 进模态再也回不来**，
+ * 连 UXP 的加载命令都超时（`Check the host application ... busy or in a modal state`）。
+ * 那两项都是**没有官方样例、只有我推理**的加法 —— 一旦其中一条让 PS 弹框，
+ * `executeAsModal` 就永远等不到返回，**整个插件陪葬**。
+ *
+ * ⇒ 现在的纪律：**只用已经真机验过的原语**，而且**新加法一次只验一条、单条发**。
+ *    · 建层：`make contentLayer/shape:rectangle`（S31 验）、`make textLayer` 的
+ *      `textShape`+`textStyleRange`（S32 验）—— **不塞 name、不塞 paragraphStyleRange**
+ *    · 改名：DOM `layer.name = …`（**S29 验过可写**）
+ *    · 选层：DOM `doc.activeLayers = [layer]`（S33 验过）
+ *    · 对齐：AM `set _property:"paragraphStyle"`（S37 验过 left/center/right 三档）
+ *    · 组名：`make layerSection` 的 `name`（S33 的 `makeGroup` 就靠它按名字找回来）
+ *
+ * `alignMode:"inline"` 那条快路**保留但不做默认**，等有了一份"单条小探针"的证据再启用。
+ */
+async function buildTable(plan, opts) {
+  const o = opts || {};
+  if (!plan || !plan.ok) return { ok: false, error: (plan && plan.error) || "没有可用的计划" };
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+
+  const before = countLayersDeep();
+  const groupName = o.name || "表格";
+  const inline = o.alignMode === "inline"; // 默认走"已验原语"那条
+  const cmds = [groupMakeDesc(groupName)];
+
+  for (const b of plan.bg) {
+    cmds.push(rectShapeMakeDesc(b.rect, b.color, { fill: true, stroke: false }));
+  }
+  let hi = 0;
+  let vi = 0;
+  for (const l of plan.lines) {
+    hi = l.kind === "h" ? hi + 1 : hi;
+    vi = l.kind === "v" ? vi + 1 : vi;
+    cmds.push(rectShapeMakeDesc(l.rect, plan.style.lineColor, { fill: true, stroke: false }));
+  }
+  cmds.push(rectShapeMakeDesc(plan.outer.rect, plan.outer.color, {
+    fill: false, stroke: true, strokeWidth: plan.outer.strokeW, radius: plan.outer.radius,
+  }));
+  for (const c of plan.cells) {
+    cmds.push(textLayerBoxDesc({
+      text: c.text, box: c.box, sizePt: c.sizePt, rgb: c.color,
+      fontName: plan.style.fontName,
+      name: inline ? tableCellName(c) : null,
+      align: inline ? { value: c.align } : null,
+    }));
+  }
+
+  const out = {
+    ok: false, group: groupName, expected: plan.layers,
+    commands: cmds.length, alignMode: inline ? "inline" : "dom",
+    renamed: 0, aligned: 0, phase2Error: null,
+  };
+
+  try {
+    await runModal(async () => {
+      /* ① 建层（一次 batchPlay；描述符只用验过的形状） */
+      await batchPlay(cmds, {});
+      if (inline) return;
+
+      /* ② 改名 + 设对齐：**全部用已验原语，且都在同一个 modal 里**（省掉 33 次模态进出） */
+      const doc = app.activeDocument;
+      let grp = null;
+      const walk = (arr) => {
+        for (const l of arr || []) {
+          if (grp) return;
+          if (l.kind === "group" && String(l.name) === groupName) { grp = l; return; }
+          if (l.layers && l.layers.length) walk(l.layers);
+        }
+      };
+      walk(doc.layers);
+      if (!grp) throw new Error("建完找不到组「" + groupName + "」");
+
+      const kids = (grp.layers || []).filter((l) => l.kind === "text");
+      // 建层顺序是"从下往上"⇒ 图层面板里最上面那个 = **最后**建的那格
+      kids.reverse();
+      const n = Math.min(kids.length, plan.cells.length);
+      for (let i = 0; i < n; i++) {
+        const layer = kids[i];
+        const cell = plan.cells[i];
+        try {
+          doc.activeLayers = [layer];
+        } catch (e) {
+          /* 选不中就当这一格没处理，继续下一格 */
+        }
+        try {
+          layer.name = tableCellName(cell);
+          out.renamed++;
+        } catch (e) {
+          /* 单个改名失败不该拖垮整张表 */
+        }
+        try {
+          await batchPlay([paragraphStyleDesc({ align: { cls: "alignmentType", value: cell.align } })], {});
+          out.aligned++;
+        } catch (e) {
+          /* 同上 */
+        }
+      }
+    }, "Vellum 工具箱：生成表格（" + plan.layers + " 个图层）");
+  } catch (e) {
+    out.error = "生成失败：" + msg(e);
+    out.added = countLayersDeep() - before;
+    return out;
+  }
+
+  out.added = countLayersDeep() - before;
+  out.ok = out.added > 0;
+  if (!inline && out.aligned !== plan.cells.length) {
+    out.phase2Error = "对齐设上了 " + out.aligned + "/" + plan.cells.length + " 个";
+  }
+  out.lastCell = plan.cells.length ? plan.cells[plan.cells.length - 1] : null;
+  out.cells = plan.cells.length;
+  out.lines = plan.lines.length;
+  out.bg = plan.bg.length;
+  return out;
+}
+
 /* --------------------------------------------------------------- 其他 */
 
 /** 当前是否打开了文档（调色板不依赖它，但别的工具要）。 */
@@ -2596,6 +2797,10 @@ module.exports = {
   applyTextLayerDesc,
   paragraphStyleDesc,
   applyParagraphStyle,
+  /* v0.4.0 追加：M3 表格生成落地 */
+  selectLayerByNameDesc,
+  tableCellName,
+  buildTable,
   readTextKeyDesc,
   summarizeTextKey,
   countLayersDeep,
