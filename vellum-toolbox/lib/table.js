@@ -204,24 +204,58 @@ function layoutTable(req) {
     }
   }
 
-  // 线：内部横线（行与行之间）+ 内部竖线（列与列之间）。外框单独一层。
+  /* ── 线：**外框 4 条 + 内部横/竖线**，全部是同一种「细矩形」 ─────────────────
+     🔴 v0.4.1 为什么把外框拆成 4 条：一条"只描边不填充"的矩形需要
+        `fillEnabled:false` + `strokeEnabled:true` 这个**组合**，而真机 S31 验过的是
+        `fillEnabled:true` + `strokeEnabled:false`。**没验过的组合一律不发**
+        （v0.4.0 卡死宿主的教训，见 lib/ps.js `buildTable` 顶上的返工记录）。
+     代价是外框从 1 层变 4 层 —— 换来"只用已验原语"，值。
+     颜色分两档：外框用 `strokeColor`、内部线用 `lineColor`（竞品也是这么分的）。 */
   const half = Math.max(0, Math.floor(style.strokeW / 2));
+  const wpx = Math.max(1, style.strokeW);
+  const frame = { left: left, top: top, right: left + totalW, bottom: top + totalH };
   const lines = [];
-  if (style.border === "all" || style.border === "h") {
+
+  const wantTB = style.border === "all" || style.border === "h";
+  const wantLR = style.border === "all" || style.border === "v";
+  if (wantTB) {
+    lines.push({
+      kind: "h", outer: true, edge: "top", color: style.strokeColor,
+      rect: { left: frame.left, top: frame.top, right: frame.right, bottom: frame.top + wpx },
+    });
+    lines.push({
+      kind: "h", outer: true, edge: "bottom", color: style.strokeColor,
+      rect: { left: frame.left, top: frame.bottom - wpx, right: frame.right, bottom: frame.bottom },
+    });
+  }
+  if (wantLR) {
+    lines.push({
+      kind: "v", outer: true, edge: "left", color: style.strokeColor,
+      rect: { left: frame.left, top: frame.top, right: frame.left + wpx, bottom: frame.bottom },
+    });
+    lines.push({
+      kind: "v", outer: true, edge: "right", color: style.strokeColor,
+      rect: { left: frame.right - wpx, top: frame.top, right: frame.right, bottom: frame.bottom },
+    });
+  }
+
+  // 内部横线（行与行之间）
+  if (wantTB) {
     for (let i = 1; i < totalRows; i++) {
       const y = rowTop(i);
       lines.push({
-        kind: "h", y: y,
-        rect: { left: left, top: y - half, right: left + totalW, bottom: y - half + Math.max(1, style.strokeW) },
+        kind: "h", y: y, color: style.lineColor,
+        rect: { left: left, top: y - half, right: left + totalW, bottom: y - half + wpx },
       });
     }
   }
-  if (style.border === "all" || style.border === "v") {
+  // 内部竖线（列与列之间）
+  if (wantLR) {
     for (let c = 1; c < cols; c++) {
       const x = colLeft(c);
       lines.push({
-        kind: "v", x: x,
-        rect: { left: x - half, top: top, right: x - half + Math.max(1, style.strokeW), bottom: top + totalH },
+        kind: "v", x: x, color: style.lineColor,
+        rect: { left: x - half, top: top, right: x - half + wpx, bottom: top + totalH },
       });
     }
   }
@@ -246,15 +280,21 @@ function layoutTable(req) {
     }
   }
 
+  /* 外框元信息（面板/摘要用）。⚠️ `radius` **目前不生效**（圆角那条描述符还没单发探针），
+     给了就如实出警告，不静默降级。 */
   const outer = {
-    rect: { left: left, top: top, right: left + totalW, bottom: top + totalH },
+    rect: frame,
     radius: Math.max(0, Math.round(style.radius)),
     strokeW: Math.max(0, style.strokeW),
     color: style.strokeColor,
+    bars: lines.filter((l) => l.outer).length,
   };
+  if (outer.radius > 0) {
+    warnings.push("圆角外框暂不生效（那条描述符还没有单发探针），本次按直角画");
+  }
 
-  // 层数：1 组 + 外框 + 线 + 背景 + 文字（空格子不算）
-  const layers = 1 + 1 + lines.length + bg.length + cells.length;
+  // 层数：1 组 + 线（外框也算在 lines 里）+ 背景 + 文字（空格子不算）
+  const layers = 1 + lines.length + bg.length + cells.length;
 
   return {
     ok: true,
@@ -273,8 +313,9 @@ function layoutTable(req) {
 function describe(plan) {
   if (!plan || !plan.ok) return plan && plan.error ? plan.error : "（没有计划）";
   let s = plan.cols + " 列 × " + plan.bodyRows + " 行数据　表格 " + plan.width + "×" + plan.height + "px";
-  s += "　共 " + plan.layers + " 个图层（外框 1 · 线 " + plan.lines.length +
-    " · 背景 " + plan.bg.length + " · 文字 " + plan.cells.length + "）";
+  s += "　共 " + plan.layers + " 个图层（外框 " + plan.outer.bars + " · 内部线 " +
+    (plan.lines.length - plan.outer.bars) + " · 背景 " + plan.bg.length +
+    " · 文字 " + plan.cells.length + "）";
   if (plan.emptyCells) s += "　跳过 " + plan.emptyCells + " 个空格子";
   return s;
 }

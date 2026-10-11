@@ -2585,6 +2585,21 @@ function tableCellName(cell) {
 }
 
 /**
+ * 尽力而为的日志（**绝不能影响主流程**）。
+ *
+ * 为什么底层模块也要写日志：v0.4.0 那次真机事故里，自检卡在 `buildTable` 里面，
+ * 而日志只留到"上一个探针"就断了 —— 没人知道卡在"发命令"还是"逐格改名"。
+ * 有了这几行，卡死时日志的最后一条就是**分野线**。
+ */
+function note(line) {
+  try {
+    require("./log.js").appendLog(String(line));
+  } catch {
+    /* 日志失败永远不该影响业务 */
+  }
+}
+
+/**
  * 把计划落进当前文档。
  *
  * ════════════════════════════════════════════════════════════════════════════
@@ -2619,16 +2634,13 @@ async function buildTable(plan, opts) {
   for (const b of plan.bg) {
     cmds.push(rectShapeMakeDesc(b.rect, b.color, { fill: true, stroke: false }));
   }
-  let hi = 0;
-  let vi = 0;
+  /* 线：**外框 4 条也在 plan.lines 里**（见 lib/table.js）⇒ 这里一个循环发完，
+     每条都走 S31 验过的那个形状（fill:true / stroke:false），没有例外。
+     ⚠️ 刻意**不再**发"只描边不填充"的矩形：`fillEnabled:false` + `strokeEnabled:true`
+     这个组合没有真机证据，正是 v0.4.0 卡死宿主的那一类加法。 */
   for (const l of plan.lines) {
-    hi = l.kind === "h" ? hi + 1 : hi;
-    vi = l.kind === "v" ? vi + 1 : vi;
-    cmds.push(rectShapeMakeDesc(l.rect, plan.style.lineColor, { fill: true, stroke: false }));
+    cmds.push(rectShapeMakeDesc(l.rect, l.color || plan.style.lineColor, { fill: true, stroke: false }));
   }
-  cmds.push(rectShapeMakeDesc(plan.outer.rect, plan.outer.color, {
-    fill: false, stroke: true, strokeWidth: plan.outer.strokeW, radius: plan.outer.radius,
-  }));
   for (const c of plan.cells) {
     cmds.push(textLayerBoxDesc({
       text: c.text, box: c.box, sizePt: c.sizePt, rgb: c.color,
@@ -2644,11 +2656,17 @@ async function buildTable(plan, opts) {
     renamed: 0, aligned: 0, phase2Error: null,
   };
 
+  note("m3 build 开始　组=" + groupName + "　命令 " + cmds.length + " 条（1 组 + 线 " +
+    plan.lines.length + "（外框 " + (plan.outer ? plan.outer.bars : "?") + "）+ 背景 " + plan.bg.length +
+    " + 文字 " + plan.cells.length + "）　模式=" + (inline ? "inline" : "dom"));
+
   try {
     await runModal(async () => {
       /* ① 建层（一次 batchPlay；描述符只用验过的形状） */
       await batchPlay(cmds, {});
+      note("m3 build 第①批发完（" + cmds.length + " 条命令已提交）");
       if (inline) return;
+      note("m3 build 第②批开始（逐格改名 + 对齐，共 " + plan.cells.length + " 格）");
 
       /* ② 改名 + 设对齐：**全部用已验原语，且都在同一个 modal 里**（省掉 33 次模态进出） */
       const doc = app.activeDocument;
@@ -2690,10 +2708,14 @@ async function buildTable(plan, opts) {
       }
     }, "Vellum 工具箱：生成表格（" + plan.layers + " 个图层）");
   } catch (e) {
+    note("m3 build 失败　" + msg(e));
     out.error = "生成失败：" + msg(e);
     out.added = countLayersDeep() - before;
     return out;
   }
+
+  note("m3 build 完成　新增 " + (countLayersDeep() - before) + " 层　改名 " +
+    out.renamed + "　对齐 " + out.aligned);
 
   out.added = countLayersDeep() - before;
   out.ok = out.added > 0;

@@ -3945,8 +3945,11 @@ async function run(ctx, deps) {
           const gotAlign = sm && (sm.paragraphAlign || sm.paragraphJustification);
           const wantName = ps.tableCellName(last);
 
-          /* ⑤ 线条：**按 bounds 认出那条线**（v0.4.1 起线条不再靠名字），再用 DOM 选中它取样 */
-          const target = plan.lines.filter((l) => l.kind === "h")[0];
+          /* ⑤ 线条：**按 bounds 认出那条线**（v0.4.1 起线条不再靠名字），再用 DOM 选中它取样
+             ⚠️ 挑**内部横线**（`!outer`）：外框是单独的颜色（strokeColor），拿它验 lineColor 会误判。 */
+          const target =
+            plan.lines.filter((l) => l.kind === "h" && !l.outer)[0] ||
+            plan.lines.filter((l) => l.kind === "h")[0];
           let lineSample = { ok: false, error: "没有横线" };
           if (target) {
             try {
@@ -3982,7 +3985,7 @@ async function run(ctx, deps) {
               lineSample = { ok: false, error: (e && e.message) || String(e) };
             }
           }
-          const lc = plan.style.lineColor;
+          const lc = (target && target.color) || plan.style.lineColor;
           const lineOk = !!(lineSample.ok && lineSample.rgb &&
             Math.abs(lineSample.rgb.r - lc.r) <= 25 &&
             Math.abs(lineSample.rgb.g - lc.g) <= 25 &&
@@ -4030,12 +4033,122 @@ async function run(ctx, deps) {
     rec(S40, false, "抛异常：" + ((e && e.message) || e));
   }
 
+  /* ---------- S41: 表格面板真机挂载（v0.4.1 新增，M3a 的「面板」那一半）
+     面板 800+ 行、控件**全是自绘**（`sp-*` 未注册，UXP 的 CSS/组件都是子集）
+     ⇒ 离线只能验到**结构**（选择器在不在），"它到底能不能挂起来、控件有没有几何"
+     只能上真机。这条走**真实 mount 路径**（`ctx.shell.showTool("table")`），再**量几何**。
+     ⚠️ UXP 布局是异步的：同步 appendChild 后立刻量会得到 0（不是"没渲染"）
+     ⇒ 一律**轮询到非零几何再量**（都是这么做的）。 */
+  const S41 = "S41 表格面板真机挂载 —— 真实 mount 路径 + 关键控件几何 + 折叠块能点开";
+  try {
+    await ctx.shell.showTool("table", "selfcheck");
+
+    const rootEl = await waitFor(() => {
+      const el = document.getElementById("vt-tbl");
+      const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      return r && r.width > 0 && r.height > 0 ? el : null;
+    }, 6000);
+
+    if (!rootEl) {
+      rec(S41, false, "挂载后 6s 内 #vt-tbl 仍没有非零几何 ⇒ 面板没挂起来（或布局卡住了）");
+    } else {
+      const rectOf = (id) => {
+        const el = document.getElementById(id);
+        if (!el || !el.getBoundingClientRect) return null;
+        const r = el.getBoundingClientRect();
+        return { w: Math.round(r.width), h: Math.round(r.height) };
+      };
+      const fmt = (id) => {
+        const r = rectOf(id);
+        return id + "(" + (r ? r.w + "×" + r.h : "无") + ")";
+      };
+
+      /* 🔴 判据的关键一层：**量几何之前必须先确认元素是可见的**。
+         折叠块默认 `closed`（`.tbl-grp.closed .tbl-gb{display:none}`）⇒ 块内控件量出来
+         是 0×0 —— 那是"没显示"，不是"没渲染"。第一版把两者混了，S41 自己 FAIL 过一次
+         （vt-tbl-styletabs 报 0×0，其实只是它躺在收起的「样式」块里）。 */
+      const alwaysIds = [
+        "vt-tbl", "vt-tbl-src", "vt-tbl-grid", "vt-tbl-body", "vt-tbl-foot",
+        "vt-tbl-g1", "vt-tbl-g2", "vt-tbl-g3",
+        "vt-tbl-estimate", "vt-tbl-save",
+        "vt-tbl-import", "vt-tbl-gen", "vt-tbl-docs",
+      ];
+      const missing = [];
+      const zero = [];
+      for (const id of alwaysIds) {
+        const r = rectOf(id);
+        if (!r) { missing.push(id); continue; }
+        if (r.w <= 0 || r.h <= 0) zero.push(fmt(id));
+      }
+
+      /* 三个折叠块逐个**点标题展开**，展开后再量块内控件
+         （顺带把"自绘控件的点击在真机上灵不灵 + 展开后真有内容"一起验了） */
+      const expand = async (gid) => {
+        const g = document.getElementById(gid);
+        if (!g) return { ok: false, note: gid + " 不存在" };
+        if (String(g.getAttribute("class") || "").indexOf("closed") >= 0 && g.children[0]) {
+          syntheticClick(g.children[0], null);
+          await waitFor(() => {
+            const cls = String(g.getAttribute("class") || "");
+            const b = g.children[1];
+            const r = b && b.getBoundingClientRect ? b.getBoundingClientRect() : null;
+            return cls.indexOf("closed") < 0 && r && r.height > 0 ? true : null;
+          }, 3000);
+        }
+        const b = g.children[1];
+        const r = b && b.getBoundingClientRect ? b.getBoundingClientRect() : null;
+        const h = r ? Math.round(r.height) : -1;
+        const open = String(g.getAttribute("class") || "").indexOf("closed") < 0;
+        return { ok: open && h > 0, note: gid + (open ? " 展开→内容 " : " 仍收起→") + h + "px" };
+      };
+
+      const g1r = await expand("vt-tbl-g1");
+      const g2r = await expand("vt-tbl-g2");
+      const g3r = await expand("vt-tbl-g3");
+
+      const innerIds = ["vt-tbl-regioninfo", "vt-tbl-styletabs"];
+      const innerBad = [];
+      for (const id of innerIds) {
+        const r = rectOf(id);
+        if (!r) { innerBad.push(id + "(无)"); continue; }
+        if (r.w <= 0 || r.h <= 0) innerBad.push(fmt(id));
+      }
+
+      const rr = rootEl.getBoundingClientRect();
+      const judge = missing.length === 0 && zero.length === 0 &&
+        g1r.ok && g2r.ok && g3r.ok && innerBad.length === 0;
+      rec(
+        S41,
+        judge,
+        "挂载到 #vt-tbl=" + Math.round(rr.width) + "×" + Math.round(rr.height) + "px" +
+        "　常显控件 " + alwaysIds.length + " 个：缺 " + missing.length +
+        (missing.length ? "=[" + missing.join(",") + "]" : "") +
+        "、零几何 " + zero.length + (zero.length ? "=[" + zero.join(",") + "]" : "") +
+        "　折叠块点标题：" + g1r.note + " ／ " + g2r.note + " ／ " + g3r.note +
+        "　块内控件（**展开后**量）" + innerIds.length + " 个：零几何 " + innerBad.length +
+        (innerBad.length ? "=[" + innerBad.join(",") + "]" : "") +
+        "　⇒ " + (judge
+          ? "面板在真机上挂得起来：常显控件都有非零几何，三个折叠块都点得开且展开后真有内容"
+          : "⚠️ 有项没成立（缺失=选择器没了；零几何=CSS/布局；块展不开=自绘控件失灵）")
+      );
+
+      /* 收尾：切回首页，别把自检的面板留在屏幕上（init 之后本来也会 showHome，这里显式一次） */
+      try {
+        await ctx.shell.showHome();
+      } catch {
+        /* 忽略 */
+      }
+    }
+  } catch (e) {
+    rec(S41, false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.4.0",
+    version: "0.4.1",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

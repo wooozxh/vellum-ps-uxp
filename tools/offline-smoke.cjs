@@ -313,6 +313,11 @@ const colorState = {
    **一条 fill 都不许发**"（那正是用户真机上那个 PS 弹框的来源）。 */
 const fillCalls = [];
 const sentCalls = [];
+/* v0.4.1：再记**整批**命令（`batchPlay` 收到的是数组，`sentCalls` 只留了第一条）。
+   用途：给 M3「生成表格」做**命令形状离线断言** —— 这是纪律：
+   "新描述符先写命令形状离线断言"，因为 v0.4.0 就是靠推理往 `make textLayer` 里
+   塞了两个没验过的键，真机上直接把 PS 卡进模态。 */
+const sentBatches = [];
 const fakeDoc = {
   id: 101,
   name: "假文档",
@@ -337,6 +342,7 @@ const mockPhotoshop = {
     async batchPlay(cmds) {
       const c = cmds[0];
       sentCalls.push(c);
+      if (Array.isArray(cmds) && cmds.length) sentBatches.push(cmds.slice());
       if (c._obj === "fill") {
         fillCalls.push(c);
         return [];
@@ -900,6 +906,61 @@ async function main() {
       "tools=" + ids.join(",") + "　planned=" + registry.planned.map((p) => p.id).join(",") +
         "　第 2 行 data-tool=" + row2Key + "　仍标 is-planned=" + stillPlanned
     );
+  }
+
+  /* ---- 22b. 表格生成（M3a）已上线：注册表 + 首页第 3 行可点 ----
+     （和第 22 条同一个判据：别让"首页少一行 / 还灰着"这种错跑到真机上才发现） */
+  {
+    const registry = require(path.join(PKG, "tools", "index.js"));
+    const ids = registry.tools.map((t) => t.id);
+    const inPlanned = registry.planned.some((p) => p.id === "table");
+    const tMod = registry.byId("table");
+    const row3 = navs.length >= 3 ? navs[2] : null;
+    const row3Key = row3 ? row3.getAttribute("data-tool") : null;
+    const stillPlanned = row3
+      ? String(row3.getAttribute("class") || "").indexOf("is-planned") >= 0
+      : true;
+    check(
+      "22b 表格生成已上线：registry.tools 里 + ready + 首页第 3 行可点（M4 仍是灰行）",
+      ids.indexOf("table") >= 0 && !inPlanned && !!tMod && tMod.ready === true &&
+        typeof tMod.mount === "function" && typeof tMod.unmount === "function" &&
+        row3Key === "table" && !stillPlanned &&
+        registry.planned.length === 1 && registry.planned[0].id === "mcp",
+      "tools=" + ids.join(",") + "　planned=" + registry.planned.map((p) => p.id).join(",") +
+        "　第 3 行 data-tool=" + row3Key + "　仍标 is-planned=" + stillPlanned
+    );
+  }
+
+  /* ---- 22c. 表格面板：**离线挂载一次**（真机 S41 的前哨） ----
+     离线验不到 CSS 渲染效果，但能验到"挂载过程不抛异常 + S41 依赖的选择器都在"
+     —— 免得真机上那一堆 FAIL 其实只是我改了 id。 */
+  {
+    const tMod = require(path.join(PKG, "tools", "table.js"));
+    let mountErr = null;
+    try {
+      await tMod.mount(view, { setStatus() {} });
+      await sleep(200);
+    } catch (e) {
+      mountErr = (e && e.message) || String(e);
+    }
+    const wantIds = [
+      "vt-tbl", "vt-tbl-src", "vt-tbl-grid", "vt-tbl-body", "vt-tbl-foot",
+      "vt-tbl-g1", "vt-tbl-g2", "vt-tbl-g3", "vt-tbl-styletabs",
+      "vt-tbl-import", "vt-tbl-gen", "vt-tbl-docs", "vt-tbl-estimate",
+    ];
+    const missing = wantIds.filter((id) => !document.getElementById(id));
+    check(
+      "22c 表格面板：离线能挂起来 + S41 要量的选择器齐备",
+      mountErr === null && missing.length === 0,
+      (mountErr ? "挂载抛异常：" + mountErr + "　" : "挂载不抛异常　") +
+        "选择器缺 " + missing.length + (missing.length ? "=[" + missing.join(",") + "]" : "") +
+        "　（画面效果与几何仍只能上真机，见 S41）"
+    );
+    try {
+      tMod.unmount();
+    } catch {
+      /* 忽略 */
+    }
   }
 
   /* ---- 23. 素材库：真实挂载 + 镜像缺失时的空态 ----
@@ -1933,6 +1994,124 @@ async function main() {
     } catch (e) {
       console.log("预览生成失败：" + ((e && e.message) || e));
     }
+  }
+
+  /* ==================================================================
+   * 六、M3「生成表格」：**命令形状离线断言**（v0.4.1）
+   *
+   * 为什么单独立这一组：真机的 `batchPlay` 是「黑盒 + 会把宿主卡死」——
+   * 描述符里多塞一个没验过的键，PS 可能直接弹模态框，`executeAsModal` 就永不返回，
+   * **整个插件陪葬**（v0.4.0 实测：自检卡住、连 plugin load 都报 busy/modal）。
+   * 所以纪律是：**发出去之前先在离线把"命令长什么样"钉死**，只允许已验原语。
+   * ================================================================== */
+  try {
+    const tmod = require(path.join(PKG, "lib", "table.js"));
+    const psm = require(path.join(PKG, "lib", "ps.js"));
+
+    const plan = tmod.layoutTable({
+      header: ["名称", "价格", "备注"],
+      body: [["图一, 终稿", "1.20", "含税"], ["图二", "3.40", ""]],
+      region: { left: 40, top: 40, right: 440, bottom: 300 },
+      style: {},
+    });
+
+    /* 假文档：组里的孩子要**和真机同序** —— UXP DOM 的 `layers` 是"面板序"
+       （第 0 个在最上），而建层顺序是 cells[0..n-1] 从下往上叠 ⇒ 组里数组应是 cells 的**逆序**。
+       只有这样才测得到 buildTable 里那句 `kids.reverse()` 到底对不对（反了 = 整表串格，真机上极难查）。 */
+    const g = { id: 900, kind: "group", name: "离线表", layers: [] };
+    for (let i = plan.cells.length - 1; i >= 0; i--) {
+      g.layers.push({ id: 1000 + i, kind: "text", name: "文字图层 " + (i + 1) });
+    }
+    mockApp.documents.length = 0;
+    mockApp.documents.push({ id: 950, name: "假表文档", mode: "RGB", activeLayers: [], layers: [g] });
+    sentBatches.length = 0;
+    sentCalls.length = 0;
+
+    const res = await psm.buildTable(plan, { name: "离线表" });
+    const batch1 = sentBatches[0] || [];
+
+    const ref = (c) => (c._target && c._target[0] && c._target[0]._ref) || "";
+    const isGroup = (c) => ref(c) === "layerSection";
+    const shapeCmds = batch1.filter((c) => ref(c) === "contentLayer");
+    const textCmds = batch1.filter((c) => ref(c) === "textLayer");
+    const grpCmds = batch1.filter(isGroup);
+
+    /* 判据提成具名函数 —— 后面第五条的"负对照"要**复用同一个判据**，
+       否则那条对照只是在自证它自己（"永远成立的样本验不出任何东西"）。 */
+    const isVerifiedShape = (c) => {
+      const u = c.using || {};
+      const s = u.strokeStyle || {};
+      return u.shape && u.shape._obj === "rectangle" &&
+        u.type && u.type._obj === "solidColorLayer" &&
+        s.fillEnabled === true && s.strokeEnabled === false;
+    };
+    const hasRiskyKey = (c) =>
+      !!(c.using && (c.using.name !== undefined || c.using.paragraphStyleRange !== undefined));
+
+    // ① 形状命令：只能是 S31 验过的那一种
+    const shapeBad = shapeCmds.filter((c) => !isVerifiedShape(c));
+    check(
+      "M3 命令形状①：形状图层只有 S31 验过的那一种（矩形 / fill 开 / stroke 关）",
+      shapeCmds.length > 0 && shapeBad.length === 0,
+      "形状命令 " + shapeCmds.length + " 条 = 线 " + plan.lines.length + "（含外框 " + plan.outer.bars + "）+ 背景 " + plan.bg.length +
+      "　违反 " + shapeBad.length + " 条" +
+      (shapeBad.length ? "　首条违规=" + JSON.stringify(shapeBad[0].using.strokeStyle || {}).slice(0, 150) : "") +
+      "　⇒ 「只描边不填充」那条路**刻意没走**（fill/stroke 组合没验过），外框是 4 条细矩形拼的"
+    );
+
+    // ② 文字命令：不许带 name / paragraphStyleRange（v0.4.0 卡死宿主的正是这两个键）
+    const risky = batch1.filter((c) => !isGroup(c) && hasRiskyKey(c));
+    check(
+      "M3 命令形状②：建文字图层**不带** name / paragraphStyleRange（未验键）",
+      textCmds.length === plan.cells.length && risky.length === 0,
+      "文字命令 " + textCmds.length + "/" + plan.cells.length + " 条　带未验键的 " + risky.length + " 条" +
+      "　⇒ 每格只带 textKey + textShape + textStyleRange（S32 的形状）；组命令的 name 例外（S33 验过）"
+    );
+
+    // ③ 层数：命令条数必须**正好**等于计划层数
+    check(
+      "M3 层数：命令条数 = 计划层数（1 组 + 线 + 背景 + 文字）",
+      batch1.length === plan.layers && grpCmds.length === 1 && grpCmds[0].using.name === "离线表",
+      "命令 " + batch1.length + " 条 / 计划 " + plan.layers + " 个图层　组命令 " + grpCmds.length +
+      " 条（名字=" + JSON.stringify(grpCmds[0] && grpCmds[0].using.name) + "）" +
+      "　‖ 拆解 1 组 + 线 " + plan.lines.length + " + 背景 " + plan.bg.length + " + 文字 " + plan.cells.length
+    );
+
+    // ④ 逐格落地：改名**顺序**对不对 + 每格一条 set paragraphStyle
+    const names = g.layers.map((l) => l.name);
+    const wantTop = psm.tableCellName(plan.cells[plan.cells.length - 1]);
+    const wantBottom = psm.tableCellName(plan.cells[0]);
+    /* 阶段二是**每格一发** `batchPlay`（各有各的小 batch）⇒ 要对 sentBatches **从第 2 批起合并**再筛，
+       只看 sentBatches[1] 会漏掉后面 7 格（第一版就踩了这个） */
+    const alignCmds = sentBatches.slice(1)
+      .reduce((a, b) => a.concat(b), [])
+      .filter((c) => c._obj === "set" && c._target && c._target[0]._property === "paragraphStyle");
+    check(
+      "M3 逐格落地：改名顺序（组内第 0 个 = 最后一格）+ 每格一条 set paragraphStyle",
+      names[0] === wantTop && names[names.length - 1] === wantBottom &&
+      res.renamed === plan.cells.length && alignCmds.length === plan.cells.length &&
+      alignCmds.every((c) => c.to && c.to.align && c.to.align._enum === "alignmentType"),
+      "组内第 0 个=" + JSON.stringify(names[0]) + "（须 " + JSON.stringify(wantTop) + "）" +
+      "　最后一个=" + JSON.stringify(names[names.length - 1]) + "（须 " + JSON.stringify(wantBottom) + "）" +
+      "　改名 " + res.renamed + "/" + plan.cells.length +
+      "　对齐命令 " + alignCmds.length + " 条（枚举族 alignmentType，S37 验过 left/center/right）"
+    );
+
+    // ⑤ 负对照：把未验键**塞回去**，②必须能抓住（抓不住就说明②是个空壳）
+    const poisoned = [
+      { _obj: "make", _target: [{ _ref: "textLayer" }], using: { _obj: "textLayer", textKey: "x", name: "poison" } },
+      { _obj: "make", _target: [{ _ref: "textLayer" }], using: { _obj: "textLayer", textKey: "y" } },
+    ];
+    check(
+      "M3 判据自证（负对照）：人工塞 unverified 键，②的判据必须命中",
+      poisoned.filter(hasRiskyKey).length === 1,
+      "两条构造命令里，带 name 的命中 " + poisoned.filter(hasRiskyKey).length + " 条（必须**正好 1**）" +
+      "　⇒ 判据不是「永远通过」的空壳；反之若这里也 0 命中，②的 PASS 就该被推翻"
+    );
+
+    mockApp.documents.length = 0;
+  } catch (e) {
+    check("M3 命令形状离线断言（自身抛异常）", false, (e && e.message) || String(e));
   }
 
   /* ---- 收尾 ---- */
