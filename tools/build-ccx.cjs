@@ -86,7 +86,19 @@ function build(srcDir, outFile) {
   let offset = 0;
 
   for (const f of files) {
-    const raw = fs.readFileSync(f.abs);
+    let raw = fs.readFileSync(f.abs);
+    /* 🔴 v0.3.7：**发布包的 `host` 必须是单个对象**（数组只在**开发态**允许 ——
+       Adobe "Package a Plugin" 明文："the `host` property ... must be a single object"）。
+       UDT 的 `plugin package` 会自动把数组转成第一个对象，我们自己搓 zip 就必须自己做。
+       这里只在**包内**转换；源 `manifest.json` 保持数组（开发态加载要用）。 */
+    if (f.rel === "manifest.json") {
+      const m = JSON.parse(raw.toString("utf8"));
+      if (Array.isArray(m.host) && m.host.length) {
+        m.host = m.host[0];
+        raw = Buffer.from(JSON.stringify(m, null, 2) + "\n", "utf8");
+        console.log("  manifest.host：数组 → 单个对象　" + JSON.stringify(m.host));
+      }
+    }
     const comp = zlib.deflateRawSync(raw, { level: 9 });
     const crc = crc32(raw);
     const { time, date } = dosTime(fs.statSync(f.abs).mtime);

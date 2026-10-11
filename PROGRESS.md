@@ -1413,3 +1413,22 @@
 - **可复用结论**：UXP 里一行内多个片段并排时，**要么全是 inline-block、要么全走文本基线**，
   混用就会差几像素，且原因在"有没有盒子"上，不在数值上
   （与 `docs/16` 那条"基线不一致导致高低错位"是同一族问题的**下半段**）。
+
+### 追加：发布准备（用户要"可发布的插件"，2026-10-11 17:00）
+
+- **产出**：`dist/com.vellum.toolbox_PS.ccx`（331581 字节 / 26 条目 / v0.3.7），**按发布口径校验通过**：
+  `manifest.json` 在包根、无点开头文件、**`host` 是单个对象**、无数字签名需求（UXP 明文不需要）。
+- 🔴 **修掉一个发布级缺陷**：Adobe《Package a Plugin》要求**发布包的 `host` 必须是单个对象**
+  （数组只在**开发态**允许），而我们的源 manifest 一直是数组、`build-ccx.cjs` 又原样打包
+  ⇒ **之前那个包不是发布口径**。已在 `build-ccx.cjs` 里补"**包内**数组→对象"（源文件不变，开发态照用），
+  并用 **UDT 的 `plugin validate` + `plugin package`** 交叉验证（两条路产出等价）。
+- 🔴 **发现的头号拦路虎**：**正式安装后插件数据目录从 `Developer` 区换到 `External` 区**
+  （Adobe InDesign UXP 文档明列；本机 `PHSP\27\` 下确有 Developer/Internal/Shared 三区）。
+  而 **VellumDesk 写死 `Developer`** ⇒ 装上正式版后**素材库会读不到镜像**（且不报错）。
+  已在 `LINK-LOG` 请对方改成**通配搜索** `PluginsStorage\PHSP\<ver>\*\com.vellum.toolbox\PluginData\library\`。
+- ⚠️ **本机装不了 ccx**：`Adobe Desktop Common\...\UPI\UnifiedPluginInstallerAgent\` 不存在、
+  Creative Cloud 也没在跑 ⇒ 一直靠 UDT 开发态加载。**"正式安装后一切正常"这一条验不了**，
+  需要一台有 CC 的机器装一次，并把插件的真实数据目录（`boot.log` 里的 `paths data=…`）发回来。
+- ⚠️ 另外两条要提前告知用户的：新目录 = **空**（「我的颜色」与上次看的库会重置）；
+  开发态与正式装是**两套数据**、插件菜单里可能出现**两个「Vellum 工具箱」**（建议装前先卸载开发态那份）。
+- 档案：`docs/34-发布与安装说明.md`（含安装步骤、UPIA 命令行、卸载、上架 Marketplace 的差异与 ID 注意事项）。

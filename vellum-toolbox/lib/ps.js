@@ -1755,6 +1755,466 @@ async function closeDocument(id, opts) {
   return { ok: false, error: errs.join("；"), errors: errs };
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ★ v0.3.8：M3「表格生成」地基 —— ① 矢量线条（矩形形状图层）
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 表格框线要「矢量 + 可继续编辑」⇒ 不能用像素图层画线（那是烘焙）。
+ *
+ * 描述符来源（**不是手拼**）：Adobe 社区一份 **ScriptListener 录制输出** ——
+ *   「How do I automatically create a shape frame around an image?」
+ *   community.adobe.com/t5/photoshop-ecosystem-discussions/how-do-i-automatically-create-a-shape-frame-around-an-image/m-p/14158701
+ * 录制原文（ExtendScript）→ actionJSON 的逐项对应：
+ *   executeAction(cTID('Mk '), desc)                     → _obj:"make"
+ *   desc.putReference(cTID('null'), ref{contentLayer})   → _target:[{_ref:"contentLayer"}]
+ *   desc.putObject(cTID('Usng'), cTID('contentLayer'), d) → using:{_obj:"contentLayer", …}
+ *        d.type  = { solidColorLayer: { color: RGBColor } }
+ *        d.shape = { rectangle: { unitValueQuadVersion:1,
+ *                                 top/left/bottom/right + 四角 topRight/topLeft/bottomLeft/bottomRight } }
+ *        d.strokeStyle = { strokeStyleVersion:2, strokeEnabled, fillEnabled,
+ *                          strokeStyleLineWidth, strokeStyleLineDashOffset,
+ *                          strokeStyleMiterLimit,
+ *                          strokeStyleLineCapType(枚举 strokeStyleButtCap),
+ *                          strokeStyleLineJoinType(枚举 strokeStyleMiterJoin) }
+ *
+ * ⚠️ 录制里还有 `strokeStyleLineAlignment`，但**它的枚举值原文没露出来** ⇒
+ *    这里刻意**不写**那一项（宁可少一项，也不猜一个枚举值）。
+ * ⚠️ 一条**细矩形**就是一条表格线；四角圆角半径也能给（表格可做圆角）。
+ *    形状图层的 `kind` 是 `solidColor`（内容图层 = 矢量），**不是 pixel** ⇒
+ *    这正是"可继续编辑"的判据（见 v0.2.3 那张 kind 表）。
+ */
+
+/**
+ * 建「矩形形状图层」的描述符（**纯函数**，可离线断言命令形状）。
+ * @param {{left:number,top:number,right:number,bottom:number}} rect
+ * @param {{r:number,g:number,b:number}} rgb
+ * @param {object} [opts] { radius:number|{tl,tr,bl,br}, stroke:boolean, strokeWidth:number, name:string }
+ * @returns {object} ActionDescriptor
+ */
+function rectShapeMakeDesc(rect, rgb, opts) {
+  const o = opts || {};
+  const px = (v) => ({ _unit: "pixelsUnit", _value: Number(v) || 0 });
+  const r = o.radius;
+  let radii = { tl: 0, tr: 0, bl: 0, br: 0 };
+  if (typeof r === "number") {
+    radii = { tl: r, tr: r, bl: r, br: r };
+  } else if (r && typeof r === "object") {
+    radii = {
+      tl: Number(r.tl) || 0, tr: Number(r.tr) || 0,
+      bl: Number(r.bl) || 0, br: Number(r.br) || 0,
+    };
+  }
+
+  const using = {
+    _obj: "contentLayer",
+    type: {
+      _obj: "solidColorLayer",
+      color: {
+        _obj: "RGBColor",
+        red: clamp255(rgb.r), grain: clamp255(rgb.g), blue: clamp255(rgb.b),
+      },
+    },
+    shape: {
+      _obj: "rectangle",
+      unitValueQuadVersion: 1,
+      top: px(rect.top),
+      left: px(rect.left),
+      bottom: px(rect.bottom),
+      right: px(rect.right),
+      topRight: px(radii.tr),
+      topLeft: px(radii.tl),
+      bottomLeft: px(radii.bl),
+      bottomRight: px(radii.br),
+    },
+  };
+  if (o.name) using.name = String(o.name);
+
+  // 描边那一段是"有则更完整、无则退回填充"的**候选**：两条都由录制输出支持，
+  // 由调用方按序试并如实记录哪一条被接受（见 makeRectShapeLayer）。
+  if (o.__noStrokeStyle !== true) {
+    using.strokeStyle = {
+      _obj: "strokeStyle",
+      strokeStyleVersion: 2,
+      strokeEnabled: !!o.stroke,
+      fillEnabled: true,
+      strokeStyleLineWidth: px(o.strokeWidth || 2),
+      strokeStyleLineDashOffset: { _unit: "pointsUnit", _value: 0 },
+      strokeStyleMiterLimit: 100,
+      strokeStyleLineCapType: { _enum: "strokeStyleLineCapType", _value: "strokeStyleButtCap" },
+      strokeStyleLineJoinType: { _enum: "strokeStyleLineJoinType", _value: "strokeStyleMiterJoin" },
+    };
+  }
+
+  return {
+    _obj: "make",
+    _target: [{ _ref: "contentLayer" }],
+    using: using,
+    _options: { dialogOptions: "dontDisplay" },
+  };
+}
+
+/**
+ * 建一个**矩形形状图层**（矢量）—— 表格框线的画法。
+ * @returns {Promise<{ok:boolean, via?:string, attempts?:string[], layer?:object, error?:string}>}
+ */
+async function makeRectShapeLayer(rect, rgb, opts) {
+  const o = opts || {};
+  if (!rect || ![rect.left, rect.top, rect.right, rect.bottom].every((n) => isFinite(Number(n)))) {
+    return { ok: false, error: "rect 不合法（要四个数字）" };
+  }
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+
+  const before = countLayers();
+  const attempts = [];
+  // 两条候选：① 带 strokeStyle（录制原样） ② 不带（更保守）
+  const variants = [
+    { via: "withStrokeStyle", o: o },
+    { via: "noStrokeStyle", o: Object.assign({}, o, { __noStrokeStyle: true }) },
+  ];
+  for (const v of variants) {
+    const desc = rectShapeMakeDesc(rect, rgb, v.o);
+    try {
+      await runModal(async () => {
+        await batchPlay([desc], {});
+      }, "Vellum 工具箱：新建矩形形状图层");
+      const after = countLayers();
+      const added = before >= 0 && after >= 0 && after > before;
+      attempts.push(v.via + "=已执行/图层" + (added ? "+1" : "未增加"));
+      if (added) {
+        const li = layerInfo();
+        return {
+          ok: true, via: v.via, attempts: attempts,
+          layer: li.ok ? { id: li.id, name: li.name, kind: li.kind } : null,
+          rect: {
+            left: Number(rect.left), top: Number(rect.top),
+            right: Number(rect.right), bottom: Number(rect.bottom),
+          },
+        };
+      }
+    } catch (e) {
+      attempts.push(v.via + "=失败(" + msg(e) + ")");
+    }
+  }
+  return { ok: false, attempts: attempts, error: "两条写法都没能建出图层" };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ★ v0.3.8：M3 地基 —— ② 文字图层的精细参数
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ⚠️ UXP 里**没有**"新建文字图层"的 DOM API ⇒ 建层必须走 batchPlay。
+ *    描述符来源：**Adobe 官方样例** `layer-creation-js-sample/index.js`
+ *    （official-samples/，与 docs/04 的记录一致）：
+ *      using.textKey          文字内容
+ *      using.textShape[0]     { char:{_enum:"char",_value:"box"}, bounds:{rectangle} }
+ *                             ⇒ **框文本**（表格每格要用这个，不是点文本）
+ *      using.textStyleRange[] { from, to, textStyle:{ fontName, fontStyleName,
+ *                               size:{pointsUnit}, color:{RGBColor} } }
+ *    ⚠️ 官方样例里 `char` 是 `box` + `bounds` 矩形 —— 这正是"每格一个文字框"要的。
+ *
+ * 建完之后，**字体/对齐/行距/颜色**优先走 **UXP DOM 的 `layer.textItem`**
+ * （比手写 AM 描述符安全得多，且是官方文档化接口）。可写性与读回由自检 S32 钉死。
+ */
+
+/**
+ * 建「框文本」文字图层的描述符（纯函数，可离线断言）。
+ * @param {object} opts
+ *   text, box:{left,top,right,bottom}, sizePt, rgb,
+ *   fontName, fontStyleName
+ */
+function textLayerBoxDesc(opts) {
+  const o = opts || {};
+  const text = o.text === undefined || o.text === null ? "" : String(o.text);
+  const px = (v) => ({ _unit: "pixelsUnit", _value: Number(v) || 0 });
+  const b = o.box || { left: 0, top: 0, right: 200, bottom: 100 };
+  const style = { _obj: "textStyle" };
+  if (o.fontName) style.fontName = String(o.fontName);
+  if (o.fontStyleName) style.fontStyleName = String(o.fontStyleName);
+  style.size = { _unit: "pointsUnit", _value: Number(o.sizePt) || 12 };
+  const rgb = o.rgb || { r: 0, g: 0, b: 0 };
+  style.color = {
+    _obj: "RGBColor",
+    red: clamp255(rgb.r), grain: clamp255(rgb.g), blue: clamp255(rgb.b),
+  };
+  return {
+    _obj: "make",
+    _target: [{ _ref: "textLayer" }],
+    using: {
+      _obj: "textLayer",
+      textKey: text,
+      textShape: [
+        {
+          _obj: "textShape",
+          char: { _enum: "char", _value: "box" },
+          bounds: {
+            _obj: "rectangle",
+            top: px(b.top), left: px(b.left), bottom: px(b.bottom), right: px(b.right),
+          },
+        },
+      ],
+      textStyleRange: [
+        {
+          _obj: "textStyleRange",
+          from: 0,
+          to: text.length,
+          textStyle: style,
+        },
+      ],
+    },
+    _options: { dialogOptions: "dontDisplay" },
+  };
+}
+
+/** 建一个框文本文字图层。 */
+async function makeTextLayerBox(opts) {
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+  const before = countLayers();
+  try {
+    await runModal(async () => {
+      await batchPlay([textLayerBoxDesc(opts)], {});
+    }, "Vellum 工具箱：新建文字图层（框文本）");
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+  const after = countLayers();
+  const li = layerInfo();
+  return {
+    ok: before >= 0 && after > before,
+    added: after - before,
+    layer: li.ok ? { id: li.id, name: li.name, kind: li.kind } : null,
+  };
+}
+
+/**
+ * 活动图层是不是「文字图层」，且**它的 `textItem` 在不在**。
+ * 用来把 Q2 的两半分开问：① 建得出来吗（batchPlay）② 精细参数归谁管（DOM）。
+ * ⚠️ 配一个**一定不存在**的对照属性名，避免"读到自己设的输入"式假阳性。
+ * @returns {object} 一组读数，不做判断
+ */
+function textItemProbe() {
+  const out = {
+    hasDoc: hasDocument(),
+    kind: null,
+    textItemExists: false,
+    notARealThing: null,
+    keys: [],
+    values: {},
+    errors: {},
+  };
+  try {
+    const doc = app.activeDocument;
+    const l = doc && doc.activeLayers && doc.activeLayers[0];
+    if (!l) return out;
+    const safe = (fn) => {
+      try {
+        return fn();
+      } catch (e) {
+        return undefined;
+      }
+    };
+    out.kind = safe(() => l.kind) || null;
+    const ti = safe(() => l.textItem);
+    out.textItemExists = !!ti;
+    out.notARealThing = safe(() => l.__vellumNotARealThing) === undefined ? "undefined" : "有值";
+    if (!ti) return out;
+    const props = ["contents", "font", "fontSize", "justification", "leading", "tracking", "color", "autoKerning"];
+    for (const p of props) {
+      const v = safe(() => ti[p]);
+      if (v === undefined) {
+        out.errors[p] = "读不到";
+      } else {
+        out.keys.push(p);
+        out.values[p] = typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+      }
+    }
+  } catch (e) {
+    out.errors.top = msg(e);
+  }
+  return out;
+}
+
+/** DOM 可写的 textItem 属性名（自检 S32 会逐个试写并读回）。 */
+const TEXT_ITEM_WRITABLE = ["contents", "fontSize", "justification", "leading", "tracking", "color"];
+
+/**
+ * 试写活动文字图层的 `textItem[prop]` 并**读回**。
+ * @returns {Promise<{prop:string, ok:boolean, set?:any, got?:any, error?:string}>}
+ */
+async function trySetTextItem(prop, value) {
+  if (TEXT_ITEM_WRITABLE.indexOf(prop) < 0) {
+    return { prop: prop, ok: false, error: "不在白名单（不拿面板去试任意属性）" };
+  }
+  try {
+    await runModal(async () => {
+      const doc = app.activeDocument;
+      const l = doc && doc.activeLayers && doc.activeLayers[0];
+      if (!l) throw new Error("没有活动图层");
+      const ti = l.textItem;
+      if (!ti) throw new Error("该图层没有 textItem（不是文字图层？）");
+      ti[prop] = value;
+    }, "Vellum 工具箱：改文字属性 " + prop);
+  } catch (e) {
+    return { prop: prop, ok: false, error: msg(e) };
+  }
+  let got = null;
+  try {
+    const doc = app.activeDocument;
+    const ti = doc.activeLayers[0].textItem;
+    got = ti[prop];
+  } catch (e) {
+    return { prop: prop, ok: false, error: "写完了但读不回：" + msg(e) };
+  }
+  const flat = (v) => (typeof v === "object" && v !== null ? JSON.stringify(v) : v);
+  const a = flat(value);
+  const b = flat(got);
+  return { prop: prop, ok: String(a) === String(b), set: a, got: b };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ★ v0.3.8：M3 地基 —— ③ 图层组（批量出稿要按行成组 / 复制）
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 描述符来源：Adobe 社区同一类**录制输出**（见上面 v0.2.3 引用的那份
+ * 「create adjustment layer without mask」帖子里的 `make layerSection` 写法）：
+ *   { _obj:"make", _target:[{_ref:"layerSection"}], using:{ _obj:"layerSection", name } }
+ * 复制走 **UXP DOM 的 `Layer.duplicate()`**（官方文档化），不用手写 transform 描述符。
+ */
+function groupMakeDesc(name) {
+  return {
+    _obj: "make",
+    _target: [{ _ref: "layerSection" }],
+    using: { _obj: "layerSection", name: String(name || "组") },
+    _options: { dialogOptions: "dontDisplay" },
+  };
+}
+
+/** 建一个图层组（新建后它就是活动图层，随后新建的图层会落进组里）。 */
+async function makeGroup(name) {
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+  const before = countLayers();
+  try {
+    await runModal(async () => {
+      await batchPlay([groupMakeDesc(name)], {});
+    }, "Vellum 工具箱：新建图层组");
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+  const li = layerInfo();
+  const after = countLayers();
+  return {
+    ok: after > before || (after === before && !!li.ok), // 组会占一层，图层数不变也算成功
+    added: after - before,
+    layer: li.ok ? { id: li.id, name: li.name, kind: li.kind } : null,
+  };
+}
+
+/** 复制活动图层（DOM 官方接口），并读回新图层。 */
+async function duplicateActiveLayer(name) {
+  if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+  const before = countLayers();
+  try {
+    await runModal(async () => {
+      const doc = app.activeDocument;
+      const l = doc && doc.activeLayers && doc.activeLayers[0];
+      if (!l) throw new Error("没有活动图层");
+      if (typeof l.duplicate !== "function") throw new Error("该 UXP 版本没有 Layer.duplicate()");
+      await l.duplicate();
+    }, "Vellum 工具箱：复制图层");
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+  const after = countLayers();
+  const li = layerInfo();
+  return {
+    ok: after > before,
+    added: after - before,
+    layer: li.ok ? { id: li.id, name: li.name, kind: li.kind } : null,
+    wantName: name || null,
+  };
+}
+
+/**
+ * 在**整个文档**里递归找名字含 key 的第一个文字图层，并返回它的 `contents`。
+ * 用途：验证"复制出来的组里文字真的被换掉了"（读回，不看"命令没报错"）。
+ */
+function findTextLayerContents(key) {
+  try {
+    const doc = app.activeDocument;
+    if (!doc) return { ok: false, error: "没有打开的文档" };
+    let hit = null;
+    const walk = (layers) => {
+      const arr = layers || [];
+      for (let i = 0; i < arr.length && !hit; i++) {
+        const l = arr[i];
+        if (String(l.name || "").indexOf(key) >= 0) {
+          let c = null;
+          try {
+            c = l.textItem ? l.textItem.contents : null;
+          } catch {
+            c = null;
+          }
+          if (c !== null && c !== undefined) hit = { name: l.name, contents: String(c) };
+        }
+        if (!hit && l.layers && l.layers.length) walk(l.layers);
+      }
+    };
+    walk(doc.layers);
+    return hit ? { ok: true, hit: hit } : { ok: false, error: "没找到名字含「" + key + "」的文字图层" };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ★ v0.3.8：M3 地基 —— ④ 取指定矩形的平均色（像素凭证）
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `readLayerAvgColor()` 是"整层缩到 1×1"。对一条**细线**它会被大面积透明稀释，
+ * 判据就没有区分度 ⇒ 需要"只采这一小块的色"。
+ * 走 `imaging.getPixels({ sourceRect, targetSize:{1,1} })`：
+ * sourceRect 内重采样到 1×1 = 该区域的**平均色**。
+ */
+async function sampleRectAvgColor(rect) {
+  try {
+    if (!hasDocument()) return { ok: false, error: "没有打开的文档" };
+    if (!imaging || typeof imaging.getPixels !== "function") {
+      return { ok: false, error: "imaging.getPixels 不可用" };
+    }
+    const d = app.activeDocument;
+    const l = d.activeLayers && d.activeLayers[0];
+    const req = {
+      documentID: d.id,
+      sourceRect: {
+        left: Math.round(rect.left), top: Math.round(rect.top),
+        right: Math.round(rect.right), bottom: Math.round(rect.bottom),
+      },
+      targetSize: { width: 1, height: 1 },
+      componentSize: 8,
+      colorSpace: "RGB",
+      applyAlpha: false,
+    };
+    if (l && l.id !== undefined) req.layerID = l.id;
+
+    let rgb = null;
+    let rawErr = null;
+    await runModal(async () => {
+      try {
+        const res = await imaging.getPixels(req);
+        const img = res && res.imageData;
+        if (!img) throw new Error("getPixels 未返回 imageData");
+        let data = typeof img.getData === "function" ? img.getData({}) : null;
+        if (data && typeof data.then === "function") data = await data;
+        const bytes = data && data.data ? data.data : data;
+        if (!bytes || bytes.length < 3) throw new Error("像素数据结构不符合预期");
+        rgb = { r: clamp255(bytes[0]), g: clamp255(bytes[1]), b: clamp255(bytes[2]) };
+      } catch (e) {
+        rawErr = msg(e);
+      }
+    }, "Vellum 工具箱：采样矩形平均色");
+    if (rawErr) return { ok: false, error: rawErr };
+    if (!rgb) return { ok: false, error: "未取到像素" };
+    return { ok: true, rgb: rgb, hex: rgbToHex(rgb) };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
 /* --------------------------------------------------------------- 其他 */
 
 /** 当前是否打开了文档（调色板不依赖它，但别的工具要）。 */
@@ -1828,4 +2288,17 @@ module.exports = {
   RASTER_KINDS,
   CONTENT_KINDS,
   KIND_CN,
+  /* v0.3.8 新增（M3 表格生成 · 地基）：矢量线条 / 文字精细参数 / 图层组 / 定点取色 */
+  rectShapeMakeDesc,
+  makeRectShapeLayer,
+  textLayerBoxDesc,
+  makeTextLayerBox,
+  textItemProbe,
+  trySetTextItem,
+  TEXT_ITEM_WRITABLE,
+  groupMakeDesc,
+  makeGroup,
+  duplicateActiveLayer,
+  findTextLayerContents,
+  sampleRectAvgColor,
 };
