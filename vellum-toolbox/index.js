@@ -75,21 +75,145 @@ const registry = require("./tools/index.js");
 const palette = require("./tools/palette.js");
 const library = require("./tools/library.js");
 const selfcheck = require("./lib/selfcheck.js");
+const inspect = require("./lib/inspect.js");
+const undoHistory = require("./lib/history.js");
 
 /** ⚠️ 必须与 manifest.json 的 version 一致 —— 两者任一改动都要同步另一处。 */
 const PLUGIN_ID = "com.vellum.toolbox";
-const VERSION = "0.5.2";
+const VERSION = "0.7.0";
 
 let ui = null;
 let homeBinder = null;
 let currentTool = null;
 let inited = false;
 
+/* ---------------------------------------------- 常驻体检（v0.6.0，docs/49 §3.1）
+
+   设计要点：
+   · **两段式**：哨兵（每 2s 只读 doc.id/doc.name，极廉价）→ 发现文档变了才跑完整体检。
+     完整体检要遍历图层树 + 比对字体清单，不适合按秒跑。
+   · **摘要是独立节点**（#vt-inspect），不跟 setStatus 的消息共用 ——
+     否则任何一次 setStatus 都会把摘要抹掉。
+   · **拿不到文档时如实说"没有打开的文档"**，不保留上一次的旧值（旧值会被当成"当前稿的参数"）。
+   ------------------------------------------------------------------------- */
+
+const INSPECT_SENTINEL_MS = 2000;
+let inspectTimer = null;
+let lastDocKey = "__never__";
+
+/** 读当前活动文档的廉价指纹（只读 id + name，不遍历图层树）。 */
+function docKeyNow() {
+  try {
+    const info = ps.docInfo();
+    if (!info || info.error) return "__none__";
+    return String(info.docId) + "|" + String(info.docName);
+  } catch (e) {
+    return "__none__";
+  }
+}
+
+/** 跑一次完整体检并把结果写进 chip。 */
+function refreshInspect(opts) {
+  if (!ui || !ui.inspectChip) return null;
+  const insp = inspect.docInspect(opts);
+
+  const chip = inspect.chipText(insp);
+  if (ui.inspectTx) ui.inspectTx.textContent = chip.text;
+  if (ui.inspectLed) {
+    ui.inspectLed.classList.remove("off");
+    ui.inspectLed.classList.add("ok");
+  }
+  // severity → 圆点颜色（warn / fatal / unknown 各有色，其余回默认）
+  const sev = chip.sev || "ok";
+  ui.inspectChip.classList.remove("is-warn", "is-fatal", "is-unknown");
+  if (sev === "warn") ui.inspectChip.classList.add("is-warn");
+  else if (sev === "fatal") ui.inspectChip.classList.add("is-fatal");
+  else if (sev === "unknown") ui.inspectChip.classList.add("is-unknown");
+  ui.inspectChip.setAttribute("title", chip.title || "点击查看出图体检详情");
+
+  lastDocKey = docKeyNow();
+  return insp;
+}
+
+/* ---------------------------------------------- 撤销入口（v0.6.0，docs/49 §五 第 3 步）
+
+   设计要点：
+   · **撤销入口归外壳管，不由各工具自己实现。** 这样任何批量功能（现在的批量出稿、
+     将来的导出审核版 / 批量试色）自动就有一键撤回，不必各自写一遍、也不会写得不一样。
+     与既有纪律一致：批量模块只管**记标记**，UI 由外壳给。
+   · **自动出现**：批量跑完就显出来。用户要的是"事后能退"，不是"事前记得点一下"——
+     要人记住的防护等于没有防护。
+   · 文案带**批量名 + 多久之前**：它是事后才需要的，那时用户已经在想别的事了。
+   · **标记不属于当前文档时自动隐藏**（判定在 history.assess）—— 不跨文档撤回。
+   ------------------------------------------------------------------------- */
+
+/** 只读：当前活动文档 id（撤销标记的绑文档校验要用）。 */
+function docIdNow() {
+  try {
+    const info = ps.docInfo();
+    if (!info || info.error) return null;
+    return info.docId === undefined ? null : info.docId;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** 按当前标记状态刷新撤销入口；返回它有没有被显示（自检要读这个）。 */
+function refreshUndo() {
+  if (!ui || !ui.undoChip) return { shown: false, reason: "状态条里没有撤销节点" };
+  const mk = undoHistory.peek();
+  const a = undoHistory.assess(mk, { docId: docIdNow(), layers: undoHistory.currentLayers() });
+
+  if (!a.usable) {
+    /* ⚠️ 隐藏用的是**内联 display:none**，不是 removeChild —— 外壳的节点一旦建立就不再增删
+       （自检就是靠节点在不在判断面板状态的）。 */
+    ui.undoChip.style.display = "none";
+    return { shown: false, reason: a.reason };
+  }
+  if (ui.undoTx) ui.undoTx.textContent = "撤销：" + mk.label;
+  ui.undoChip.style.display = "";          // "" ⇒ 回落到 CSS 的 display:flex
+  ui.undoChip.setAttribute(
+    "title",
+    "一步退回「" + mk.label + "」之前" + (a.hint ? "　（" + a.hint + "）" : "")
+  );
+  return { shown: true, label: mk.label, hint: a.hint };
+}
+
+/** 哨兵：只在"文档换了"时才重算体检。 */
+function startInspectSentinel() {  if (inspectTimer) return;
+  inspectTimer = setInterval(function () {
+    const k = docKeyNow();
+    if (k === lastDocKey) return;
+    try {
+      refreshInspect();
+    } catch (e) {
+      /* 体检失败不该影响外壳 —— 但要在日志里留痕 */
+      log.appendLog("inspect refresh FAILED  " + ((e && e.message) || e));
+    }
+    /* 文档换了 ⇒ 撤销标记可能变得**不适用**（标记是绑文档的），入口要跟着变。
+       ⚠️ 这里只在"文档变了"时刷：标记本身的变化是**插件内部事件**，
+          由调用方主动刷（见 ctx.shell.refreshUndo），不必按秒轮询。 */
+    try {
+      refreshUndo();
+    } catch (e) {
+      log.appendLog("undo refresh FAILED  " + ((e && e.message) || e));
+    }
+  }, INSPECT_SENTINEL_MS);
+}
+
+function stopInspectSentinel() {
+  if (!inspectTimer) return;
+  clearInterval(inspectTimer);
+  inspectTimer = null;
+}
+
 /* ------------------------------------------------------------ 状态条 */
 
 function setStatus(text) {
   const t = String(text);
-  if (ui && ui.status) ui.status.textContent = t;
+  /* ⚠️ 写的是**消息区** `#vt-status-tx`，不是整块 `#vt-status` ——
+     v0.6.0 起状态条里多了一个常驻的体检 chip，若还写整块就会把它抹掉。 */
+  if (ui && ui.statusTx) ui.statusTx.textContent = t;
   try {
     console.log("[" + PLUGIN_ID + "] " + t);
   } catch {
@@ -243,6 +367,11 @@ const ctx = {
     },
     showTool: function (id, via) {
       return showTool(id, via);
+    },
+    /* 批量功能跑完调一下 —— 让撤销入口**立刻**出现，不等哨兵那 2 秒周期。
+       它只读标记、不碰 Photoshop，随便调不心疼。 */
+    refreshUndo: function () {
+      return refreshUndo();
     },
   },
 };
@@ -466,6 +595,13 @@ async function init(reason) {
     home: dom.$("vt-home"),
     view: dom.$("vt-tool-view"),
     status: dom.$("vt-status"),
+    statusTx: dom.$("vt-status-tx"),
+    inspectChip: dom.$("vt-inspect"),
+    inspectLed: dom.$("vt-inspect-led"),
+    inspectTx: dom.$("vt-inspect-tx"),
+    undoChip: dom.$("vt-undo"),
+    undoLed: dom.$("vt-undo-led"),
+    undoTx: dom.$("vt-undo-tx"),
     title: dom.$("vt-title"),
     sub: dom.$("vt-sub"),
     back: dom.$("vt-back"),
@@ -486,6 +622,52 @@ async function init(reason) {
   watchTheme(() => applyTheme("change"));
 
   homeBinder.on(ui.back, "click", () => showHome());
+
+  /* 出图体检 chip：点一下先重算（顺带强制重读字体清单），再进体检工具页。
+     交互沿用顶栏「环境 chip」那一套 —— 外壳已有先例，不新造模式。 */
+  homeBinder.on(ui.inspectChip, "click", () => {
+    try {
+      refreshInspect({ fresh: true });
+    } catch (e) {
+      log.appendLog("inspect chip click FAILED  " + ((e && e.message) || e));
+    }
+    showTool("inspect", "chip");
+  });
+
+  /* 撤销入口：点一下**真的退回**，并读回图层数自证。
+     ⚠️ 不弹确认框 —— 这个动作本身就是"撤销我上一次操作"，让用户在自己刚做错事之后
+        再确认一次是多余的。真退错了，PS 自己的 Ctrl+Z 还能再回来。
+     ⚠️ 判空：HTML 与 JS 万一不同步（少一个节点），这里不能把整个 init 拖崩。 */
+  if (ui.undoChip) {
+    homeBinder.on(ui.undoChip, "click", async () => {
+      const mk = undoHistory.peek();
+      if (!mk.has) {
+        refreshUndo();
+        return;
+      }
+      setStatus("正在撤回「" + mk.label + "」…");
+      let r = null;
+      try {
+        r = await undoHistory.revert({ via: "auto" });
+      } catch (e) {
+        r = { ok: false, error: (e && e.message) || String(e) };
+      }
+      await log.appendLog(
+        "undo revert " + (r.ok ? "ok" : "FAILED") + " via=" + r.via +
+          " layers=" + r.before + "→" + r.after + "(want " + r.want + ")" +
+          (r.error ? " err=" + r.error : "") + (r.note ? " note=" + r.note : "")
+      );
+      setStatus(
+        (r.ok ? "✓ " : "⚠ ") + undoHistory.describeRevert(r) + (r.note ? "　" + r.note : "")
+      );
+      refreshUndo();
+      try {
+        refreshInspect({ fresh: true });   // 图层变了，体检读数要跟着变
+      } catch (e) {
+        log.appendLog("inspect refresh FAILED  " + ((e && e.message) || e));
+      }
+    });
+  }
   // 环境详情：原来挂在右侧「⋯」按钮上，本轮为把 chip 靠右而合并到 chip 自身
   homeBinder.on(ui.chip, "click", async () => {
     const e = await caps.env();
@@ -508,6 +690,21 @@ async function init(reason) {
   const e = await caps.env();
   updateEnvChip(e);
   renderTail(e);
+
+  /* 先把体检摘要填上（此刻还没开哨兵，避免与自检抢文档） */
+  try {
+    refreshInspect();
+  } catch (err) {
+    log.appendLog("inspect boot FAILED  " + ((err && err.message) || err));
+  }
+
+  /* 撤销入口：启动时先按当前标记算一次（新开面板时多半没有标记 ⇒ 隐藏）。
+     ⚠️ 排在自检**之前** —— 自检会走这个入口的真实路径，先让它处于正确状态。 */
+  try {
+    refreshUndo();
+  } catch (err) {
+    log.appendLog("undo boot FAILED  " + ((err && err.message) || err));
+  }
 
   await log.appendLog(
     "loaded  plugin=" + PLUGIN_ID + "  v=" + VERSION +
@@ -535,12 +732,19 @@ async function init(reason) {
         library: library,
         registry: registry,
         icons: icons,
+        /* ⚠️ v0.6.0：版本号从**这里**传进去，不让自检报告自己写一份 ——
+           之前报告里写死 "0.5.0" 而 manifest 已经是 0.5.2，两处各说各话。 */
+        version: VERSION,
       });
     } catch (err) {
       await log.appendLog("selfcheck FAILED  " + ((err && err.message) || err));
     }
     showHome();
   }
+
+  /* 哨兵放在**自检之后**启动 —— 自检会自己建/关临时文档，
+     提前开哨兵只会让它频繁空转（且污染自检读数）。 */
+  startInspectSentinel();
 }
 
 entrypoints.setup({

@@ -719,12 +719,25 @@ async function doExport() {
     " dup=" + r.dupMs + "ms(" + r.dupCount + "条) step2=" + r.step2Ms + "ms（遍历 " + r.walkMs + " / 写文字 " + r.writesMs + "）" +
     " 位移=" + r.moveMs + "ms(" + r.moved + " 份 逐份选中→translate，**不在 step2 里**)" +
     " newLayers=" + r.newLayers +
+    /* v0.6.0：撤销标记记上了没有 —— 它是"事后能不能一键退回"的唯一依据，必须留痕 */
+    " undo=" + (r.undo ? (r.undo.has ? "ok" : "FAILED(" + (r.undo.error || "?") + ")") : "未记") +
     (r.missing && r.missing.length ? " missing=" + r.missing.slice(0, 3).join("；") : "") +
     (r.firstError ? " firstErr=" + r.firstError : "") + (r.error ? " err=" + r.error : ""));
   setStatus(r.ok
-    ? "✓ 已生成 " + plan.n + " 个稿件（" + (Math.round(ms / 100) / 10) + "s，预估 " + est + "s）"
+    ? "✓ 已生成 " + plan.n + " 个稿件（" + (Math.round(ms / 100) / 10) + "s，预估 " + est + "s）" +
+      (r.undo && r.undo.has
+        ? "　状态条上可一键撤回"
+        : (r.undo && r.undo.error ? "　⚠ 这次没能记撤销标记：" + r.undo.error : ""))
     : "出稿失败：" + (r.error || "见日志"));
   renderBindGroup();
+
+  /* 让状态条上的撤销入口**立刻**出现，不等哨兵那 2 秒周期。
+     ⚠️ 包在 try 里：撤销入口刷不出来是小事，**不能影响"出稿已经成功"这个结论**。 */
+  try {
+    if (ctx && ctx.shell && ctx.shell.refreshUndo) ctx.shell.refreshUndo();
+  } catch (e) {
+    /* 忽略 —— 上面已经把 undo 状态写进日志了 */
+  }
 }
 
 /** 更新折叠块标题上的摘要（收起也知道现状） */

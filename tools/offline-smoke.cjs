@@ -524,7 +524,27 @@ function seedShell() {
   scroll.appendChild(mk("section", "vt-home", "screen active"));
   scroll.appendChild(mk("section", "vt-tool-view", "screen"));
   app.appendChild(scroll);
-  app.appendChild(mk("div", "vt-status", "statusbar"));
+  /* v0.6.0：状态条拆成「常驻体检 chip（定高）+ 可滚动消息区」两行。
+     ⚠️ **必须与 index.html 的结构逐字对齐** —— 否则 `dom.$("vt-status-tx")` 取到 null，
+        `setStatus()` 写了个空，离线就会误报"状态栏没消息"。
+        （本轮 16 / 19 / 20 三条就是这么挂的：mock 还是旧的单节点。） */
+  const status = mk("div", "vt-status", "statusbar");
+  const vchip = mk("div", "vt-inspect", "vchip");
+  vchip.setAttribute("role", "button");
+  vchip.appendChild(mk("i", "vt-inspect-led", "led off"));
+  vchip.appendChild(mk("span", "vt-inspect-tx", "vchip-tx"));
+  status.appendChild(vchip);
+  /* v0.6.0：撤销入口（与 index.html 的 `#vt-undo` 逐字对齐）。
+     ⚠️ 它在真 HTML 上默认是**内联 display:none** —— mock 里也照做，
+        否则"默认不显示"这条行为在离线就测不到（正是上一轮 mock 脱节的同族坑）。 */
+  const vundo = mk("div", "vt-undo", "vchip is-act");
+  vundo.setAttribute("role", "button");
+  vundo.style.display = "none";
+  vundo.appendChild(mk("i", "vt-undo-led", "led"));
+  vundo.appendChild(mk("span", "vt-undo-tx", "vchip-tx"));
+  status.appendChild(vundo);
+  status.appendChild(mk("div", "vt-status-tx", "stx"));
+  app.appendChild(status);
   body.appendChild(app);
 }
 
@@ -659,23 +679,55 @@ async function main() {
 
   const home = document.getElementById("vt-home");
   const navs = home ? home.querySelectorAll(".navitem") : [];
+
+  /* ⚠️ v0.6.0 改法：原来这里**写死了 4 行与 4 个名字**，于是"往宫格加一行"必然打断它。
+     既不该每次加行都回来改数字（脆），也不该干脆不验（松）。
+     现在改成**与注册表逐行对齐**：行数、顺序、data-tool、名称四项都要对上 ——
+     这比原来的"名字等于某个字符串"**更强**（原来根本没验顺序和 data-tool），
+     而且加行/改名时它自动跟着走。 */
+  const registry0 = require(path.join(PKG, "tools", "index.js"));
+  const expectRows = registry0.allRows();
+  const expectIds = expectRows.map((r) => r.id);
+  const expectNames = expectRows.map((r) => r.title);
+  const navIds = Array.prototype.map.call(navs, (n) => n.getAttribute("data-tool"));
+  const navNames = Array.prototype.map.call(navs, (n) => {
+    const nm = n.querySelector(".ni-name");
+    return nm ? nm.textContent : "?";
+  });
+
   check(
-    "2 外壳 init：首页渲染出 4 个功能入口",
-    navs.length === 4,
-    "导航行 " + navs.length + "（期望 4：调色板 / 素材库 / 表格生成 / AI-MCP）"
+    "2 外壳 init：首页按注册表逐行渲染（行数 / 顺序 / data-tool / 名称全对得上）",
+    navs.length === expectRows.length &&
+      navIds.join(",") === expectIds.join(",") &&
+      navNames.join(" / ") === expectNames.join(" / "),
+    "渲染 " + navs.length + " 行（注册表 " + expectRows.length + " 项）\n" +
+      "        渲染 ids = " + navIds.join(",") + "\n" +
+      "        期望 ids = " + expectIds.join(",") + "\n" +
+      "        渲染名称 = " + navNames.join(" / ") + "\n" +
+      "        期望名称 = " + expectNames.join(" / ")
   );
 
-  const rowTitles = Array.prototype.map
-    .call(navs, (n) => {
-      const nm = n.querySelector(".ni-name");
-      return nm ? nm.textContent : "?";
-    })
-    .join(" / ");
+  /* 2b 改成验**「已实现」与「规划中」有没有被正确区分**（灰行 class）——
+     这是原来那条"名字字符串相等"完全没覆盖的东西，也是首页最要紧的视觉语义：
+     已实现的必须点得动，规划中的必须灰着 + 点了给提示。 */
+  const rowOf = (id) => {
+    for (let i = 0; i < navs.length; i++) {
+      if (navs[i].getAttribute("data-tool") === id) return navs[i];
+    }
+    return null;
+  };
+  const isGrey = (row) => !!row && String(row.getAttribute("class") || "").indexOf("is-planned") >= 0;
+  const implBad = registry0.tools.filter((t) => isGrey(rowOf(t.id))).map((t) => t.id);
+  const planBad = registry0.planned.filter((p) => !isGrey(rowOf(p.id))).map((p) => p.id);
+  const chipCount = home ? home.querySelectorAll(".ni-key").length : 0;
   check(
-    "2b 四项名称正确且带号位 chip（↑1…↑4）",
-    rowTitles === "调色板 / 素材库 / 表格生成 / AI-MCP" &&
-      (home ? home.querySelectorAll(".ni-key").length : 0) === 4,
-    "名称 = " + rowTitles + "　号位 chip = " + (home ? home.querySelectorAll(".ni-key").length : 0)
+    "2b 首页区分「已实现 / 规划中」：已实现的不灰（可点）、规划的灰着；每行都有号位 chip",
+    implBad.length === 0 && planBad.length === 0 && chipCount === navs.length && navs.length > 0,
+    "已实现 " + registry0.tools.map((t) => t.id).join(",") + " 全部可点 = " + (implBad.length === 0) +
+      (implBad.length ? "（误灰：" + implBad.join(",") + "）" : "") +
+      "　规划中 " + registry0.planned.map((p) => p.id).join(",") + " 全部灰行 = " + (planBad.length === 0) +
+      (planBad.length ? "（漏灰：" + planBad.join(",") + "）" : "") +
+      "　号位 chip = " + chipCount + "（须 = 行数 " + navs.length + "）"
   );
 
   const hero = home ? home.querySelector(".hero-mark") : null;
@@ -1045,7 +1097,9 @@ async function main() {
       ids.indexOf("table") >= 0 && !inPlanned && !!tMod && tMod.ready === true &&
         typeof tMod.mount === "function" && typeof tMod.unmount === "function" &&
         row3Key === "table" && !stillPlanned &&
-        registry.planned.length === 1 && registry.planned[0].id === "mcp",
+        /* ⚠️ 原来这里写死 `planned.length === 1` —— 加一行规划项就会打断它。
+           改成只断言**真正要保的那件事**：M4 的 mcp 仍然灰着（待排期）。 */
+        registry.planned.some((p) => p.id === "mcp"),
       "tools=" + ids.join(",") + "　planned=" + registry.planned.map((p) => p.id).join(",") +
         "　第 3 行 data-tool=" + row3Key + "　仍标 is-planned=" + stillPlanned
     );
@@ -2778,6 +2832,290 @@ async function main() {
     mockApp.documents.length = 0;
   } catch (e) {
     check("M3 命令形状离线断言（自身抛异常）", false, (e && e.message) || String(e));
+  }
+
+  /* ---- M5 出图体检：纯函数离线断言（docs/49 第 1 步） ----
+     ⚠️ 这里只验 **judge / pxToMm / worstOf 这些纯函数** —— 它们不碰 PS，所以能离线跑。
+        真机行为由自检 S50 负责（那边验的是"快照从真文档读出来对不对"）。
+     ⚠️ 每条判据都带**负对照**（同一个快照换个条件，结论必须变）——
+        否则"恒等于某个值"也会被误判成通过。 */
+  try {
+    const insp = require(path.join(PKG, "lib", "inspect.js"));
+
+    const sevOf = (findings, k) => {
+      for (const f of findings) if (f.key === k) return f.severity;
+      return null;
+    };
+    const valOf = (findings, k) => {
+      for (const f of findings) if (f.key === k) return f.value;
+      return null;
+    };
+    const clone = (o) => JSON.parse(JSON.stringify(o));
+
+    /* 合成快照（不碰 PS）：2480×3508 @300dpi、RGB、无文字层、0 条参考线 */
+    const snap = {
+      info: {
+        docName: "合成稿.psd", saved: true,
+        mode: "RGBColorMode", bits: "bitDepth8",
+        profileName: "sRGB IEC61966-2.1", profileType: "workingSpaceCode",
+        pxW: 2480, pxH: 3508, ppi: 300
+      },
+      layers: { total: 3, textCount: 0, hidden: 1, groups: 0, fonts: [] },
+      guideCount: 0,
+      fontNames: {
+        ps: [insp.normFont("AdobeHeitiStd-Regular")],
+        loose: [insp.normFont("Microsoft YaHei UI")],
+        count: 2
+      }
+    };
+
+    /* ① 单位换算：无效 ppi 与空值必须返回 null（**不默认 72**） */
+    const mm = insp.pxToMm(300, 72);
+    check(
+      "M5-1 pxToMm：有效 ppi 换算正确；ppi=0 / px=null 一律返回 null（不默认 72）",
+      Math.abs(mm - 105.8333) < 0.01 && insp.pxToMm(300, 0) === null && insp.pxToMm(null, 72) === null,
+      "300px@72dpi = " + mm.toFixed(4) + "（须 105.8333）　ppi=0 → " + insp.pxToMm(300, 0) +
+      "　px=null → " + insp.pxToMm(null, 72)
+    );
+
+    /* ② usage 必须真的生效 —— 负对照：同一个快照，只改 usage，结论必须变 */
+    const fPrint = insp.judge(snap, { usage: "print" });
+    const fScreen = insp.judge(snap, { usage: "screen" });
+    check(
+      "M5-2 usage 生效（负对照）：同一快照，print 判 RGB 为 warn / screen 判为 ok",
+      sevOf(fPrint, "mode") === "warn" && sevOf(fScreen, "mode") === "ok",
+      "print → " + sevOf(fPrint, "mode") + "　screen → " + sevOf(fScreen, "mode") +
+      "（两者必须不同，否则 usage 根本没被用上）"
+    );
+
+    /* ③ 未转曲文字层：0 个恒 ok；有层时按用途分岔 */
+    const snapText = clone(snap);
+    snapText.layers.textCount = 3;
+    const ftP = insp.judge(snapText, { usage: "print" });
+    const ftS = insp.judge(snapText, { usage: "screen" });
+    check(
+      "M5-3 未转曲文字层：0 个 = ok；3 个时 print = warn / screen = info",
+      sevOf(insp.judge(snap, { usage: "print" }), "text") === "ok" &&
+        sevOf(ftP, "text") === "warn" && sevOf(ftS, "text") === "info" &&
+        String(valOf(ftP, "text")).indexOf("3") >= 0,
+      "0 个 → " + sevOf(insp.judge(snap, { usage: "print" }), "text") +
+      "　3 个 & print → " + sevOf(ftP, "text") +
+      "　3 个 & screen → " + sevOf(ftS, "text")
+    );
+
+    /* ④ 分辨率下限只在印刷侧设（屏幕稿 72dpi 是正常的，不该报警） */
+    const snapLow = clone(snap);
+    snapLow.info.ppi = 72;
+    check(
+      "M5-4 分辨率：print 下 72dpi = warn，screen 下 = info（屏幕稿不设下限）",
+      sevOf(insp.judge(snapLow, { usage: "print" }), "ppi") === "warn" &&
+        sevOf(insp.judge(snapLow, { usage: "screen" }), "ppi") === "info",
+      "print → " + sevOf(insp.judge(snapLow, { usage: "print" }), "ppi") +
+      "　screen → " + sevOf(insp.judge(snapLow, { usage: "screen" }), "ppi")
+    );
+
+    /* ⑤ 缺字体必须是 warn —— **不许是 fatal**（名字比对可能误报，见 lib/inspect.js 文件头） */
+    const snapBadFont = clone(snap);
+    snapBadFont.layers.fonts = [{ layer: "标题", font: "NotInstalledFont-Regular" }];
+    const fbf = insp.judge(snapBadFont, { usage: "print" });
+    check(
+      "M5-5 缺字体 = warn（不是 fatal —— 名字比对会误报，v1 不拦）",
+      sevOf(fbf, "font") === "warn" && String(valOf(fbf, "font")).indexOf("1") >= 0,
+      "severity = " + sevOf(fbf, "font") + "　value = " + valOf(fbf, "font")
+    );
+
+    /* ⑥ 命中本机清单 = ok；**清单读不到 = unknown**（不当作"没问题"） */
+    const snapOkFont = clone(snap);
+    snapOkFont.layers.fonts = [{ layer: "标题", font: "AdobeHeitiStd-Regular" }];
+    const snapNoList = clone(snap);
+    snapNoList.layers.fonts = [{ layer: "标题", font: "AdobeHeitiStd-Regular" }];
+    snapNoList.fontNames = { ps: [], loose: [], count: 0 };
+    check(
+      "M5-6 字体判定：命中本机清单 = ok；清单读不到 = unknown（不当作没问题）",
+      sevOf(insp.judge(snapOkFont, { usage: "print" }), "font") === "ok" &&
+        sevOf(insp.judge(snapNoList, { usage: "print" }), "font") === "unknown",
+      "命中 → " + sevOf(insp.judge(snapOkFont, { usage: "print" }), "font") +
+      "　无清单 → " + sevOf(insp.judge(snapNoList, { usage: "print" }), "font")
+    );
+
+    /* ⑦ 出血恒为 unknown —— 坐标读不到的已知缺口，**不许写成结论** */
+    const snapG = clone(snap);
+    snapG.guideCount = 4;
+    check(
+      "M5-7 出血恒为 unknown（0 条与 4 条都一样）—— 坐标读不到的已知缺口",
+      sevOf(insp.judge(snap, { usage: "print" }), "bleed") === "unknown" &&
+        sevOf(insp.judge(snapG, { usage: "print" }), "bleed") === "unknown",
+      "0 条 → " + sevOf(insp.judge(snap, { usage: "print" }), "bleed") +
+      "　4 条 → " + sevOf(insp.judge(snapG, { usage: "print" }), "bleed")
+    );
+
+    /* ⑧ ppi 读不到 → 物理尺寸 = unknown（不是 0、不是乱算） */
+    const snapNoPpi = clone(snap);
+    snapNoPpi.info.ppi = null;
+    const fnp = insp.judge(snapNoPpi, { usage: "print" });
+    check(
+      "M5-8 ppi 读不到时，物理尺寸 = unknown（不猜、不默认 72）",
+      sevOf(fnp, "phys") === "unknown",
+      "phys severity = " + sevOf(fnp, "phys") + "　value = " + valOf(fnp, "phys")
+    );
+
+    /* ⑨ worstOf 取最要紧那一档 */
+    check(
+      "M5-9 worstOf：fatal > warn > unknown > ok > info",
+      insp.worstOf([{ severity: "info" }, { severity: "ok" }]) === "ok" &&
+        insp.worstOf([{ severity: "ok" }, { severity: "unknown" }, { severity: "warn" }]) === "warn" &&
+        insp.worstOf([{ severity: "warn" }, { severity: "fatal" }]) === "fatal",
+      "info+ok → " + insp.worstOf([{ severity: "info" }, { severity: "ok" }]) +
+      "　ok+unknown+warn → " + insp.worstOf([{ severity: "ok" }, { severity: "unknown" }, { severity: "warn" }]) +
+      "　warn+fatal → " + insp.worstOf([{ severity: "warn" }, { severity: "fatal" }])
+    );
+
+    /* ⑩ 宫格：体检已上线（tools + ready + 有 mount/unmount），新建稿仍是灰行 */
+    const reg = require(path.join(PKG, "tools", "index.js"));
+    const pids = reg.planned.map((p) => p.id);
+    const tids = reg.tools.map((t) => t.id);
+    const inspMod = reg.byId("inspect");
+    const wronglyReady = reg.planned.filter((p) => p.ready === true).length;
+    check(
+      "M5-10 宫格：出图体检已上线（tools + ready + mount/unmount），「新建稿」仍是灰行",
+      tids.indexOf("inspect") >= 0 && pids.indexOf("inspect") < 0 &&
+        pids.indexOf("template") >= 0 && wronglyReady === 0 &&
+        !!inspMod && inspMod.ready === true &&
+        typeof inspMod.mount === "function" && typeof inspMod.unmount === "function",
+      "tools = " + JSON.stringify(tids) + "　planned = " + JSON.stringify(pids) +
+      "　inspect.ready = " + (inspMod ? inspMod.ready : "无") +
+      "　标成 ready 的规划项数 = " + wronglyReady + "（须 0）"
+    );
+
+    /* ⑪ bounds 归一化 + 超标量计算（兼容 UXP 的 `_left` 与普通 `left` 两种键名） */
+    const bdA = insp.normBounds({ _left: 200, _top: 89, _right: 1452, _bottom: 102 });
+    const bdOut = insp.normBounds({ left: -5, top: 0, right: 400, bottom: 200 });
+    const bdIn = insp.normBounds({ left: 10, top: 10, right: 400, bottom: 200 });
+    const bdBad = insp.normBounds({ _left: null, _top: 0, _right: 10, _bottom: 10 });
+    check(
+      "M5-11 normBounds / overflowPx：兼容 _left 与 left；四边取最大；缺字段/空值返回 null",
+      !!bdA && bdA.right === 1452 &&
+        bdOut && bdOut.left === -5 && bdIn && bdIn.left === 10 &&
+        insp.overflowPx(bdA, 400, 200) === 1052 &&
+        insp.overflowPx(bdOut, 400, 200) === 5 &&
+        /* ⚠️ 负 left 是"左边出界"，画布再大也出界 —— 第一版这里我写成了期望 0，是**断言写错** */
+        insp.overflowPx(bdOut, 5000, 5000) === 5 &&
+        insp.overflowPx(bdIn, 500, 300) === 0 &&
+        insp.normBounds(null) === null && bdBad === null,
+      "_left 版 right = " + (bdA ? bdA.right : "null") +
+      "　超 400×200 画布 = " + (bdA ? insp.overflowPx(bdA, 400, 200) : "-") + "（须 1052）" +
+      "　负 left 超 = " + insp.overflowPx(bdOut, 400, 200) + "（须 5）" +
+      "　负 left 在大画布上仍 = " + insp.overflowPx(bdOut, 5000, 5000) + "（须 5）" +
+      "　完全在内 = " + insp.overflowPx(bdIn, 500, 300) + "（须 0）" +
+      "　缺字段 → " + bdBad
+    );
+
+    /* ⑫ 「元素超出画布」的分档：0 个 = ok；小超出 = info；大超出 = warn
+       （阈值按毫米换算，所以 300dpi 下 5mm ≈ 59px） */
+    const mkOver = (n, maxPx) => {
+      const s = clone(snap);
+      s.layers.overflowCount = n;
+      s.layers.overflowMaxPx = maxPx;
+      s.layers.overflowWorst = "某个图层";
+      return s;
+    };
+    const fO0 = insp.judge(mkOver(0, 0), { usage: "print" });
+    const fO1 = insp.judge(mkOver(1, 20), { usage: "print" });
+    const fO2 = insp.judge(mkOver(2, 200), { usage: "print" });
+    check(
+      "M5-12 元素超出画布分档：0 个 = ok；20px = info；200px = warn（5mm@300dpi≈59px 为阈值）",
+      sevOf(fO0, "overflow") === "ok" &&
+        sevOf(fO1, "overflow") === "info" &&
+        sevOf(fO2, "overflow") === "warn" &&
+        String(valOf(fO2, "overflow")).indexOf("2") >= 0,
+      "0 个 → " + sevOf(fO0, "overflow") +
+      "　1 个/20px → " + sevOf(fO1, "overflow") +
+      "　2 个/200px → " + sevOf(fO2, "overflow") + "（" + valOf(fO2, "overflow") + "）"
+    );
+
+    /* ⑬ 缺字体/出血/超出画布三项的"无结论"边界：不许被写成结论 */
+    const snapNoPx = clone(snap);
+    snapNoPx.info.pxW = null;
+    const fNoPx = insp.judge(snapNoPx, { usage: "print" });
+    check(
+      "M5-13 画布尺寸读不到时，「元素超出画布」= unknown（不是 ok，也不是 0）",
+      sevOf(fNoPx, "overflow") === "unknown",
+      "overflow severity = " + sevOf(fNoPx, "overflow") + "　value = " + valOf(fNoPx, "overflow")
+    );
+
+    /* ⑭ 撤销标记的可用性判定（纯函数）。
+       ★ 关键是**两条相近情形必须给出不同答案**：
+         · 换了文档        ⇒ 拒绝（不跨文档撤回）
+         · 图层数已与标记时相同 ⇒ **仍是可用**，只加提示
+         若这两条答成一样，说明这条判定没在区分东西。 */
+    const hist = require(path.join(PKG, "lib", "history.js"));
+    const mkA = {
+      has: true, label: "批量出稿 20 份", docId: 101, docName: "A.psd",
+      layers: 5, markError: null,
+    };
+    const hSame = hist.assess(mkA, { docId: 101, layers: 25 });
+    const hOther = hist.assess(mkA, { docId: 202, layers: 25 });
+    const hEqual = hist.assess(mkA, { docId: 101, layers: 5 });
+    const hNone = hist.assess({ has: false }, { docId: 101, layers: 5 });
+    const hErr = hist.assess(
+      { has: true, label: "x", docId: 101, docName: "A.psd", layers: 5, markError: "取标记失败" },
+      { docId: 101, layers: 9 }
+    );
+    check(
+      "M5-14 assess：同文档可用 / 换文档拒绝 / 数量已相同仍可用（只提示）/ 无标记不可用 / 记标记出错不可用",
+      hSame.usable === true && hSame.hint === "" &&
+        hOther.usable === false && String(hOther.reason).indexOf("不是记标记那一张") >= 0 &&
+        hEqual.usable === true && String(hEqual.hint).indexOf("碰巧") > 0 &&
+        hNone.usable === false &&
+        hErr.usable === false && String(hErr.reason).indexOf("取标记失败") >= 0 &&
+        hOther.usable !== hEqual.usable,
+      "同文档 usable=" + hSame.usable +
+        "　换文档 usable=" + hOther.usable + "（" + hOther.reason + "）" +
+        "　数量已相同 usable=" + hEqual.usable + "（hint：" + hEqual.hint + "）" +
+        "　无标记 usable=" + hNone.usable + "　记标记出错 usable=" + hErr.usable
+    );
+
+    /* ⑮ 撤回读数：主路说「精确」、备路**必须自己说出来**「可能不精确」——
+       备路是相对位移，用户若在撤回前又手动操作过就会退到偏早的位置。
+       把它和主路说成一个样，就是用读数**掩盖一条真限制**。 */
+    const rv1 = hist.describeRevert({ ok: true, via: "state", before: 25, after: 5, want: 5 });
+    const rv2 = hist.describeRevert({ ok: true, via: "offset", n: 20, before: 25, after: 5, want: 5 });
+    const rv3 = hist.describeRevert({ ok: false, error: "没回到位" });
+    check(
+      "M5-15 describeRevert：主路不许带「可能不精确」、备路必须带、失败带原因（三条互不相同）",
+      rv1.indexOf("精确") >= 0 && rv1.indexOf("可能不精确") < 0 &&
+        rv2.indexOf("可能不精确") >= 0 &&
+        rv3.indexOf("未成功") >= 0 && rv3.indexOf("没回到位") >= 0 &&
+        rv1 !== rv2 && rv1 !== rv3 && rv2 !== rv3,
+      "主路 = " + JSON.stringify(rv1) +
+        "\n        备路 = " + JSON.stringify(rv2) +
+        "\n        失败 = " + JSON.stringify(rv3)
+    );
+
+    /* ⑯ 标记摘要：必须带「标签 + 多久之前 + 图层数」——
+       它是"事后"才被看到的，用户那时已经在想别的事，光写「有标记」等于没有信息。 */
+    const de1 = hist.describe({ has: true, label: "批量出稿 20 份", ageMs: 5000, layers: 5 });
+    const de2 = hist.describe({ has: false });
+    check(
+      "M5-16 describe：有标记带「标签 + 多久前 + 图层数」；无标记如实说（两者必须不同）",
+      de1.indexOf("批量出稿 20 份") >= 0 && de1.indexOf("秒前") >= 0 && de1.indexOf("5 个") >= 0 &&
+        de2.indexOf("没有撤销标记") >= 0 && de1 !== de2,
+      "有标记 = " + JSON.stringify(de1) + "\n        无标记 = " + JSON.stringify(de2)
+    );
+
+    /* ⑰ 结构性纪律：history.js **不许** require ps.js。
+       依赖必须是单向的 ps.js → history.js：history 要当"批量前记标记"的地基，
+       反过来引 ps.js 就成了**循环依赖** —— 症状是某个模块拿到半截 exports，
+       报错位置离病根很远、极难查。所以这里直接把方向钉死。 */
+    const hSrc = fs.readFileSync(path.join(PKG, "lib", "history.js"), "utf8");
+    const hBackRef = /require\(\s*["']\.\/ps\.js["']\s*\)/.test(hSrc);
+    check(
+      "M5-17 history.js 不 require ps.js（ps.js → history.js 单向，防循环依赖）",
+      !hBackRef,
+      "history.js 里" + (hBackRef ? "**有**" : "没有") + " require(\"./ps.js\")"
+    );
+  } catch (e) {
+    check("M5 出图体检纯函数离线断言（自身抛异常）", false, (e && e.message) || String(e));
   }
 
   /* ---- 收尾 ---- */

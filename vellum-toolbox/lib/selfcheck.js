@@ -181,6 +181,8 @@
 const log = require("./log.js");
 const dom = require("./dom.js");
 const ps = require("./ps.js");
+const inspect = require("./inspect.js");
+const history = require("./history.js");
 const store = require("./store.js");
 const data = require("./data.js");
 const caps = require("./caps.js");
@@ -884,7 +886,7 @@ async function run(ctx, deps) {
     rec("S10 图标系统（内联 SVG · 命名空间正确）", false, "抛异常：" + ((e && e.message) || e));
   }
 
-  /* ---------- S11: 外壳首页（4 行 + 品牌标 + 号位 + 主题） ---------- */
+  /* ---------- S11: 外壳首页（导航行 + 品牌标 + 号位 + 主题） ---------- */
   try {
     const home = document.getElementById("vt-home");
     const navs = home ? home.querySelectorAll(".navitem") : [];
@@ -900,7 +902,7 @@ async function run(ctx, deps) {
     const themeCls = String(document.documentElement.className || "");
     const themed = /vt-dark|vt-light/.test(themeCls);
     rec(
-      "S11 外壳首页渲染（4 行 + 品牌标 + 号位 + 主题）",
+      "S11 外壳首页渲染（导航行 + 品牌标 + 号位 + 主题）",
       navs.length === expect && heroOk && themed && keys.length === navs.length && barLogoOk,
       "导航行 " + navs.length + "（期望 " + expect + "）　号位 chip=" + keys.length +
       "　hero 品牌标=" + (heroOk ? "IMG:" + hero.getAttribute("src") : "异常(" + heroTag + ")") +
@@ -908,7 +910,7 @@ async function run(ctx, deps) {
       "　主题 class=" + JSON.stringify(themeCls)
     );
   } catch (e) {
-    rec("S11 外壳首页渲染（4 行 + 品牌标 + 号位 + 主题）", false, "抛异常：" + ((e && e.message) || e));
+    rec("S11 外壳首页渲染（导航行 + 品牌标 + 号位 + 主题）", false, "抛异常：" + ((e && e.message) || e));
   }
 
   /* ---------- S12: hover 色块 → 浮层提示 + 读数行 ---------- */
@@ -5499,12 +5501,304 @@ async function run(ctx, deps) {
   }
 
 
+  /* ---------- S50: 出图体检 · 只读内核（v0.6.0 / docs/49 第 1 步） ----------
+     ⚠️ 编号说明：本项起初写成 `S49`，与既有的「S49 绑定第 1 个文字层」**撞了号**
+        （真机报告里出现两条 S49）。已改为 **S50**。
+        教训：**加自检项前先数一遍现有编号**，别凭印象取。
+     ⚠️ 本项**只读**：只读文档属性 + 遍历图层树，不改像素、不动选区。
+        唯一的环境动作是"建一个临时文档、跑完关掉"，**绝不碰用户已打开的稿**。
+     ⚠️ 判据必须能**区分"对"和"错"**，所以做**两次读数**：
+         ① 刚建好的空白临时文档上读一次（文字层应为 0）
+         ② 造一个文字层后再读一次（应为 1）
+        —— 只读一次"等于 1"是无法归因的（万一它恒等于 1 呢）。
+     ⚠️ 同时钉住两条**已知缺口**，防止以后被误当成通过：
+        · 出血项必须是 `unknown`（原因：`guides[i]` 读不到坐标，见 docs/49 §二 C2）
+        · 「缺字体」不能是 fatal（原因：名字比对可能误报，见 lib/inspect.js 文件头） */
+  try {
+    const S50 = "S50 出图体检只读内核：快照读数 + 判定分档 + 对照组";
+
+    const sc = await ps.createScratchDoc({ size: 300, name: "Vellum 自检临时文档(S50体检)" });
+    if (!sc || !sc.ok) {
+      rec(S50, false, "建临时文档失败：" + ((sc && sc.error) || "未知"));
+    } else {
+      try {
+        await ps.activateDocument(sc.id);
+
+        /* ① 空白稿：文字层应为 0 */
+        const a = inspect.docInspect({ spec: { usage: "print" } });
+
+        /* ② 造一个文字层后再读：应为 1 */
+        await ps.makeTextLayer("体检测试文字", 24, 40, 40);
+        const b = inspect.docInspect({ spec: { usage: "print" } });
+
+        const pick = (r, k) => {
+          if (!r || !r.ok) return null;
+          for (const f of r.findings) if (f.key === k) return f;
+          return null;
+        };
+        const val = (r, k) => {
+          const f = pick(r, k);
+          return f ? f.value : null;
+        };
+        const sev = (r, k) => {
+          const f = pick(r, k);
+          return f ? f.severity : null;
+        };
+
+        const tA = val(a, "text");
+        const tB = val(b, "text");
+        const wantMm = inspect.pxToMm(300, 72).toFixed(1);
+        const wantPhys = wantMm + " × " + wantMm + " mm";
+        const gotPhys = val(b, "phys");
+
+        const checks = [
+          ["docInspect 返回 ok", !!(a && a.ok && b && b.ok)],
+          ["① 空白稿文字层 = 0", String(tA || "").indexOf("0 个") === 0],
+          ["② 加一层后文字层 = 1", String(tB || "").indexOf("1 个") === 0],
+          ["对照组能区分 0 与 1", !!tA && !!tB && tA !== tB],
+          ["像素尺寸 = 300 × 300 px", val(b, "px") === "300 × 300 px"],
+          ["物理尺寸 = " + wantPhys, gotPhys === wantPhys],
+          ["色彩模式有判定", ["ok", "warn", "unknown"].indexOf(sev(b, "mode")) >= 0],
+          ["分辨率有判定", ["ok", "warn", "info", "unknown"].indexOf(sev(b, "ppi")) >= 0],
+          ["字体项有结论", !!val(b, "font")],
+          ["出血项 = unknown（坐标读不到的已知缺口）", sev(b, "bleed") === "unknown"],
+          ["缺字体不是 fatal（误报风险，v1 只 warn）", pick(b, "font").severity !== "fatal"]
+        ];
+
+        const bad = [];
+        for (const c of checks) if (!c[1]) bad.push(c[0]);
+
+        rec(
+          S50,
+          bad.length === 0,
+          "读数：" +
+            ["mode=" + val(b, "mode"), "ppi=" + val(b, "ppi"), "px=" + val(b, "px"),
+             "phys=" + gotPhys, "bits=" + val(b, "bits"), "出血=" + val(b, "bleed")].join("　") +
+            "　空白稿文字层=" + tA + "　加层后=" + tB +
+            "　worst=" + (b.ok ? b.worst : "?") +
+            (bad.length ? "　⚠️ 未成立：" + bad.join(" / ")
+                        : "　⇒ 快照与判定都对得上，对照组能区分 0 与 1")
+        );
+      } finally {
+        await ps.closeDocument(sc.id);
+      }
+    }
+  } catch (e) {
+    rec("S50 出图体检只读内核：快照读数 + 判定分档 + 对照组", false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S51: 出图体检 · 常驻状态条 chip + 工具页（v0.6.0 / docs/49 第 2 步） ----------
+     ⚠️ 走**真实路径**：合成点击真 chip → 走 index.js 里那个真处理器 → 真的 mount 工具页。
+        不另写影子实现（本项目自检的第一原则：测的是面板本身）。
+     ⚠️ 判据带**负对照**：换一个尺寸不同的文档，chip 文本**必须变化** ——
+        否则"chip 恒显示某个值"也会被误判成通过。
+     ⚠️ 临时文档跑完全关，绝不动用户的稿。 */
+  try {
+    const S51 = "S51 出图体检常驻状态条 + 工具页（真实点击路径 + 尺寸负对照）";
+
+    const chipEl = document.getElementById("vt-inspect");
+    const chipTx = document.getElementById("vt-inspect-tx");
+    if (!chipEl || !chipTx) {
+      rec(S51, false, "找不到状态条 chip（#vt-inspect / #vt-inspect-tx）");
+    } else {
+      const docA = await ps.createScratchDoc({ size: 300, name: "Vellum 自检临时文档(S51-A)" });
+      if (!docA || !docA.ok) {
+        rec(S51, false, "建临时文档 A 失败：" + ((docA && docA.error) || "未知"));
+      } else {
+        let docB = null;
+        try {
+          await ps.activateDocument(docA.id);
+
+          /* ① 点真 chip：处理器里会先重算体检、再跳进体检工具页 */
+          syntheticClick(chipEl, false);
+          const view = () => document.getElementById("vt-tool-view");
+          const mounted = await waitFor(
+            () => {
+              const v = view();
+              return !!(v && v.querySelector(".insp"));
+            },
+            6000
+          );
+
+          const rowsOf = () => {
+            const v = view();
+            return v ? v.querySelectorAll(".insp-row") : [];
+          };
+          const rows = rowsOf();
+          const inspA = inspect.docInspect();
+          const textA = String(chipTx.textContent || "");
+
+          /* ② 每行都得有「标签 + 值」两列（否则渲染了个空壳） */
+          let rowsOk = rows.length > 0;
+          for (let i = 0; i < rows.length && rowsOk; i++) {
+            if (!rows[i].querySelector(".insp-mark")) rowsOk = false;
+            if (!rows[i].querySelector(".insp-lb")) rowsOk = false;
+            if (!rows[i].querySelector(".insp-vl")) rowsOk = false;
+          }
+
+          /* ③ 点「重新体检」不应抛异常 */
+          let reErr = null;
+          const reBtn = (() => {
+            const v = view();
+            return v ? v.querySelector(".insp-btn") : null;
+          })();
+          try {
+            if (reBtn) syntheticClick(reBtn, false);
+            else reErr = "找不到 .insp-btn";
+          } catch (e) {
+            reErr = (e && e.message) || String(e);
+          }
+
+          /* ④ 负对照：换一个尺寸不同的稿，chip 文本必须跟着变 */
+          await ctx.shell.showHome();
+          docB = await ps.createScratchDoc({ size: 500, name: "Vellum 自检临时文档(S51-B)" });
+          let textB = "";
+          if (docB && docB.ok) {
+            await ps.activateDocument(docB.id);
+            syntheticClick(chipEl, false);
+            await waitFor(() => String(chipTx.textContent || "").indexOf("500") >= 0, 6000);
+            textB = String(chipTx.textContent || "");
+          }
+
+          const checks = [
+            ["① 点 chip 后体检页挂载出来", !!mounted],
+            ["② 页面行数 = docInspect().findings.length",
+              !!(inspA && inspA.ok) && rows.length === inspA.findings.length],
+            ["③ 每行都有严重度/标签/值三列", rowsOk],
+            ["④ 「重新体检」点了不抛错", !reErr],
+            ["⑤ chip 文本以「体检：」开头且含 300",
+              textA.indexOf("体检：") === 0 && textA.indexOf("300") >= 0],
+            ["⑥ 负对照：换成 500×500 的稿后 chip 文本变了且含 500",
+              !!textB && textB !== textA && textB.indexOf("500") >= 0],
+            ["⑦ 回首页后 chip 元素仍在", !!document.getElementById("vt-inspect")]
+          ];
+
+          const bad = [];
+          for (const c of checks) if (!c[1]) bad.push(c[0]);
+
+          rec(
+            S51,
+            bad.length === 0,
+            "页面挂载=" + !!mounted + "　行数=" + rows.length +
+              "（docInspect 给 " + ((inspA && inspA.ok) ? inspA.findings.length : "?") + " 项）" +
+              "　重新体检报错=" + (reErr || "无") + "\n" +
+              "        300×300 稿的 chip = " + JSON.stringify(textA) + "\n" +
+              "        500×500 稿的 chip = " + JSON.stringify(textB) +
+              (bad.length ? "\n        ⚠️ 未成立：" + bad.join(" / ")
+                          : "\n        ⇒ chip 随文档变化、体检页按真实数据渲染、按钮可点")
+          );
+        } finally {
+          if (docB && docB.ok) await ps.closeDocument(docB.id);
+          await ps.closeDocument(docA.id);
+          await ctx.shell.showHome();
+        }
+      }
+    }
+  } catch (e) {
+    rec("S51 出图体检常驻状态条 + 工具页（真实点击路径 + 尺寸负对照）", false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S52: 整批撤销 · 跨模态持有（v0.6.0 / docs/49 §五 第 3 步） ----------
+     ⚠️ 本项验的是**整个功能的地基**：`activeHistoryState` 的**对象引用能不能跨模态持有**
+        （模态 A 里取、模态 B 里用）。
+        template-probe C4 只验了「**同一个模态内**可写」—— 那**不够**：
+        "批量前记、批量后退"必然是**两次模态**，中间还夹着一整轮批量操作。
+     ⚠️ 判据必须给出**能互相区分的三档读数**：
+        ① 动手后**不撤回**读一次 → 必须是多出 3 个
+           （负对照：证明这个计数真的会变，而不是恒等于某个值。
+             没有它，"撤回后回到原值"也可能是巧合）
+        ② 撤回后 → 必须回到原值（★ 主路成立 = 地基坐实）
+        ③ 若 ② 不成立，**单独重来一遍**测备路（`_offset`）——
+           把"是对象持有失效"和"是这个 API 用法不对"两种原因**分开**，
+           否则读到的失败无法归因。
+     ⚠️ 临时文档跑完全关，绝不动用户的稿。 */
+  try {
+    const S52 = "S52 整批撤销：跨模态持有历史状态（主路）+ 负对照 + 备路读数";
+
+    const sc52 = await ps.createScratchDoc({ size: 200, name: "Vellum 自检临时文档(S52撤回)" });
+    if (!sc52 || !sc52.ok) {
+      rec(S52, false, "建临时文档失败：" + ((sc52 && sc52.error) || "未知"));
+    } else {
+      try {
+        await ps.activateDocument(sc52.id);
+
+        /* 「批量之前」：记标记 */
+        const L0 = history.currentLayers();
+        const mkRes = await history.mark("自检 S52 批量");
+        const mkPeek = history.peek();
+
+        /* 动手：建 3 个文字层（模拟一次批量操作） */
+        for (let i = 1; i <= 3; i++) {
+          await ps.makeTextLayer("S52-" + i, 18, 30 + i * 10, 30 + i * 10);
+        }
+        const L1 = history.currentLayers();
+
+        /* 负对照：**先不撤回**再读一次 —— 必须仍是"多出 3 个" */
+        const Lneg = history.currentLayers();
+
+        /* 主路：跨模态持有对象赋值（mark 与 revert 是两次独立的模态） */
+        const r1 = await history.revert({ via: "state" });
+        const L2 = history.currentLayers();
+
+        /* 备路：只在主路没成时**单独重来**——
+           ⚠️ 不重来的话，上面已经造过一层，历史步数会翻倍，备路算出的位移就是错的，
+              那样测的就不是备路本身，而是"被污染的历史"。 */
+        let r2 = null;
+        let Lb0 = null;
+        let L3 = null;
+        if (L2 !== L0) {
+          await history.mark("自检 S52 备路");
+          for (let i = 1; i <= 3; i++) {
+            await ps.makeTextLayer("S52b-" + i, 18, 80 + i * 10, 80 + i * 10);
+          }
+          Lb0 = history.currentLayers();
+          r2 = await history.revert({ via: "offset" });
+          L3 = history.currentLayers();
+        }
+
+        const checks = [
+          ["mark 记上了图层数（" + L0 + "）", !!(mkRes && mkRes.ok) && mkPeek.has && mkPeek.layers === L0],
+          ["① 负对照：动手后读数确实变了（" + L0 + " → " + L1 + "）", L1 === L0 + 3],
+          ["①b 负对照可重复（连读两次一致）", Lneg === L1],
+          ["★ ② 跨模态持有对象可撤回（回到 " + L0 + "）", L2 === L0]
+        ];
+        const bad = [];
+        for (const c of checks) if (!c[1]) bad.push(c[0]);
+
+        rec(
+          S52,
+          bad.length === 0,
+          "读数：标记时 " + L0 + " 层　动手后 " + L1 + " 层（负对照复读 " + Lneg + "）" +
+            "　主路撤回后 " + L2 + " 层（via=" + (r1 ? r1.via : "null") +
+            (r1 && r1.error ? "，错误=" + r1.error : "") + "）" +
+            (r2
+              ? "　备路：动手后 " + Lb0 + " 层 → 撤回后 " + L3 + " 层（via=" + r2.via +
+                (r2.error ? "，错误=" + r2.error : "") + "）"
+              : "　（备路未跑：主路已成立）") +
+            (bad.length
+              ? "\n        ⚠️ 未成立：" + bad.join(" / ") +
+                "\n        ⚠️ 若「跨模态持有对象可撤回」未成立 ⇒ 这是**发现了一条真限制**" +
+                "（不是断言写错）：说明那个对象引用只在**同一个模态内**有效。" +
+                " ⇒ 方案要改成二选一：把 mark 与整轮批量**包进同一个 executeAsModal**，" +
+                "或改走备路（`_offset`，但要承担「相对位移可能不精确」的代价）。" +
+                " 详见 lib/history.js 文件头的【已验证 / 未验证】。"
+              : "\n        ⇒ 对象引用跨模态有效：批量前记、批量后退这条路成立（地基坐实）")
+        );
+      } finally {
+        await ps.closeDocument(sc52.id);
+        await ctx.shell.showHome();
+      }
+    }
+  } catch (e) {
+    rec("S52 整批撤销：跨模态持有历史状态（主路）+ 负对照 + 备路读数", false, "抛异常：" + ((e && e.message) || e));
+  }
+
   /* ---------- 收尾：写报告 ---------- */
   const passCount = results.filter((r) => r.ok).length;
   const summary = passCount + "/" + results.length;
   const report = {
     plugin: "com.vellum.toolbox",
-    version: "0.5.0",
+    version: (deps && deps.version) || "?",
     ranAt: log.timestamp(),
     durationMs: Date.now() - started,
     keepMode: keepFlag,

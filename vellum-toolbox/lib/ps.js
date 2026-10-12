@@ -57,6 +57,11 @@ const batchPlay = action.batchPlay;
 const imaging = photoshop.imaging || null;
 const constants = photoshop.constants || null;
 
+/* v0.6.0：批量操作的「整批撤销」（docs/49 §五 第 3 步）。
+   ⚠️ 依赖方向是**单向**的：ps.js → history.js。history.js **不**回头 require ps.js
+      （它自己数图层，就为了避开循环依赖）。别把它改成双向的。 */
+const undoHistory = require("./history.js");
+
 /** 颜色槽 → ActionDescriptor 里的属性名。 */
 const COLOR_PROP = {
   foreground: "foregroundColor",
@@ -3057,6 +3062,24 @@ async function exportByRows(plan, opts) {
   out.writesWant = plan.writeCount;
   const moves = [];
   out.moves = moves;
+
+  /* ★ v0.6.0（docs/49 §五 第 3 步）：**动手之前**先记一个撤销标记。
+     为什么自动记、而不是让用户点一下"开始前先记标记"：
+       用户要的是"事后能退"，不是"事前记得点"。要人记住的防护等于没有防护。
+     代价：一次模态 + 几个只读。相对这次出稿（几十上百步）可以忽略。
+     ⚠️ 记标记失败**不拦路** —— 记不上标记不该让出稿整个失败；
+        但原因要原样带进返回值，让 UI 说清楚"这次没法一键撤"。
+     ⚠️ 顺序：必须在 `maxLayerId()` / 复制**之前** —— 标记的是"还没动手"的那个状态。 */
+  out.undo = null;
+  try {
+    const mk = await undoHistory.mark("批量出稿 " + plan.n + " 份");
+    out.undo = mk.ok
+      ? (function () { const p = undoHistory.peek(); p.superseded = mk.superseded || null; return p; })()
+      : { has: false, error: mk.error || "记标记失败" };
+  } catch (e) {
+    out.undo = { has: false, error: msg(e) };
+  }
+
   const idBefore = maxLayerId();
 
   /* ① 复制：**一次** batchPlay（N 条命令） */
