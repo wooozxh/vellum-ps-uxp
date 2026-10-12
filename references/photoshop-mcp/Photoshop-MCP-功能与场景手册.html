@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Photoshop MCP 功能与场景手册</title>
+<style>
+  :root{
+    --bg:#141619;
+    --panel:#1b1e23;
+    --panel2:#20242a;
+    --line:#2c3138;
+    --line2:#3a4048;
+    --tx:#e4e7ea;
+    --tx2:#9aa3ad;
+    --tx3:#6f7883;
+    --amber:#e0a536;
+    --teal:#4fa8a0;
+    --red:#d9604f;
+    --mono:"Cascadia Mono","Consolas","SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--tx);
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    font-size:15px;line-height:1.75;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:56px 32px 96px}
+  header{border-bottom:1px solid var(--line);padding-bottom:28px;margin-bottom:44px}
+  h1{font-size:30px;line-height:1.35;margin:0 0 14px;font-weight:650;letter-spacing:.2px}
+  .sub{color:var(--tx2);font-size:14px}
+  .meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+  .meta span{
+    font-family:var(--mono);font-size:12px;color:var(--tx2);
+    border:1px solid var(--line2);padding:4px 10px;background:var(--panel)
+  }
+  .meta b{color:var(--amber);font-weight:600}
+  h2{
+    font-size:20px;margin:56px 0 8px;font-weight:640;
+    padding-top:22px;border-top:1px solid var(--line)
+  }
+  h2 .no{font-family:var(--mono);color:var(--tx3);font-size:14px;margin-right:10px;font-weight:400}
+  h3{font-size:16px;margin:32px 0 10px;color:var(--teal);font-weight:620}
+  p{margin:10px 0}
+  .lead{color:var(--tx2);margin:0 0 22px}
+  code{
+    font-family:var(--mono);font-size:12.5px;
+    background:var(--panel2);border:1px solid var(--line);
+    padding:1.5px 6px;color:#cfd6dd;white-space:nowrap
+  }
+  table{width:100%;border-collapse:collapse;margin:16px 0 8px;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--tx3);font-weight:600;font-size:12px;letter-spacing:.4px;
+     border-bottom:1px solid var(--line2);background:var(--panel)}
+  tbody tr:hover{background:#191c21}
+  td.n{color:var(--tx3);font-family:var(--mono);font-size:12px;width:38px}
+  .tag{font-family:var(--mono);font-size:11px;padding:1px 6px;border:1px solid var(--line2);color:var(--tx3);white-space:nowrap}
+  .tag.warn{color:var(--red);border-color:#5a3129}
+  .tag.ok{color:var(--teal);border-color:#2c4b48}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin:22px 0}
+  .card{background:var(--panel);border:1px solid var(--line);padding:20px 22px}
+  .card h4{margin:0 0 6px;font-size:15px;font-weight:640}
+  .card .who{font-size:12px;color:var(--tx3);font-family:var(--mono);margin-bottom:12px}
+  .card p{font-size:13.5px;color:var(--tx2);margin:0 0 12px}
+  .say{
+    background:var(--panel2);border-left:2px solid var(--amber);
+    padding:9px 13px;font-size:13.5px;color:#d6dbe1;margin:10px 0 0
+  }
+  .say::before{content:"可以直接说：";display:block;font-size:11px;color:var(--tx3);
+    font-family:var(--mono);margin-bottom:3px}
+  .note{border-left:2px solid var(--teal);padding:2px 0 2px 16px;color:var(--tx2);font-size:14px;margin:18px 0}
+  .note b{color:var(--tx)}
+  .warnbox{border-left:2px solid var(--red);padding:2px 0 2px 16px;color:var(--tx2);font-size:14px;margin:18px 0}
+  ol,ul{padding-left:22px;margin:12px 0}
+  li{margin:6px 0;color:var(--tx2)}
+  li b{color:var(--tx)}
+  .kpi{display:flex;gap:0;margin:26px 0;border:1px solid var(--line)}
+  .kpi div{flex:1;padding:18px 20px;border-right:1px solid var(--line)}
+  .kpi div:last-child{border-right:0}
+  .kpi .v{font-family:var(--mono);font-size:26px;color:var(--amber);line-height:1.2}
+  .kpi .k{font-size:12px;color:var(--tx3);margin-top:4px}
+  footer{margin-top:72px;padding-top:22px;border-top:1px solid var(--line);color:var(--tx3);font-size:12.5px}
+  @media(max-width:640px){.wrap{padding:32px 18px 64px}.kpi{flex-direction:column}.kpi div{border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Photoshop MCP 功能与场景手册</h1>
+  <div class="sub">你本机已装好的那套 —— 有什么能力、在哪些活儿上能真正省事。</div>
+  <div class="meta">
+    <span>服务 <b>@alisaitteke/photoshop-mcp</b></span>
+    <span>版本 <b>v1.7.34</b></span>
+    <span>注册 <b>128 个工具 + 24 个提示词</b></span>
+    <span>通道 <b>ExtendScript</b></span>
+    <span>宿主 <b>Photoshop 2026 (D 盘)</b></span>
+    <span>核对日期 <b>2026-10-12</b></span>
+  </div>
+</header>
+
+<div class="kpi">
+  <div><div class="v">128</div><div class="k">个工具</div></div>
+  <div><div class="v">17</div><div class="k">个配方（一次撤销）</div></div>
+  <div><div class="v">43</div><div class="k">个破坏性工具（需确认）</div></div>
+  <div><div class="v">10</div><div class="k">个纯只读工具</div></div>
+</div>
+
+<p class="lead">
+这份是一次实测核对的结果：直接连服务读 <code>tools/list</code> 得到的数字，不是抄文档。你之前记的是 v1.7.32 / 127 个工具，
+这次升级到 <b>v1.7.34</b>，多了 1 个工具、1 个提示词 —— 新增的正是下面标注「新」的贴纸白边配方。
+</p>
+
+<h2><span class="no">01</span>它到底是什么：三句话</h2>
+<p>一句话：<b>给 AI 装了一双手，让 AI 直接在你打开的 Photoshop 里干活，而不是给你写一段你还要自己去跑的脚本。</b></p>
+<ul>
+  <li><b>它靠 ExtendScript 通道</b>（Windows 走 COM），所以不挑插件、不装扩展，<b>只要 Photoshop 正在运行</b>就能连上。</li>
+  <li><b>它自带「状态感知」</b>：<code>get_state</code> 读当前文档/图层/选区，<code>get_preview</code> 导出截图回读。
+      这是它比裸脚本可靠的根本原因 —— <b>AI 能看见自己刚做了什么、然后自己检查对不对</b>。</li>
+  <li><b>它最值钱的是「配方」</b>：把七八步操作打包成<b>一次调用、一次撤销</b>。做流水线时只该用配方，别一步步拼。</li>
+</ul>
+
+<div class="note">
+  <b>使用前提三条：</b>① Photoshop 必须先开着；② 首次调用要等 30–60 秒（npx 冷启动下载）；③ 生成式功能（生成式填充/换天空等）需要登录 Adobe 账号、消耗积分。
+</div>
+
+<h2><span class="no">02</span>能力清单：128 个工具分 13 组</h2>
+<p class="lead">命名规则 <code>photoshop_动作_对象</code>。表格里标了破坏性（会改像素 / 删东西 / 写磁盘），这类用之前会先问你。</p>
+
+<h3>① 会话与文档（12）</h3>
+<table>
+<thead><tr><th class="n">#</th><th>工具</th><th>作用</th><th>性</th></tr></thead>
+<tbody>
+<tr><td class="n">1</td><td><code>ping</code></td><td>验证脚本引擎可用（会话开始必调）</td><td><span class="tag ok">只读</span></td></tr>
+<tr><td class="n">2</td><td><code>get_version</code></td><td>读 Photoshop 版本号</td><td><span class="tag ok">只读</span></td></tr>
+<tr><td class="n">3</td><td><code>get_document_info</code></td><td>读文档尺寸、分辨率、色彩模式</td><td><span class="tag ok">只读</span></td></tr>
+<tr><td class="n">4</td><td><code>list_documents</code></td><td>列出所有打开的文档及 id</td><td><span class="tag ok">只读</span></td></tr>
+<tr><td class="n">5</td><td><code>set_active_document</code></td><td>按 id / 索引 / 名称切换活动文档</td><td></td></tr>
+<tr><td class="n">6</td><td><code>create_document</code></td><td>新建文档（宽高、dpi、RGB/CMYK/灰度）<b>只吃像素单位</b></td><td></td></tr>
+<tr><td class="n">7</td><td><code>open_image</code></td><td>打开图片文件为新文档</td><td></td></tr>
+<tr><td class="n">8</td><td><code>place_image</code></td><td>把外部图片作为新图层置入当前文档（可指定坐标）</td><td></td></tr>
+<tr><td class="n">9</td><td><code>export_as</code></td><td>导出副本为 PNG / JPEG / <b>WebP / AVIF</b>，不动原文档</td><td></td></tr>
+<tr><td class="n">10</td><td><code>save_document</code></td><td>保存为 PSD / JPEG / PNG 到指定路径</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">11</td><td><code>close_document</code></td><td>关闭文档标签页</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">12</td><td><code>submit_feedback</code></td><td>回应产品的反馈询问（可无视）</td><td></td></tr>
+</tbody>
+</table>
+
+<h3>② 图层管理（23）</h3>
+<table>
+<thead><tr><th class="n">#</th><th>工具</th><th>作用</th><th>性</th></tr></thead>
+<tbody>
+<tr><td class="n">13</td><td><code>create_layer</code></td><td>活动层上方新建空图层</td><td></td></tr>
+<tr><td class="n">14</td><td><code>delete_layer</code></td><td>删除活动图层（含像素、蒙版、效果）</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">15</td><td><code>get_layers</code></td><td>列出图层树（类型、可见性、不透明度）</td><td><span class="tag ok">只读</span></td></tr>
+<tr><td class="n">16</td><td><code>select_layer_by_name</code></td><td>按名称精确选中图层（含组内）</td><td></td></tr>
+<tr><td class="n">17</td><td><code>rename_layer</code></td><td>重命名活动图层</td><td></td></tr>
+<tr><td class="n">18</td><td><code>duplicate_layer</code></td><td>复制活动图层</td><td></td></tr>
+<tr><td class="n">19</td><td><code>set_layer_opacity</code></td><td>不透明度 0–100（绝对值，非增量）</td><td></td></tr>
+<tr><td class="n">20</td><td><code>set_layer_blend_mode</code></td><td>混合模式（27 种，含 COLOR 着色）</td><td></td></tr>
+<tr><td class="n">21</td><td><code>set_layer_visibility</code></td><td>显示 / 隐藏</td><td></td></tr>
+<tr><td class="n">22</td><td><code>set_layer_locked</code></td><td>锁定 / 解锁图层</td><td></td></tr>
+<tr><td class="n">23</td><td><code>move_layer_up</code> / <code>down</code></td><td>图层上移 / 下移一位</td><td></td></tr>
+<tr><td class="n">24</td><td><code>move_layer_to_top</code> / <code>bottom</code></td><td>移到顶层 / 底层</td><td></td></tr>
+<tr><td class="n">25</td><td><code>move_layer_to_position</code></td><td>移到指定命名图层的上 / 下 / 顶 / 底</td><td></td></tr>
+<tr><td class="n">26</td><td><code>merge_visible_layers</code></td><td>合并所有可见层（隐藏层保留）</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">27</td><td><code>flatten_image</code></td><td>拼合为单层（丢弃隐藏层）</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">28</td><td><code>rasterize_layer</code></td><td>栅格化文字 / 智能对象层</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">29</td><td><code>convert_to_smart_object</code></td><td>转为智能对象</td><td></td></tr>
+<tr><td class="n">30</td><td><code>create_smart_object_via_copy</code></td><td>建<b>独立</b>智能对象副本（不共享内容）</td><td></td></tr>
+<tr><td class="n">31</td><td><code>replace_smart_object_contents</code></td><td><b>替换智能对象内容</b>（保留变换/滤镜）—— <b>样机套图核心</b></td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">32</td><td><code>edit_smart_object_contents</code></td><td>打开内嵌 .psb 编辑</td><td></td></tr>
+<tr><td class="n">33</td><td><code>apply_layer_style</code></td><td>加图层样式（投影、外发光、描边、斜面和浮雕）</td><td></td></tr>
+</tbody>
+</table>
+
+<h3>③ 绘制与填充（2）</h3>
+<table>
+<thead><tr><th class="n">#</th><th>工具</th><th>作用</th><th>性</th></tr></thead>
+<tbody>
+<tr><td class="n">34</td><td><code>fill_layer</code></td><td>活动层填纯色。<b>有选区时只填选区</b></td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">35</td><td><code>fill_gradient</code></td><td>活动层填双色线性渐变（4 方向）</td><td><span class="tag warn">破坏</span></td></tr>
+</tbody>
+</table>
+<div class="warnbox">文字层不能直接填色 —— 要先 <code>set_text_color</code> 或先栅格化；智能对象会被就地栅格化。</div>
+
+<h3>④ 画布与几何变换（11）</h3>
+<table>
+<thead><tr><th class="n">#</th><th>工具</th><th>作用</th><th>性</th></tr></thead>
+<tbody>
+<tr><td class="n">36</td><td><code>resize_image</code></td><td>重采样<b>整个文档</b>到新像素宽高（双三次）</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">37</td><td><code>crop_document</code></td><td>按像素矩形裁切文档</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">38</td><td><code>fit_layer_to_document</code></td><td>图层自动适配画布（留白 / 铺满裁切）</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">39</td><td><code>scale_layer</code></td><td>按百分比缩放图层（可选锚点）</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">40</td><td><code>move_layer</code></td><td>按偏移量移动图层</td><td></td></tr>
+<tr><td class="n">41</td><td><code>rotate_layer</code></td><td>旋转图层（正值顺时针），画布不跟着转</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">42</td><td><code>image_stack</code></td><td>多图载入 → 智能对象 → 堆栈模式（平均/中值），<b>矩阵合成去噪、去游客</b></td><td></td></tr>
+<tr><td class="n">43</td><td><code>list_artboards</code></td><td>列出画板及像素范围</td><td><span class="tag ok">只读</span></td></tr>
+<tr><td class="n">44</td><td><code>create_artboard</code></td><td>新建画板</td><td></td></tr>
+<tr><td class="n">45</td><td><code>set_active_artboard</code></td><td>按 id / 名称选中画板</td><td></td></tr>
+<tr><td class="n">46</td><td><code>export_artboards</code></td><td>把每个画板分别导出到文件夹</td><td></td></tr>
+</tbody>
+</table>
+
+<h3>⑤ 文字与排版（9）</h3>
+<table>
+<thead><tr><th class="n">#</th><th>工具</th><th>作用</th><th>性</th></tr></thead>
+<tbody>
+<tr><td class="n">47</td><td><code>create_text_layer</code></td><td>建文字层（内容、坐标、字号、字体、字间距、行高、段落框、对齐、颜色）</td><td></td></tr>
+<tr><td class="n">48</td><td><code>list_fonts</code></td><td>列出 PS 可用字体</td><td><span class="tag ok">只读</span></td></tr>
+<tr><td class="n">49</td><td><code>install_font</code></td><td>装字体文件并即时重载列表（<b>不用重启 PS</b>）</td><td></td></tr>
+<tr><td class="n">50</td><td><code>set_text_font</code></td><td>改字体族与字号</td><td></td></tr>
+<tr><td class="n">51</td><td><code>set_text_color</code></td><td>整个文字层设一种 RGB 色</td><td></td></tr>
+<tr><td class="n">52</td><td><code>set_text_alignment</code></td><td>对齐（左 → 两端对齐）</td><td></td></tr>
+<tr><td class="n">53</td><td><code>update_text_content</code></td><td>替换文字内容（保留字体/颜色/对齐）—— <b>模板批产核心</b></td><td></td></tr>
+<tr><td class="n">54</td><td><code>set_text_style</code></td><td>层级排版：字间距、行高、点文字/段落文字</td><td></td></tr>
+<tr><td class="n">55</td><td><code>set_text_ranges</code></td><td><b>层内混排</b>：一段文字里不同片段设不同字体/字号/颜色</td><td></td></tr>
+</tbody>
+</table>
+<div class="warnbox">建中文字必须显式指定字体（如 <code>MicrosoftYaHei</code>），默认字体的中文字形可能缺失。</div>
+
+<h3>⑥ 选区与蒙版（17）</h3>
+<table>
+<thead><tr><th class="n">#</th><th>工具</th><th>作用</th><th>性</th></tr></thead>
+<tbody>
+<tr><td class="n">56–59</td><td><code>select_all</code> / <code>deselect</code> / <code>invert_selection</code> / <code>select_rectangle</code></td><td>全选、取消、反选、矩形选区</td><td></td></tr>
+<tr><td class="n">60</td><td><code>select_ellipse</code></td><td>椭圆选区（抗锯齿）</td><td></td></tr>
+<tr><td class="n">61</td><td><code>select_subject</code></td><td><b>选择主体</b>（像素级选区，不建蒙版）</td><td></td></tr>
+<tr><td class="n">62</td><td><code>get_selection_bounds</code></td><td>读当前选区的像素范围</td><td><span class="tag ok">只读</span></td></tr>
+<tr><td class="n">63–65</td><td><code>expand_selection</code> / <code>contract_selection</code> / <code>feather_selection</code></td><td>选区外扩 / 收缩 / 羽化</td><td></td></tr>
+<tr><td class="n">66</td><td><code>save_selection</code></td><td>选区存为 Alpha 通道</td><td></td></tr>
+<tr><td class="n">67</td><td><code>create_layer_mask</code></td><td>用当前选区<b>建图层蒙版</b>（非破坏性抠图）</td><td></td></tr>
+<tr><td class="n">68</td><td><code>delete_layer_mask</code></td><td>删除图层蒙版</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">69</td><td><code>apply_layer_mask</code></td><td>蒙版烘焙进像素并删除蒙版</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">70</td><td><code>apply_gradient_mask</code></td><td>蒙版上涂黑白渐变（渐隐融合）</td><td><span class="tag warn">破坏</span></td></tr>
+<tr><td class="n">71</td><td><code>create_clipping_mask</code></td><td>建立剪贴蒙版</td><td></td></tr>
+<tr><td class="n">72</td><td><code>release_clipping_mask</code></td><td>释放剪贴蒙版</td><td></td></tr>
+</tbody>
+</table>
+
+<h3>⑦ 调整与调色（12）</h3>
+<p>亮度对比度、色相饱和度、曲线、自然饱和度、曝光、照片滤镜、渐变映射、颜色查找（3D LUT）、自动色阶、自动对比度、去色、反相。
+其中 <b>曲线 / 自然饱和度 / 曝光 / 照片滤镜 / 渐变映射 / LUT</b> 是新建<b>调整图层</b>（非破坏性），其余直接改像素。</p>
+
+<h3>⑧ 滤镜（6）</h3>
+<p>高斯模糊、USM 锐化、添加杂色、动感模糊、高反差保留、特殊模糊。全部作用于活动栅格图层，属直接改像素。</p>
+
+<h3>⑨ 生成式 AI（8）</h3>
+<table>
+<thead><tr><th class="n">#</th><th>工具</th><th>作用</th><th>代价</th></tr></thead>
+<tbody>
+<tr><td class="n">73</td><td><code>generative_fill</code></td><td>生成式填充（Firefly，按提示词）</td><td>消耗积分</td></tr>
+<tr><td class="n">74</td><td><code>generative_remove</code></td><td>AI 移除（移除工具 / 生成式兜底）</td><td>消耗积分</td></tr>
+<tr><td class="n">75</td><td><code>generative_expand</code></td><td>生成式扩展画布</td><td>消耗积分</td></tr>
+<tr><td class="n">76</td><td><code>generative_upscale</code></td><td>生成式放大（需 PS 27+）</td><td>消耗积分</td></tr>
+<tr><td class="n">77</td><td><code>generate_image</code></td><td>Firefly 直接由提示词出图</td><td>消耗积分</td></tr>
+<tr><td class="n">78</td><td><code>sky_replacement</code></td><td>PS 原生换天空</td><td>免费</td></tr>
+<tr><td class="n">79</td><td><code>content_aware_fill</code></td><td>内容识别填充</td><td>免费</td></tr>
+<tr><td class="n">80</td><td><code>neural_filter</code></td><td>神经滤镜（需配套 UXP 桥接 + 本地端口）</td><td>免费</td></tr>
+</tbody>
+</table>
+
+<h3>⑩ 数据驱动批产（3）</h3>
+<table>
+<thead><tr><th class="n">#</th><th>工具</th><th>作用</th><th>性</th></tr></thead>
+<tbody>
+<tr><td class="n">81</td><td><code>list_datasets</code></td><td>列出文档已定义的数据集（图像 &gt; 变量）</td><td><span class="tag ok">只读</span></td></tr>
+<tr><td class="n">82</td><td><code>import_datasets</code></td><td>导入数据组 XML</td><td></td></tr>
+<tr><td class="n">83</td><td><code>generate_from_datasets</code></td><td><b>按每个数据集批量出图</b>：逐个应用 → 存副本 → 下一步</td><td></td></tr>
+</tbody>
+</table>
+
+<h3>⑪ 执行、历史与逃生舱（5）</h3>
+<table>
+<thead><tr><th class="n">#</th><th>工具</th><th>作用</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td class="n">84</td><td><code>play_action</code></td><td>播放动作面板里指定动作集下的动作</td><td><b>复用设计师已录好的动作，绕开底层命令格式</b></td></tr>
+<tr><td class="n">85</td><td><code>execute_script</code></td><td>执行任意 ExtendScript（JSX）</td><td>兜底手段：工具没覆盖的都能自己写</td></tr>
+<tr><td class="n">86</td><td><code>undo</code> / <code>redo</code></td><td>逐步撤销 / 重做</td><td>对应 Ctrl+Z / Ctrl+Shift+Z</td></tr>
+<tr><td class="n">87</td><td><code>get_history</code></td><td>读历史记录栈及当前所处状态</td><td><span class="tag ok">只读</span></td></tr>
+</tbody>
+</table>
+
+<h3>⑫ 状态感知（3）—— AI 的「眼睛」</h3>
+<table>
+<thead><tr><th class="n">#</th><th>工具</th><th>作用</th><th>性</th></tr></thead>
+<tbody>
+<tr><td class="n">88</td><td><code>get_state</code></td><td>轻量快照：活动文档、图层、选区、所有打开的文档</td><td><span class="tag ok">只读</span></td></tr>
+<tr><td class="n">89</td><td><code>get_preview</code></td><td>导出 JPEG 预览图（Base64），<b>用于每步操作后回读确认</b></td><td></td></tr>
+<tr><td class="n">90</td><td><code>get_capabilities</code></td><td>版本相关的功能开关（选择主体 v2、生成式填充是否可用等）</td><td><span class="tag ok">只读</span></td></tr>
+</tbody>
+</table>
+
+<h3>⑬ 配方（17）—— 业务流水线首选</h3>
+<p class="lead">配方 = 多步操作打包，<b>一次调用、一次撤销</b>。做批量活儿时优先用这一组。</p>
+<table>
+<thead><tr><th class="n">#</th><th>配方</th><th>作用</th><th>明显用途</th></tr></thead>
+<tbody>
+<tr><td class="n">91</td><td><code>recipe_csv_to_cards</code></td><td><b>CSV 驱动批量生成卡片</b>（图片版邮件合并）</td><td>工牌 / 会员卡 / 证书 / 邀请函</td></tr>
+<tr><td class="n">92</td><td><code>recipe_batch_mockup_replace</code></td><td>遍历文件夹，逐个替换智能对象内容</td><td>批量样机套图</td></tr>
+<tr><td class="n">93</td><td><code>recipe_batch_watermark</code></td><td>整文件夹批量加水印并导出 JPEG</td><td>交付加水印</td></tr>
+<tr><td class="n">94</td><td><code>recipe_export_social_variants</code></td><td>按平台各出一版（不同尺寸）</td><td>一套稿出全平台</td></tr>
+<tr><td class="n">95</td><td><code>recipe_split_carousel</code></td><td>宽图等分成 N 条竖切片并顺序导出</td><td>小红书 / IG 组图</td></tr>
+<tr><td class="n">96</td><td><code>recipe_prepare_for_web</code></td><td>Web 优化导出：转 sRGB + 降采样 + 锐化</td><td>网站素材</td></tr>
+<tr><td class="n">97</td><td><code>recipe_remove_background</code></td><td>抠图去背（非破坏性）</td><td>电商主图</td></tr>
+<tr><td class="n">98</td><td><code>recipe_passport_photo</code></td><td>证件照：去背 + 换底 + 排版尺寸</td><td>员工证件照</td></tr>
+<tr><td class="n">99</td><td><code>recipe_remove_distraction</code></td><td>去除杂物（AI 优先，内容识别兜底）</td><td>商品图清场</td></tr>
+<tr><td class="n">100</td><td><code>recipe_sticker_outline</code> <span class="tag">新</span></td><td><b>一键贴纸白边</b>：单线描边 + 可选投影，或 die_cut 双线白边</td><td>贴纸 / 表情包 / 手账素材</td></tr>
+<tr><td class="n">101</td><td><code>recipe_apply_color_grade</code></td><td>电影感 / 复古 / 青橙等 6 种预设调色（调整图层组）</td><td>统一色调</td></tr>
+<tr><td class="n">102</td><td><code>recipe_enhance_portrait</code></td><td>人像精修：建频率分离双图层结构</td><td>人像后期</td></tr>
+<tr><td class="n">103</td><td><code>recipe_frequency_separation</code></td><td>建频率分离堆栈（低频 + 高频）</td><td>手动精修底子</td></tr>
+<tr><td class="n">104</td><td><code>recipe_dodge_burn</code></td><td>一键建 50% 灰的减淡加深层</td><td>影调塑形</td></tr>
+<tr><td class="n">105</td><td><code>recipe_gradient_fade</code></td><td>蒙版上涂渐变，让图层融进背景</td><td>合成过渡</td></tr>
+<tr><td class="n">106</td><td><code>recipe_sky_blend</code></td><td>换天空合成：置入天空图 + 蒙版 + 地平线</td><td>风景合成</td></tr>
+<tr><td class="n">107</td><td><code>recipe_organize_layers</code></td><td>整理图层：统一命名规范 + 可选分组</td><td>收稿规范化</td></tr>
+</tbody>
+</table>
+<p class="sub">表里出现到 107，是因为几何变换类我做了合并显示（<code>move_layer_up/down</code> 等成对工具算一行）。实际注册总数仍是 <b>128</b>。</p>
+
+<h2><span class="no">03</span>12 个真实场景：什么时候用它最省事</h2>
+<p class="lead">每条都写了「你原本要怎么做」和「现在可以直接说的话」。</p>
+
+<div class="grid">
+
+<div class="card">
+  <h4>1. 按名单批量出物料</h4>
+  <div class="who">recipe_csv_to_cards</div>
+  <p>工牌、会员卡、证书、邀请函、个性化 banner。做一个带变量绑定的 PSD 模板，其余交给一张 CSV。原来一张张改名字改工号改照片；现在表格填完就出图。</p>
+  <div class="say">用这张 CSV 套工牌模板，出 200 张图到指定文件夹。</div>
+</div>
+
+<div class="card">
+  <h4>2. 批量样机套图</h4>
+  <div class="who">recipe_batch_mockup_replace</div>
+  <p>把同一批设计稿套进多个样机（或把多张稿套进同一个样机）。原来是逐个双击智能对象、换图、存、关；现在是文件夹进、文件夹出。</p>
+  <div class="say">把 out 目录里这批图纸，逐个套进这个样机 PSD，导出全部效果图。</div>
+</div>
+
+<div class="card">
+  <h4>3. 一套稿出全平台尺寸</h4>
+  <div class="who">recipe_export_social_variants / recipe_split_carousel</div>
+  <p>主视觉一次成型，自动出微博 / 小红书 / 朋友圈 / IG 各规格。长图想切成轮播组图，一条指令切完并顺序编号。</p>
+  <div class="say">这张主视觉出一套社媒规格；另外把这张长图切成 6 条竖图，按顺序编号导出。</div>
+</div>
+
+<div class="card">
+  <h4>4. 交付前统一规范</h4>
+  <div class="who">recipe_watermark + recipe_prepare_for_web</div>
+  <p>对外发之前批量压尺寸、转 sRGB、加锐化、盖水印。原来是开动作、跑批处理、还得盯着有没有漏文件。</p>
+  <div class="say">这个文件夹里的图，全部转 sRGB 并压到宽 2000，右下角加这个水印，导出 JPEG。</div>
+</div>
+
+<div class="card">
+  <h4>5. 抠图与证件照</h4>
+  <div class="who">recipe_remove_background / recipe_passport_photo</div>
+  <p>去背是保留可编辑蒙版的非破坏性操作，不是"糊一层"。证件照自动去背 + 换底色 + 裁成标准尺寸。</p>
+  <div class="say">把主体去掉背景，保留蒙版；再出一版白底证件照，一寸和两寸各一份。</div>
+</div>
+
+<div class="card">
+  <h4>6. 复用设计师已经录好的动作</h4>
+  <div class="who">play_action</div>
+  <p>这条被低估。部门里沉淀的 PS 动作（一键描边、批量锐化、招牌式的排版流程）不用翻译成脚本，<b>直接点名播放</b>。等于把老资产接入新工作流。</p>
+  <div class="say">列出动作面板里有哪些动作；对当前图层播放「主图锐化」这个动作。</div>
+</div>
+
+<div class="card">
+  <h4>7. 稿子体检 + 一键整理</h4>
+  <div class="who">get_state + get_layers + recipe_organize_layers</div>
+  <p>接手来源不明的稿子：先读图层树看结构脏不脏（空层、乱命名、混模式），再按规范统一改名分组。比一个个点眼睛图标快得多。</p>
+  <div class="say">读一下这个稿的图层结构，找出空图层和命名不规范的，整理成规范命名并分组。</div>
+</div>
+
+<div class="card">
+  <h4>8. 文案 / 素材改版</h4>
+  <div class="who">update_text_content + replace_smart_object_contents</div>
+  <p>活动已上线、文案要全量替换，或某个素材换新版。文字层替换会保留字体颜色对齐；智能对象替换会保留变换与滤镜。</p>
+  <div class="say">把所有「立即抢购」改成「限时 5 折」，字体颜色别动。</div>
+</div>
+
+<div class="card">
+  <h4>9. 清杂物 / 换天空 / 放大</h4>
+  <div class="who">recipe_remove_distraction / sky_blend / generative_upscale</div>
+  <p>商品图里去掉电线、路人、杂物；风景照换天并做地平线融合；小图生成式放大救急。注意生成式这几条走 Adobe 积分。</p>
+  <div class="say">把这张图里的垃圾桶和电线去掉；然后把天空换成这张，做一下地平线融合。</div>
+</div>
+
+<div class="card">
+  <h4>10. 多张同景合成去人 / 降噪</h4>
+  <div class="who">image_stack</div>
+  <p>旅游照连拍 5 张，把路人用中值堆栈"消掉"；弱光连拍做多帧降噪。<b>纯算法，不花积分。</b></p>
+  <div class="say">这 6 张同一场景的照片，用中值堆栈把路人去掉。</div>
+</div>
+
+<div class="card">
+  <h4>11. 贴纸 / 表情包一键白边</h4>
+  <div class="who">recipe_sticker_outline <span class="tag">v1.7.34 新增</span></div>
+  <p>白边描边 + 可选投影，或 die-cut 双线白边（白边外再套一圈细深线）。原来是叠两层描边图层样式、还得手动调顺序。</p>
+  <div class="say">给这个图层加 die-cut 双线白边，做成贴纸效果。</div>
+</div>
+
+<div class="card">
+  <h4>12. 想做什么但工具没覆盖</h4>
+  <div class="who">execute_script</div>
+  <p>逃生舱。128 个工具里没有的，让 AI 现场写一段 ExtendScript 直接跑；做完配合 <code>get_preview</code> 回读确认。这条也是这个项目本身（Vellum 工具箱）的兜底思路。</p>
+  <div class="say">帮我写一段脚本，把当前文档所有文字图层的字号统一改成 24pt。</div>
+</div>
+
+</div>
+
+<h2><span class="no">04</span>用之前该知道的边界</h2>
+<ul>
+  <li><b>破坏性工具 43 个</b>（删图层、拼合、改像素、替换智能对象、跑脚本、生成式…）。合理做法是统一包一层「预览 → 确认 → 执行」，且<b>永远先对副本动手</b>，别直接动源文件。</li>
+  <li><b>纯只读只有 10 个</b>（<code>get_version</code>、<code>get_document_info</code>、<code>get_layers</code>、<code>list_fonts</code>、<code>get_selection_bounds</code>、<code>get_history</code>、<code>get_state</code>、<code>get_capabilities</code>、<code>list_datasets</code>、<code>list_artboards</code>）。其余多数"轻副作用"（比如切换活动文档/图层），多文档时务必带 <code>document_id</code>，否则会误改别的稿子。</li>
+  <li><b>超时不等于停止</b>。报 <code>extendscript_timeout</code> 时 PS 里的脚本可能还在跑；正确做法是反复 <code>ping</code> 到成功，再用 <code>get_state</code> 恢复现场。</li>
+  <li><b>暂存盘会拖垮它</b>。报 <code>scratch_disk_full</code> 说明 PS 暂存盘快满（默认系统盘），清出空间并重启 PS，不是 MCP 的问题。</li>
+  <li><b>它是社区项目，与 Adobe 无关</b>；默认上报匿名使用统计（可关）。<code>ping</code> 成功后它会请求一次使用反馈，属正常行为，可以拒绝。</li>
+</ul>
+
+<h2><span class="no">05</span>建议的上手顺序</h2>
+<ol>
+  <li><b>先开 Photoshop</b>，然后让我跑一次 <code>ping</code> —— 通过说明链路就通了。</li>
+  <li>拿一张测试图，试两条：<b>「去掉背景，保留蒙版」</b>（验证单步精细操作）、<b>「出一套社媒规格」</b>（验证多步配方）。</li>
+  <li>确认好用后，直接上真正的痛点：<b>第 1 条（CSV 批量出物料）和第 2 条（批量样机）</b>。
+      这两条正好是「PSD 模板批产」的核心，也是这个项目 M2/M3 想做的事 —— 先用手上的 MCP 验证价值，再决定自研做哪一块。</li>
+</ol>
+
+<div class="note">
+  <b>和本项目的分工建议：</b>这个 MCP 适合「一次性、AI 驱动、你盯着」的批量任务；
+  Vellum 工具箱适合「固化下来、给设计部门同事天天点」的常驻能力（不需要开 AI 会话）。
+  两者不冲突：<b>先用 MCP 跑通并沉淀出「正确的操作步骤」，再把这套步骤写成插件功能。</b>
+</div>
+
+<footer>
+  数据来源：本机 MCP 服务 <code>tools/list</code> 实测（v1.7.34，128 工具 / 24 提示词），核对于 2026-10-12。
+  配置：<code>C:\Users\17736\.workbuddy\mcp.json</code> → 服务 <code>photoshop</code>，<code>PHOTOSHOP_PATH</code> 指向 D 盘 PS 2026。
+  姊妹文档：<code>Photoshop-MCP-工具能力清单.md</code>（逐工具详表）。
+</footer>
+
+</div>
+</body>
+</html>
