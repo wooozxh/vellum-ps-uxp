@@ -42,6 +42,8 @@ hello-world/probe-text.flag
 # Vellum 工具箱：verify.flag=跑无痕自检；verify-keep.flag=自检色保留到下一次加载
 vellum-toolbox/verify.flag
 vellum-toolbox/verify-keep.flag
+# 模板探针：autorun.flag=加载即跑一遍 8 项能力探测（会建 8 个临时文档再关掉）
+template-probe/autorun.flag
 
 # ---------- 设计稿 / 测试产物 ----------
 # PSD 这类二进制设计文件（含随手存的测试稿）不入库。文件仍留在本地，只是不进 git。

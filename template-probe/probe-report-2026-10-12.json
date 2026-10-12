@@ -1,0 +1,101 @@
+{
+  "plugin": "com.wooozxh.templateprobe",
+  "version": "1.0.0",
+  "at": "2026-10-12 22:53:29",
+  "trigger": "autorun",
+  "uxp": "uxp-9.0.2-uxp1-e0d9ef0",
+  "dataFolder": "C:\\Users\\17736\\AppData\\Roaming\\Adobe\\UXP\\PluginsStorage\\PHSP\\27\\Developer\\com.wooozxh.templateprobe\\PluginData",
+  "durationMs": 9034,
+  "ok": false,
+  "summary": "7 通过 / 0 失败 / 1 无结论（共 8 项）",
+  "counts": {
+    "pass": 7,
+    "fail": 0,
+    "inconclusive": 1,
+    "total": 8
+  },
+  "cleanup": [
+    "未标题-3 已关闭",
+    "未标题-4 已关闭",
+    "未标题-5 已关闭",
+    "TP-C4-history 已关闭",
+    "TP-C5-A 已关闭",
+    "TP-C5-B 已关闭",
+    "TP-C6-text 已关闭",
+    "TP-C7-overflow 已关闭"
+  ],
+  "results": [
+    {
+      "id": "C1",
+      "name": "presetJSON 基线（不传 guides）+ 体检字段真实形态",
+      "note": "★ 本项是 C2 的对照组 —— 没有它，C2 失败就无法归因",
+      "status": "PASS",
+      "ok": true,
+      "ms": 412,
+      "detail": "传入（不含 guides）：{\"name\":\"TP-C1-presetJSON-baseline\",\"width\":800,\"height\":600,\"units\":\"pixelsUnit\",\"resolution\":300,\"resolutionUnits\":\"inchesUnit\",\"depth\":8,\"scale\":1,\"mode\":\"RGB\",\"fill\":\"white\",\"profile\":\"sRGB IEC61966-2.1\",\"artboards\":[]}\n── 回读 ──\nname              = 未标题-3\nwidth             = 800\nheight            = 600\nresolution        = 300\nmode              = RGBColorMode\nbitsPerChannel    = bitDepth8\ncolorProfileName  = sRGB IEC61966-2.1\ncolorProfileType  = workingSpaceCode\nsaved             = true\nguides.length     = 0\n\n⚠ 附带发现：presetJSON 里的 name 字段**被忽略**（回读为「未标题-3」）。\n   ⇒ 文档命名不能靠 presetJSON，要用 createDocument 的 name 参数另行处理。"
+    },
+    {
+      "id": "C2",
+      "name": "★ presetJSON 是否携带 guides（地基）",
+      "note": "",
+      "status": "PASS",
+      "ok": true,
+      "ms": 152,
+      "detail": "传入 guides：[{\"direction\":\"v\",\"coordinate\":5},{\"direction\":\"v\",\"coordinate\":95},{\"direction\":\"h\",\"coordinate\":10},{\"direction\":\"h\",\"coordinate\":90}]\ndoc.guides 形态：typeof=object / 有 constructor=是 / length=4 / Object.keys()=0 项\ndoc.guides 是否为 null/undefined：false\ndoc.guides.length：4\n── 逐条回读 ──\n  [0] {\"_id\":3840,\"_docId\":28555}\n  [1] {\"_id\":3842,\"_docId\":28555}\n  [2] {\"_id\":3845,\"_docId\":28555}\n  [3] {\"_id\":3849,\"_docId\":28555}\n\n⇒ presetJSON **可以**携带 guides（回读 4 条）—— 建稿时写入出血线这条路成立\n（另注：读数里的 coordinate 是像素还是百分比，看回读值即可判断 —— 传入 5/95/10/90，画布 1000px）"
+    },
+    {
+      "id": "C3",
+      "name": "presetJSON + CMYK 模式（印刷稿模板要用）",
+      "note": "",
+      "status": "PASS",
+      "ok": true,
+      "ms": 166,
+      "detail": "期望 mode 含 CMYK，实读 mode = CMYKColorMode\ncolorProfileName  = Japan Color 2001 Coated\ncolorProfileType  = workingSpaceCode\nwidth × height    = 2480 × 3508\nresolution        = 300"
+    },
+    {
+      "id": "C4",
+      "name": "★ activeHistoryState 可写（「整批撤销」的地基）",
+      "note": "",
+      "status": "PASS",
+      "ok": true,
+      "ms": 564,
+      "detail": "activeHistoryState 形态：{\"_id\":28562,\"_docId\":28561}\n图层数：1 → 2（建层后）→ 1（跳回后）\n⇒ 赋值生效、图层数回落 —— 「批量操作前记标记、不满意一步退回」这条路成立"
+    },
+    {
+      "id": "C5",
+      "name": "duplicateLayers 跨文档复制图层（PSD 模板库要用）",
+      "note": "",
+      "status": "PASS",
+      "ok": true,
+      "ms": 1047,
+      "detail": "A 的图层：[\"TP-SRC-LAYER\",\"背景\"]\nB 的图层（复制前）：[\"背景\"]\nB 的图层（复制后）：[\"TP-SRC-LAYER\",\"背景\"]\nduplicateLayers 返回值：[{\"_id\":2,\"_docId\":28565}]\n⇒ 跨文档复制成功"
+    },
+    {
+      "id": "C6",
+      "name": "文字层字体名的读取路径（字体缺失检测要用）",
+      "note": "",
+      "status": "PASS",
+      "ok": true,
+      "ms": 823,
+      "detail": "── DOM 各路径读数 ──\ntextItem.font = undefined\ntextItem.characterStyle.font = AdobeHeitiStd-Regular\ntextItem.characterStyle.fontPostScriptName = undefined\ntextItem.characterStyle.size = 12\ntextItem.characterStyle.fontStyleName = undefined\ntextItem.paragraphStyle.font = undefined\nlayer.font = undefined\nlayer.kind = text\n── batchPlay 读数 ──\ntextKey = {\"_obj\":\"textLayer\",\"textKey\":\"探针字体 Abc 123\",\"warp\":{\"_obj\":\"warp\",\"warpStyle\":{\"_enum\":\"warpStyle\",\"_value\":\"warpNone\"},\"warpValue\":0,\"warpPerspective\":0,\"warpPerspectiveOther\":0,\"warpRotate\":{\"_enum\":\"orientation\",\"_value\":\"horizontal\"}},\"textClickPoint\":{\"_obj\":\"paint\",\"horizontal\":{\"_unit\":\"percentUnit\",\"_value\":50},\"vertical\":{\"_unit\":\"percentUnit\",\"_value\":50}},\"textGridding\":{\"_enum\":\"textGridding\",\"_value\":\"none\"},\"orientation\":{\"_enum\":\"orientation\",\"_value\":\"horizontal\"},\"antiAlias\":{\"_enum\":\"antiAliasType\",\"_value\":\"antiAliasSharp\"},\"bounds\":{\"_obj\":\"bounds\",\"left\":{\"_unit\":\"pointsU…(截断)\n\n⇒ 可用路径：textItem.characterStyle.font → AdobeHeitiStd-Regular"
+    },
+    {
+      "id": "C7",
+      "name": "文字溢出检测：内容实际范围 vs 文本框范围",
+      "note": "",
+      "status": "INCONCLUSIVE",
+      "ok": false,
+      "ms": 1377,
+      "detail": "── ① 基线：不传任何排版选项 ──\ntextItem.isParagraphText = false\nlayer.bounds             = {\"_left\":200,\"_top\":89,\"_bottom\":102,\"_right\":1452}\n（点文字没有文本框：layer.bounds 就是内容本身的范围，可超出画布）\n\n── ② 试建「段落文字」（逐个候选写法，记录成败）──\n  [0] kind=paragraphText → 建出，isParagraphText=false，bounds={\"_left\":200,\"_top\":89,\"_bottom\":102,\"_right\":1452}\n  [1] kind=paragraphText + width/height → 建出，isParagraphText=false，bounds={\"_left\":200,\"_top\":89,\"_bottom\":102,\"_right\":1452}\n  [2] type=paragraphText + width/height → 建出，isParagraphText=false，bounds={\"_left\":200,\"_top\":89,\"_bottom\":102,\"_right\":1452}\n  [3] paragraphText=true + width/height → 建出，isParagraphText=false，bounds={\"_left\":200,\"_top\":89,\"_bottom\":102,\"_right\":1452}\n\n── ③ 深入读数 ──\n⚠ 注意：② 里四种候选写法建出来的层，isParagraphText **始终是 false** ——\n   也就是说它们仍然是「点文字」，排版选项被静默忽略了。\n   因此下面的读数**不能**当作「文本框 vs 内容」的比对。\n\nisParagraphText = false\nlayer.bounds    = {\"_left\":200,\"_top\":89,\"_bottom\":102,\"_right\":1452}\n（caveat：batchPlay 读的是*活动*图层＝最后建的那个，与本行 layer.bounds 未必同层；\n  本次五个层内容完全相同、读数一致，故暂不影响，但正式实现必须锁定同一层。）\ntextKey 顶层键       = [\"_obj\",\"textKey\",\"warp\",\"textClickPoint\",\"textGridding\",\"orientation\",\"antiAlias\",\"bounds\",\"boundingBox\",\"textShape\",\"textStyleRange\",\"paragraphStyleRange\",\"kerningRange\"]\ntextKey.bounds       = {\"_obj\":\"bounds\",\"left\":{\"_unit\":\"pointsUnit\",\"_value\":0},\"top\":{\"_unit\":\"pointsUnit\",\"_value\":-10.56005859375},\"right\":{\"_unit\":\"pointsUnit\",\"_value\":1260},\"bottom\":{\"_unit\":\"pointsUnit\",\"_value\":3.39605712890625}}\ntextKey.shapeType    = undefined\ntextKey.textGridding = {\"_enum\":\"textGridding\",\"_value\":\"none\"}\n\n画布 = 400 × 200 px\n\n⇒ 结论：**未解决（无结论）**——不能算通过。\n   ① DOM 层四种写法都建不出段落文字（选项被忽略，isParagraphText 恒为 false）\n      ⇒ 「段落文本框」这个对象在 DOM 里根本拿不到，「框 vs 内容」无从比对。\n   ② 两条范围读数确实都能拿到（layer.bounds 像素 / textKey.bounds 点），\n      但它们都是「文字自身范围」的不同表达，**不是**「框 vs 内容」，不能当溢出判据。\n   ③ 这条路要成立，得走 batchPlay 建段落文字，且描述符**必须录制**，不许猜。\n   ④ 第一版探针还犯过一个错：只建了点文字就断言「无结论」，测错了对象 —— 已修正。"
+    },
+    {
+      "id": "C8",
+      "name": "app.fonts 的形态（字体缺失检测要用）",
+      "note": "",
+      "status": "PASS",
+      "ok": true,
+      "ms": 1810,
+      "detail": "app.fonts 存在性：是\napp.fonts 形态：typeof=object / 有 constructor=是 / length=583 / Object.keys()=0 项\napp.fonts.length：583\n已安装字体数量：583\n成功读出名字的字体数：583\n前 8 个：[\"Noto Color Emoji SVG\",\"Segoe UI Emoji\",\"Adobe Heiti Std R\",\"HP Simplified Hans Light\",\"HP Simplified Hans Regular\",\"Microsoft YaHei UI Light\",\"Microsoft YaHei UI\",\"Microsoft YaHei UI Bold\"]\n原始首项形态：{\"_family\":\"Noto Color Emoji SVG\",\"_name\":\"Noto Color Emoji SVG\",\"_postScriptName\":\"NotoColorEmoji-SVG\",\"_style\":\"Regular\",\"_parent\":{\"currentDialogMode\":\"silent\"}}\n在名字列表里命中：[\"Microsoft YaHei\"]\n（这一条就是「字体缺失检测」的实现基础：拿稿里用到的字体名到这份列表里找）"
+    }
+  ]
+}
