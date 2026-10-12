@@ -1430,3 +1430,55 @@
 - 理由：v0.6.0 已经作为"体检"的版本号出现在自检报告里了。继续在 0.6.0 里加功能，
   会让"**0.6.0 到底包含什么**"说不清 —— 而这正是之前"报告写 0.5.0、manifest 写 0.5.2"
   那类漂移的温床。
+
+## 工作区 / 分支约定 + 摘代理推送（2026-10-13，用户主动要求"理清、别乱"）
+
+### ① 两个 worktree 是 **WorkBuddy 的工作方式**，不是项目变乱了
+
+- `D:\ps-uxp-dev` —— **主 worktree**（`.git` 就在这里），checkout `main`；
+  **`node_modules` / `tools\uxp.cmd` / uxp-devtools CLI 只有这边有**。
+- `C:\Users\17736\WorkBuddy\Worktrees\ps-uxp-dev\main-589e7e48` —— WorkBuddy 会话工作区，
+  挂分支 `workbuddy/main-589e7e48`。**改代码都在这一侧。**
+- 实测：只有**这一个**工作区，**没有残留的 worktree / 多余分支**（不是"积累起来的乱"）。
+
+### ② `workbuddy/main-589e7e48` 是**被 Git 规则逼出来的**，不是"新建了分支"
+
+- Git 硬规则：**同一个分支不能同时在两个 worktree 里被 checkout**。
+  `main` 已被 `D:\ps-uxp-dev` 占着 ⇒ 当前工作区**只能挂别的分支名**。
+- ⇒ 它的定位是「**main 的镜像**」，**不是一条独立开发线**。两分支在任何时刻都应指向同一提交。
+- 已把两个本地分支的 upstream 都设为 `origin/main` —— 这样 `git status` 直接显示
+  与 main 的关系，不再出现"这条分支没人跟"的困惑。
+
+### ③ **收工三步**（保证"GitHub 上永远只有 main"）
+
+1. 在当前工作区提交；
+2. `git -C D:/ps-uxp-dev merge --ff-only workbuddy/main-589e7e48`
+   （同基点快进，**不产生 merge commit**）；
+3. `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY git push origin main`；
+4. **用 `git ls-remote origin main` 独立确认**结果。
+
+> 本次实测落地：远程从 `dd9aafb` → `0c83bab`，**50 个积压提交一次性推上去**，
+> 远程 `refs/heads/` 下**只有 main**（`git ls-remote --heads origin` 实测）。
+
+### ④ 推送：**必须摘代理**（这是最容易误判的一条）
+
+- 本机 `github.com:443` 会被**间歇性 SNI 拦截**；而环境里默认带着
+  `http_proxy/https_proxy = http://127.0.0.1:4112`。
+- **带代理时 `git push` 不是报错，而是挂住到超时** —— 极容易误判成"网络坏了/仓库有问题"。
+  本次第一次 push 就是这么超时的（180s SIGTERM）。
+- ✅ 可行命令：`env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY git push origin main`
+  （摘掉后一次通过）。
+- 兜底：`python tools/push_via_api.py`（走 `api.github.com`，通常仍可达）。
+- ⚠️ **`git push` 的输出不可信**（README 已记：可能无输出但实际成功，也可能反过来）
+  ⇒ **一律用 `git ls-remote origin main` 独立确认**，别只看命令输出。
+
+### ⑤ 分支纪律（用户 2026-10-13 亲述）
+
+> "我在该加分支的时候我会告诉你，让你在 GitHub 上再新开一个分支，然后拉到本地。"
+
+- ⇒ **不要自行建分支、不要改工作流。** 需要新分支时**等用户说**。
+- 平时所有工作都在 `main` 这条线上推进。
+
+### ⑥ Git 身份
+
+- `wooozxh <76898022+wooozxh@users.noreply.github.com>` —— 用 **noreply** 邮箱，别改用真实邮箱。
