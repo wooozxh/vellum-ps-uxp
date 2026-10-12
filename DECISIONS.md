@@ -1433,32 +1433,32 @@
 
 ## 工作区 / 分支约定 + 摘代理推送（2026-10-13，用户主动要求"理清、别乱"）
 
-### ① 两个 worktree 是 **WorkBuddy 的工作方式**，不是项目变乱了
+### ① 单 worktree —— **已弃用** WorkBuddy worktree 模式（2026-10-13 收尾）
 
-- `D:\ps-uxp-dev` —— **主 worktree**（`.git` 就在这里），checkout `main`；
-  **`node_modules` / `tools\uxp.cmd` / uxp-devtools CLI 只有这边有**。
-- `C:\Users\17736\WorkBuddy\Worktrees\ps-uxp-dev\main-589e7e48` —— WorkBuddy 会话工作区，
-  挂分支 `workbuddy/main-589e7e48`。**改代码都在这一侧。**
-- 实测：只有**这一个**工作区，**没有残留的 worktree / 多余分支**（不是"积累起来的乱"）。
+- 现状：**只有 `D:\ps-uxp-dev` 这一个 worktree**，checkout `main`，
+  **会话直接跑在 `D:\ps-uxp-dev`**；`node_modules` / `tools\uxp.cmd` / uxp-devtools CLI 都在这里。
+- 依据：新建任务界面的 `Worktree` 复选框是**可选开关**，官方提示原文
+  「启用后…为任务创建独立工作区，**避免直接修改原工作目录中的文件**」⇒ **不勾即直接改原目录**。
+- 收尾动作（2026-10-13 已完成）：
+  `git worktree remove C:\Users\17736\WorkBuddy\Worktrees\ps-uxp-dev\main-589e7e48`
+  → `git branch -d workbuddy/main-589e7e48`（当时两分支同在 `047178c`＝已合并，`-d` 安全放行）。
+  复核：`git worktree list` 只剩 D 盘，`git branch -vv` 只剩 `main`。
+- ⇒ **不再有第二工作区、不再有镜像分支要 merge。**
 
-### ② `workbuddy/main-589e7e48` 是**被 Git 规则逼出来的**，不是"新建了分支"
+### ② （历史成因，留档）第二分支是**被 Git 规则逼出来的**，不是"新建了分支"
 
-- Git 硬规则：**同一个分支不能同时在两个 worktree 里被 checkout**。
-  `main` 已被 `D:\ps-uxp-dev` 占着 ⇒ 当前工作区**只能挂别的分支名**。
-- ⇒ 它的定位是「**main 的镜像**」，**不是一条独立开发线**。两分支在任何时刻都应指向同一提交。
-- 已把两个本地分支的 upstream 都设为 `origin/main` —— 这样 `git status` 直接显示
-  与 main 的关系，不再出现"这条分支没人跟"的困惑。
+- Git 硬规则：**同一个分支不能同时在两个 worktree 里被 checkout**；`main` 已被 `D:\ps-uxp-dev` 占着
+  ⇒ WorkBuddy 会话工作区只能挂别的分支名，定位是「**main 的镜像**」而非独立开发线。该分支**已删除**。
 
-### ③ **收工三步**（保证"GitHub 上永远只有 main"）
+### ③ **收工两步**（保证"GitHub 上永远只有 main"）
 
-1. 在当前工作区提交；
-2. `git -C D:/ps-uxp-dev merge --ff-only workbuddy/main-589e7e48`
-   （同基点快进，**不产生 merge commit**）；
-3. `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY git push origin main`；
-4. **用 `git ls-remote origin main` 独立确认**结果。
+1. 提交（就在 `D:\ps-uxp-dev` 的 `main` 上）；
+2. `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY git push origin main`
+   **+ 用 `git ls-remote origin main` 独立确认**结果。
 
-> 本次实测落地：远程从 `dd9aafb` → `0c83bab`，**50 个积压提交一次性推上去**，
-> 远程 `refs/heads/` 下**只有 main**（`git ls-remote --heads origin` 实测）。
+> 2026-10-13 修订：原"三步"里的第 2 步（`git -C D:/ps-uxp-dev merge --ff-only workbuddy/…`）
+> **随 worktree 模式一并取消**。早前那次的实测落地（远程 `dd9aafb` → `0c83bab`、50 个积压提交、
+> 远程 `refs/heads/` 只有 main）保留为**当时的 merge+push 存档**。
 
 ### ④ 推送：**必须摘代理**（这是最容易误判的一条）
 
