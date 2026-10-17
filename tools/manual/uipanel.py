@@ -109,8 +109,24 @@ def click(pid, size, x, y, n=1, wait=0.45, hwnd=None):
         print("找不到窗口 size=%s" % size)
         return 1
     hwnd, wx, wy, w, h = hit
+    """
+    🔴 **置前必须确认真的成功了**（2026-10-18 踩）：`SetForegroundWindow` 在 Windows 上
+    经常被静默拒绝（返回 0）。UXP 面板窗口的 rect 是 (0,0)，一旦没置前，`SetCursorPos`
+    点的是**屏幕左上角那个窗口**，于是一连串点击全都"点了但没反应"，
+    而脚本还打印 OK —— 极难查。
+    兜底：先发一下 Alt（系统会认为用户在操作，允许抢焦点），再 SetForegroundWindow，
+    最后 `GetForegroundWindow()` 确认；没抢到就打印警告（宁可吵，也别静默点空）。
+    """
+    user32.keybd_event(0x12, 0, 0, 0)      # Alt down
     user32.SetForegroundWindow(hwnd)
+    user32.keybd_event(0x12, 0, 2, 0)      # Alt up
     time.sleep(0.25)
+    if user32.GetForegroundWindow() != hwnd:
+        user32.BringWindowToTop(hwnd)
+        user32.SetActiveWindow(hwnd)
+        time.sleep(0.2)
+    if user32.GetForegroundWindow() != hwnd:
+        print("⚠️ 置前失败（ForegroundWindow 不是目标窗口），这次点击可能落到别的窗口上")
     for _ in range(max(1, n)):
         user32.SetCursorPos(wx + x, wy + y)
         time.sleep(0.1)

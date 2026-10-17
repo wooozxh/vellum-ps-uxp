@@ -54,7 +54,7 @@ D:/software/adobe/Adobe Photoshop 2026/）。
   ① 管理员开关写在 `C:\Program Files\Common Files\Adobe\UXP\Developer\settings.json`
   ② PS 开发者模式已开（PS 主动连 devtools 端口 14001）
   判据：`netstat -ano | grep 14001` 里有一条来自 **Photoshop PID** 的 ESTABLISHED 连接。
-- **★ 最近进展（2026-10-17）**：插件 **v0.9.23**。
+- **★ 最近进展（2026-10-18）**：插件 **v0.9.37 已发布**（Release + `.ccx` 已发同事，代码在 `9ae4549`）。
   **M1 / M2 / M3a / M3b 均已完成并自证；M5 第 1–4 步已完成并自证。**
   第 4 步「导出审核版 + 成品图」做完后又**连改三轮**（都在同一天）：
   - **v0.9.0 参数条改版** —— 按图片底部深浅切黑白主题 / 参数一律「｜」分隔 /
@@ -105,13 +105,13 @@ D:/software/adobe/Adobe Photoshop 2026/）。
     ⚠️ 仍欠：打开的是 `incoming.psd` 副本 ⇒ 用户 Ctrl+S 会存回插件缓存目录（现只在状态行提示）。
     要不要自动另存到工作区（需写盘权限）**等你拍板**。
   - **⑥ PSD 模板部件插入** —— 归素材库（把模板里的一个部件插进当前稿），**与⑤不是一回事**，暂缓。
-- **自证基线**：真机自检 **80/81**（唯一 FAIL = 既有的 **S17**）；
-  离线回归 **109/109**；自检编号 **max = S76**（加项前先数一遍，下一个可用 **S77**）。
+- **自证基线**：真机自检 **81/82**（唯一 FAIL = 既有的 **S17**）；
+  离线回归 **109/109**；自检编号 **max = S77**（加项前先数一遍，下一个可用 **S78**）。
 - 🔴 **UXP 不支持 CSS Grid**（v0.9.23 真机踩到）：`display:grid` 下高度全算 0、**不报错**。
   两列一律 flex + 百分比宽度；判据要**量可见高度**，别只数节点个数。
-- **⏳ 欠着的事**：**未提交 / 未推送**（累计 v0.9.6–v0.9.10 四个版本）；**未打包 `.ccx`**
-  —— 软件侧"放开多层让同事用"就卡在这一步。
-- 🔴 **一批改动「已改完但还没提交、没推送」**（你明确"先不推"）：
+- ✅ **欠着的事已清（2026-10-18）**：已提交（`d729477` + `9ae4549`）、已推送、已打包
+  `dist/com.vellum.toolbox_PS.ccx`、已发 Release、手册与更新说明已发到用户企业微信。
+- ✅ **（已解决）曾有一批改动没提交**（当时用户明确"先不推"），2026-10-18 已全部提交推送：
   - **改**：`DECISIONS.md` / `NEXT.md` / `PROGRESS.md` / `tools/offline-smoke.cjs`；
     `vellum-toolbox/` 下 `index.html` / `index.js` / `manifest.json` /
     `lib/{inspect,ps,selfcheck}.js` / `tools/index.js`
@@ -273,3 +273,11 @@ git ls-remote origin main     # ★ 唯一的可信确认（push 的输出可能
 | **报告在 C 盘、项目在 D 盘是正常的** | Adobe 硬编码在 `%APPDATA%\Adobe\UXP\PluginsStorage\PHSP\<ver>\`。`report.mjs` 按 `%APPDATA%` 递归搜 |
 | **PS 是离线安装包装的（非 CC）** | 若「CLI 加载成功但 PS 里看不到插件」，优先怀疑这一点 |
 | **`gh` 没装** | 建仓库 / 发 Release 走 GCM 凭据 + REST API。**GitHub 连接器只能读**，其令牌**没有建仓库权限**（403） |
+
+- ✅ **2026-10-18 已发布 v0.9.37**：
+  · 代码 commit `d729477`（v0.7.0 → v0.9.37 全部功能）+ `9ae4549`（手册）
+  · Release：https://github.com/wooozxh/vellum-ps-uxp/releases/tag/v0.9.37
+  · 安装包 `dist/com.vellum.toolbox_PS.ccx`（619KB）
+  · 主手册 `docs/manual/`（8 个工具，6 张新截图）+ 更新说明 `docs/update/v0.9.37-更新说明.html`
+  · 已通过企业微信发到用户（3 个文件）
+  · ⏳ **等用户肉眼确认**：按规范建稿的 4 条参考线位置对不对（真机读不到坐标）

@@ -220,8 +220,8 @@ HTML = """<!DOCTYPE html>
           目录区最多占 96px。因为面包屑只占<b>一行</b>，不像以前那样每多一层就多一行。
           这也是为什么敢放开到 5 层。</div>
       </div>
-      <figure><img src="__IMG_LIB__" alt="素材库：目录行 + 瀑布流">
-        <figcaption>素材库：上面是目录行，中间瀑布流滚动</figcaption></figure>
+      <figure><img src="__IMG_BC__" alt="素材库：面包屑下钻">
+        <figcaption>钻进「公司素材」以后：上面多了面包屑，下面是子目录行</figcaption></figure>
     </div>
   </div>
 
@@ -328,6 +328,7 @@ def main():
         ("__IMG_HOME__", "01-首页.png"),
         ("__IMG_SEL__", "05-素材库-选中详情.png"),
         ("__IMG_LIB__", "04-素材库-通用库.png"),
+        ("__IMG_BC__", "04b-素材库-面包屑.png"),
         ("__IMG_TPL__", "13-新建稿-从模板.png"),
         ("__IMG_INS__", "11-出图体检.png"),
         ("__IMG_EXP__", "12-导出审核.png"),
