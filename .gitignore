@@ -62,3 +62,9 @@ docs/manual/*单文件*.html
 # 其余 preview/*.png|html 是**正式设计稿**（docs 里有引用），要入库。
 preview/live/
 preview/live-now.png
+# preview 里下划线开头的是随手截的中间态/临时图，不入库；
+# 例外：_t1~_t3 是「真实缩略图副本」，设计稿 HTML 里引用了它们，要留。
+preview/_*
+!preview/_t1.png
+!preview/_t2.png
+!preview/_t3.png

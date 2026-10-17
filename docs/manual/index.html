@@ -17,7 +17,7 @@
     </a>
     <nav class="topnav">
       <a href="#ch1">装它</a>
-      <a href="#ch2">四个工具</a>
+      <a href="#ch2">八个工具</a>
       <a href="#ch3">与工作台配合</a>
       <a href="#ch4">出问题怎么办</a>
       <a href="#ch5">速查</a>
@@ -63,7 +63,7 @@
       <p>这份手册写给<b>第一次装这个插件的人</b>。整本只有五章，从头读一遍二十分钟；也可以按下面三种急事直接跳。</p>
       <div class="grid3" style="margin-top:14px">
         <div class="mini"><div class="t">我要把它装上</div><div class="d">直接看 <a href="#s1-3">1.3 安装</a>。装完回来看 <a href="#s1-5">1.5 第一次打开</a>。</div></div>
-        <div class="mini"><div class="t">我想知道它能干嘛</div><div class="d">看 <a href="#ch2">第二部分</a>，四个工具一页一个，都配了截图。</div></div>
+        <div class="mini"><div class="t">我想知道它能干嘛</div><div class="d">看 <a href="#ch2">第二部分</a>，八个工具一页一个，都配了截图。</div></div>
         <div class="mini"><div class="t">它不干活 / 报错</div><div class="d">先看 <a href="#s4-1">4.1 常见问题</a>，九成的问题在那里。</div></div>
       </div>
 
@@ -93,14 +93,17 @@
         <a href="#s1-5"><b>1.5</b>第一次打开该看到什么</a>
         <a href="#s1-6"><b>1.6</b>更新 / 卸载 / 换电脑</a>
 
-        <div class="grp">第二部分 · 四个工具</div>
-        <a href="#s2-1"><b>2.1</b>首页：四个入口</a>
+        <div class="grp">第二部分 · 八个工具</div>
+        <a href="#s2-1"><b>2.1</b>首页：八个入口</a>
         <a href="#s2-2"><b>2.2</b>调色板：品牌色与我存的颜色</a>
         <a href="#s2-3"><b>2.3</b>素材库：素材从哪来、怎么翻</a>
         <a href="#s2-4"><b>2.4</b>素材库：选中一张，放进画布</a>
         <a href="#s2-5"><b>2.5</b>表格生成：CSV 变成图层</a>
         <a href="#s2-6"><b>2.6</b>按行批量出稿：一张表套一个版式</a>
-        <a href="#s2-7"><b>2.7</b>AI-MCP：还没开放</a>
+        <a href="#s2-7"><b>2.7</b>出图体检：出图前先看清参数</a>
+        <a href="#s2-8"><b>2.8</b>导出审核版：带参数条、改完自动还原</a>
+        <a href="#s2-9"><b>2.9</b>新建稿：从模板开，或按规范开</a>
+        <a href="#s2-10"><b>2.10</b>AI-MCP：还没开放</a>
 
         <div class="grp">第三部分 · 它和工作台怎么配合</div>
         <a href="#s3-1"><b>3.1</b>数据是怎么过去的</a>
@@ -220,12 +223,12 @@
       <h2><span class="n">1.5</span>第一次打开该看到什么</h2>
       <div class="figside">
         <div>
-          <p>打开面板，第一屏是<b>功能选择页</b>：上面是插件名与版本，中间四行工具，最下面是「环境」——把当前 Photoshop 版本、UXP 版本、插件版本如实列出来，方便报错时截图。</p>
+          <p>打开面板，第一屏是<b>功能选择页</b>：上面是插件名与版本，中间七行入口，最下面是「环境」——把当前 Photoshop 版本、UXP 版本、插件版本如实列出来，方便报错时截图。</p>
           <p>点任意一行进入该工具，工具页<b>左上角有一个返回箭头</b>，点它回到这一页。页面底部那条<b>状态栏</b>是全局的：它会把最近一次操作的结果（成功 / 失败原因）如实写在左下角。</p>
-          <div class="call ok"><span class="h">看到「④ AI-MCP」是灰的，是正常的</span>它确实还没做（见 <a href="#s2-7">2.7</a>）。其余三行都能点。</div>
+          <div class="call ok"><span class="h">看到最后一行「⑦ AI-MCP」是灰的，是正常的</span>它确实还没做（见 <a href="#s2-10">2.10</a>）。其余六行都能点。</div>
         </div>
         <figure><img src="images/01-首页.png" alt="插件首页（功能选择页）" />
-          <figcaption>图 1-1　首页：四行工具（① 调色板 / ② 素材库 / ③ 表格生成 / ④ AI-MCP），下方是环境信息</figcaption></figure>
+          <figcaption>图 1-1　首页：七行入口（① 调色板 / ② 素材库 / ③ 表格生成 / ④ 出图体检 / ⑤ 导出审核版 / ⑥ 新建稿 / ⑦ AI-MCP），下方是环境信息</figcaption></figure>
       </div>
     </section>
 
@@ -248,20 +251,24 @@
     <!-- ============================================================ -->
     <div class="chapterhead" id="ch2">
       <div class="kick">PART TWO</div>
-      <h2 class="ct">四个工具</h2>
+      <h2 class="ct">八个工具</h2>
       <p>一页一个。每个工具都先说"它解决什么"，再逐块说明界面，最后给出边界（哪些它不做）。</p>
+      <p class="dim">目前只有 <b>AI-MCP</b> 还是灰的（没做）；其余七个都能用。</p>
     </div>
 
     <section id="s2-1">
-      <h2><span class="n">2.1</span>首页：四个入口</h2>
-      <p>首页就是那四行。每行左边是图标与一句话说明，右边是<b>号位</b>（↑1 ~ ↑4）和箭头。号位是固定的，报错时说"第 3 行"大家都懂。</p>
+      <h2><span class="n">2.1</span>首页：八个入口</h2>
+      <p>首页是一竖排入口。每行左边是图标与一句话说明，右边是<b>号位</b>（↑1 ~ ↑7）和箭头。号位是固定的，报错时说"第 5 行"大家都懂。</p>
       <table>
         <thead><tr><th style="width:150px">行</th><th>副标题</th><th>要什么前提</th></tr></thead>
         <tbody>
           <tr><td>① 调色板</td><td>品牌色与我保存的颜色</td><td>无。打开就能用</td></tr>
           <tr><td>② 素材库</td><td>任务库与通用库，一点置入</td><td>需要「Vellum工作台」同步过素材</td></tr>
           <tr><td>③ 表格生成</td><td>表格绑定图层、批量出稿</td><td>无。有一个 CSV 就行</td></tr>
-          <tr><td>④ AI-MCP</td><td>把面板能力开放给 AI 客户端</td><td><b>尚未开放</b></td></tr>
+          <tr><td>④ 出图体检</td><td>出图前先看清参数</td><td>无。打开一张稿就能体检（<a href="#s2-7">2.7</a>）</td></tr>
+          <tr><td>⑤ 导出审核版</td><td>带参数条导出 · 改完自动还原</td><td>无。打开一张稿就能导（<a href="#s2-8">2.8</a>）</td></tr>
+          <tr><td>⑥ 新建稿</td><td>从 PSD 模板建稿（参考线已打好）</td><td>模板那半边需要工作台收录了模板（<a href="#s2-9">2.9</a>）</td></tr>
+          <tr><td>⑦ AI-MCP</td><td>把面板能力开放给 AI 客户端</td><td><b>尚未开放</b></td></tr>
         </tbody>
       </table>
     </section>
@@ -298,7 +305,7 @@
         <thead><tr><th style="width:150px">库</th><th>装什么</th></tr></thead>
         <tbody>
           <tr><td><b>任务库</b></td><td>挂在某个任务下面的素材。按<b>项目 → 任务</b>分组，可以按项目筛</td></tr>
-          <tr><td><b>通用库</b></td><td>不属于任何任务的常备素材（logo、字体、模板）。两层分组：<b>公司素材</b> / <b>个人收藏</b></td></tr>
+          <tr><td><b>通用库</b></td><td>不属于任何任务的常备素材（logo、字体、模板）。顶层是 <b>公司素材</b> / <b>个人收藏</b>，往下还能继续分层（最多 5 层）</td></tr>
         </tbody>
       </table>
       <div class="figside">
@@ -306,11 +313,14 @@
           <h3>怎么翻</h3>
           <ul>
             <li><b>切库</b>：点顶部 <span class="btnchip">任务库</span> / <span class="btnchip">通用库</span> 页签，右边的数字是该库的素材总数。</li>
-            <li><b>筛分组</b>：页签下面那排按钮 / 下拉——任务库按<b>项目</b>筛，通用库按<b>分组</b>筛。</li>
+            <li><b>进目录</b>：页签下面那一列就是目录（<b>📁 名字 …… N 项</b>）。点任意一行<b>往下钻一层</b>，网格里就只剩这个目录的素材。</li>
+            <li><b>回上层</b>：钻进目录后，它上方会出现<b>面包屑</b>（如 <code>通用库 › 公司素材</code>），点任意一段直接跳回那一层 —— 不用一层层退。</li>
             <li><b>看大图</b>：缩略图是<b>瀑布流</b>（保持原图比例，不裁切），所以长图和方图会混在一列里，高度不齐是正常的。</li>
             <li><b>手动刷新</b>：右上角 <span class="btnchip">刷新</span>。平时不用点，它自己会刷（见 <a href="#s3-3">3.3</a>）。</li>
           </ul>
-          <p>面板最下面那条会写着现在看的是哪个库、多少张、来自哪个项目 —— 排查时先看它。</p>
+          <p>面板底部那条会写着现在看的是哪个库、多少张、筛的哪一层 —— 排查时先看它。</p>
+          <div class="call info"><span class="h">目录最多 5 层，超了会折叠</span>目录层级由「Vellum工作台」那边决定。如果某一层子目录超过 3 个，剩下的会收成一行「还有 N 个」，点开才显示 —— 免得一进目录全是文件夹、看不到素材。</div>
+          <div class="call ok"><span class="h">三段式：上面的目录、下面的置入条都不动</span>只有中间那块网格在滚。所以素材再多，目录和「置入」也一直在原处，不用滑回顶部或滑到底部去找。<b>根目录下看到的样子和旧版一样</b>，只有真的往下钻了才会多出一行面包屑。</div>
         </div>
         <figure><img src="images/03-素材库-任务库.png" alt="素材库 - 任务库" />
           <figcaption>图 2-2　任务库：顶部是库页签与项目筛选，下面是素材瀑布流；没选中素材时中间那行会提示"在下面选一张素材"</figcaption></figure>
@@ -322,29 +332,29 @@
 
     <section id="s2-4">
       <h2><span class="n">2.4</span>素材库：选中一张，放进画布</h2>
-      <p>点一张缩略图选中它，上方会出现详情区，从右到左是三件事：<b>这张图是什么</b> → <b>放哪儿</b> → <b>放进去</b>。</p>
+      <p>点一张缩略图选中它，<b>面板最底下</b>会出现一条详情，只有两行：左边是<b>这张图是什么</b>，右边是<span class="btnchip">置入</span>。</p>
       <table>
         <thead><tr><th style="width:170px">你会看到</th><th>含义</th></tr></thead>
         <tbody>
-          <tr><td>文件名 / 尺寸 / 来源</td><td>来源是「公司」还是「我的」，以及它在库里的分组位置</td></tr>
-          <tr><td>完整路径</td><td>磁盘上的真实位置，方便你去资源管理器里找</td></tr>
-          <tr><td><b>落点九宫格</b></td><td>决定图落在画布的哪个位置：九个格子＝左上 / 上中 / 右上 / 左中 / 居中 / 右中 / 左下 / 下中 / 右下。<b>默认居中</b></td></tr>
-          <tr><td><span class="btnchip">置入到画布</span></td><td>真的把图放进去。<b>放的是副本，原文件不动</b></td></tr>
+          <tr><td>文件名（第一行）</td><td>名字太长会自己省略；<b>鼠标停上去</b>能看到完整文件名、磁盘路径、标签</td></tr>
+          <tr><td>尺寸 · 大小 · 角色 · 来源（第二行）</td><td>来源是「公司」还是「我的」，后面跟着它在库里的目录位置</td></tr>
+          <tr><td><span class="btnchip">置入</span></td><td>真的把图放进去。<b>放的是副本，原文件不动</b></td></tr>
         </tbody>
       </table>
       <div class="figside">
         <div>
-          <h3>落点是怎么算的</h3>
+          <h3>放进去落在哪</h3>
           <ul>
-            <li><b>画布上有选区</b>：以<b>选区中心</b>为基准，九宫格是相对这个基准的位移。</li>
-            <li><b>画布上没有选区</b>：以<b>画布中心</b>为基准。</li>
-            <li>「居中」＝ 不动，就落在基准点上。</li>
+            <li><b>画布上有选区</b>：落在<b>选区中心</b>。</li>
+            <li><b>画布上没有选区</b>：落在<b>画布中心</b>。</li>
           </ul>
+          <div class="call info"><span class="h">落点九宫格已经去掉了</span>以前选中素材会出现一个 3×3 的落点格子（左上 / 居中 / 右下……）。同事反馈几乎没人用，这一版<b>删掉了</b>，固定按上面两条规则落。要挪位置，置入后拖一下就行。</div>
           <div class="call warn"><span class="h">置入会把当前选区吃掉</span>这是 Photoshop 的行为，不是插件的。所以"框哪儿放哪儿"的正确用法是：<b>每次放图之前重新框一次选区</b>。</div>
         </div>
         <figure><img src="images/05-素材库-选中详情.png" alt="选中一张素材后的详情" />
-          <figcaption>图 2-4　选中一张后：上方出现文件名、尺寸、来源与路径，右侧是落点九宫格</figcaption></figure>
+          <figcaption>图 2-4　选中一张后，<b>面板底部</b>出现文件名、尺寸来源与「置入」；上面那片网格照旧滚</figcaption></figure>
       </div>
+      <div class="call ok"><span class="h">详情为什么在底部</span>放在底部以后它<b>不会跟着网格滚走</b>。以前在顶部时，素材一多就要滚回上面才能按「置入」；现在无论翻到哪，它就守在面板最下面那一条。</div>
       <div class="call warn"><span class="h">置入的图，大小可能和你以为的不一样</span>PS 是<b>按物理尺寸</b>放图的：一张 300ppi 的图放进 72ppi 的画布，会按英寸换算，看起来"缩小"了。插件会按素材的像素尺寸尽量校正回原大小；但 <b>PSD / PDF 这类拿不到像素尺寸的素材不校正</b>，会保持 PS 给的样子 —— 手动缩放一下即可。</div>
       <div class="call info"><span class="h">图层的名字会变成素材名</span>置入后图层名取自素材名（去掉扩展名）；同名时自动加 <code>(2)</code>、<code>(3)</code>。智能对象内部记录的原始文件名改不了，那不在图层面板里显示。</div>
     </section>
@@ -426,8 +436,95 @@
     </section>
 
     <section id="s2-7">
-      <h2><span class="n">2.7</span>AI-MCP：还没开放</h2>
-      <p>首页第 ④ 行「AI-MCP · 把面板能力开放给 AI 客户端」现在是<b>灰的</b>：规划中，尚未排期。点它会提示"还没上"。</p>
+      <h2><span class="n">2.7</span>出图体检：出图前先看清参数</h2>
+      <p>解决的是"发出去才发现是 RGB / 分辨率不够 / 字没转曲"。打开一张稿，点首页第 ④ 行，它会把这页稿的 12 项参数挨个查一遍，<b>只读，不改图、不删层、不进历史</b>。</p>
+      <div class="figside">
+        <div>
+          <h3>三档结论</h3>
+          <table>
+            <thead><tr><th style="width:74px">标记</th><th>意思</th></tr></thead>
+            <tbody>
+              <tr><td><b>合格</b></td><td>这一项没问题（颜色偏绿）</td></tr>
+              <tr><td><b>提醒</b></td><td>能发，但<b>可能会被印刷厂打回来</b>。比如 RGB 稿、150dpi、文字没转曲</td></tr>
+              <tr><td><b>无结论</b></td><td>PS 没提供足够信息，插件不下判断 —— <b>不会假装合格</b></td></tr>
+            </tbody>
+          </table>
+          <h3>查哪些</h3>
+          <p>色彩模式、分辨率、像素尺寸、物理尺寸、位深、颜色配置文件、文字图层是否转曲、字体是否都在本机、隐藏图层数、元素是否超出画布、出血、文档名与"有无未保存改动"。</p>
+        </div>
+        <figure class="shot"><img src="images/11-出图体检.png" alt="出图体检页" />
+          <figcaption>图 2-5　出图体检：每项一行，左侧标「信息 / 提醒 / 合格 / 无结论」，右侧是读数与判断理由</figcaption></figure>
+      </div>
+      <div class="call warn"><span class="h">它能查什么、不能查什么</span>能查的：<b>参数层面的问题</b>（模式、分辨率、转曲、超出画布）。<br>不能查的：<b>视觉层面的问题</b>（好不好看、有没有错字、层级对不对）。<br>另外两项只给"疑似"：<b>字体</b>只能判断"在不在本机"，判断不了"选得对不对"；<b>出血</b>只能读到"有几条参考线"，读不到参考线的坐标（这是 PS 接口的限制）。</div>
+      <div class="call info"><span class="h">底部那行是"回执"</span>体检完滚动到最底下，那行会写「体检完成（12 项）：N 项提醒」。<b>0 项提醒</b>不等于一定能发，只等于"参数这一层没挑出问题"。</div>
+    </section>
+
+    <section id="s2-8">
+      <h2><span class="n">2.8</span>导出审核版：带参数条、改完自动还原</h2>
+      <p>发给客户 / 领导看版时，最常被问的三件事：<b>这是几比几的</b>、<b>多少 dpi</b>、<b>有没有出血</b>。这个工具把答案直接<b>印在图的底部</b>，导出一张带参数条的审核图。</p>
+      <div class="figside">
+        <div>
+          <h3>界面只有三块</h3>
+          <table>
+            <thead><tr><th style="width:120px">区块</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><b>出血</b></td><td>三个按钮：<b>无出血 / 有出血 / 不确定</b>。<b>不确定</b>会照实写进参数条，不瞎猜</td></tr>
+              <tr><td><b>出血量</b></td><td>选「有出血」后才能改，默认 3mm</td></tr>
+              <tr><td><b>参数条预览</b></td><td>这里显示的就是导出去的样子，<b>配色 = 导出时的真实主题</b>（深图用深条、浅图用浅条）</td></tr>
+            </tbody>
+          </table>
+          <h3>参数条上有什么</h3>
+          <p>文件名 ｜ 导出时间 ｜ 色彩模式 / 位深 / dpi / 像素尺寸 ｜ 物理尺寸 ｜ 出血判定 ｜ 颜色配置文件 ｜ 文字是否转曲 ｜ 素材来源 ｜ 右上角<b>「审核用 · 非成品」</b>角标。</p>
+        </div>
+        <figure class="shot"><img src="images/12-导出审核.png" alt="导出审核版页" />
+          <figcaption>图 2-6　导出审核版：上面是这张稿的体检结论，中间选出血，下面是参数条的实样预览</figcaption></figure>
+      </div>
+      <div class="call ok"><span class="h">原稿一个像素都不动</span>所有加条、缩放、转色彩模式的操作都打在<b>副本</b>上，导完立刻把副本关掉（不保存），然后切回你的原稿。所以导多少次都不会污染原稿 —— 也能解释为什么导完看历史记录是空的。</div>
+      <div class="call info"><span class="h">大稿会自动缩，并且把比例印出来</span>长边超过 4000px 的稿会等比缩小后再导（否则看版的人打不开）。<b>缩放比例会印在参数条上</b>，避免有人以为看到的是 100%。成品图那条不缩、也不带参数条。</div>
+      <div class="call warn"><span class="h">CMYK 稿会被转成 RGB 再导（只在副本上）</span>PS 本身不支持把 CMYK 稿存成 PNG，所以导出前会先<b>在副本上</b>转成 RGB。原稿仍是 CMYK，不受影响。<b>要交给印刷厂的文件请从原稿另存，不要用审核图。</b></div>
+    </section>
+
+    <section id="s2-9">
+      <h2><span class="n">2.9</span>新建稿：从模板开，或按规范开</h2>
+      <p>首页第 ⑥ 行。进去有两个模式，顶部两个页签切换：</p>
+      <table>
+        <thead><tr><th style="width:130px">模式</th><th>它干什么</th><th>前提</th></tr></thead>
+        <tbody>
+          <tr><td><b>从模板建稿</b></td><td>浏览「PSD 模板」分区，选中一个直接在 PS 里打开成新稿（<b>参考线是模板里打好的</b>）</td><td>「Vellum工作台」里收录过模板</td></tr>
+          <tr><td><b>按规范建稿</b></td><td>选一个常用规格，自动加 <b>3mm 出血</b>并在成品边打<b>四条参考线</b></td><td>无。打开就能用</td></tr>
+        </tbody>
+      </table>
+      <div class="figside">
+        <div>
+          <h3>从模板建稿</h3>
+          <ul>
+            <li><b>翻目录</b>：和素材库同一套（面包屑 + 整行目录），不用重新学。</li>
+            <li><b>卡片上直接看到</b>品类大字、成品尺寸、出血、色彩模式 —— 一张图就能判断"这是不是我需要的那个模板"。</li>
+            <li>选中 → 右下角 <span class="btnchip">打开</span>。</li>
+          </ul>
+          <div class="call warn"><span class="h">打开的是<b>缓存副本</b>，Ctrl+S 会存错地方</span>插件把模板拷一份到自己的缓存目录再打开，所以<b>模板原件绝不会被改坏</b>。但代价是：直接按 <b>Ctrl+S</b> 会存回那个缓存目录，你以为存进项目了其实没有。<b>请用「文件 → 另存为」存到你的项目目录。</b></div>
+        </div>
+        <figure class="shot"><img src="images/13-新建稿-从模板.png" alt="新建稿 · 从模板建稿" />
+          <figcaption>图 2-7　从模板建稿：两列卡片，缩略图是信息卡（品类 / 成品尺寸 / 出血 / 色彩模式）</figcaption></figure>
+      </div>
+      <h3>按规范建稿：五个常用规格</h3>
+      <table>
+        <thead><tr><th style="width:150px">规格</th><th>成品尺寸</th><th>dpi</th><th>色彩模式</th><th>建出来的画布</th></tr></thead>
+        <tbody>
+          <tr><td>易拉宝</td><td>800 × 1800 mm</td><td>150</td><td>CMYK</td><td>806 × 1806 mm（4760 × 10665 px）</td></tr>
+          <tr><td>展架</td><td>600 × 1600 mm</td><td>150</td><td>CMYK</td><td>606 × 1606 mm</td></tr>
+          <tr><td>海报 A3</td><td>297 × 420 mm</td><td>300</td><td>CMYK</td><td>303 × 426 mm（3579 × 5031 px）</td></tr>
+          <tr><td>海报 A4</td><td>210 × 297 mm</td><td>300</td><td>CMYK</td><td>216 × 303 mm</td></tr>
+          <tr><td>名片</td><td>90 × 54 mm</td><td>300</td><td>CMYK</td><td>96 × 60 mm（1134 × 709 px）</td></tr>
+        </tbody>
+      </table>
+      <p>选中一个规格，底栏会写清<b>画布多少像素 / 多少 dpi / 成品多少毫米</b>，点 <span class="btnchip">新建</span> 就建出来，建完还会把实际尺寸读回来核一遍。</p>
+      <div class="call warn"><span class="h">参考线建完请扫一眼</span>四条参考线打在<b>成品边</b>上（离画布边缘正好一个出血量，比如 3mm 在 A3@300dpi 上是 35px，看起来几乎贴着边）。<br>PS 的接口<b>读不到参考线的坐标</b>，所以插件只能保证"打了四条"，保证不了"位置对不对" —— 建完请用眼睛确认一下，不对就在群里说。</div>
+    </section>
+
+    <section id="s2-10">
+      <h2><span class="n">2.10</span>AI-MCP：还没开放</h2>
+      <p>首页最后一行「AI-MCP · 驱动 PS（方向待定案）」现在是<b>灰的</b>：规划中，尚未排期。点它会提示"还没上"。</p>
       <p>它的设想是把面板里的动作（设色、置入素材、生成表格…）暴露成 AI 客户端能直接调用的工具。<b>在此之前，插件不会和任何外部 AI 通信。</b></p>
     </section>
 
@@ -518,7 +615,7 @@
         <p>面板左下角会写清失败原因（比如 <code>〔请求：scope=brand · id=59〕</code>）。先确认「Vellum工作台」<b>正在运行</b>且插件联动是开着的；还不行就把那行字截图发开发 —— 那是能直接定位的原始读数。</p>
       </details>
       <details class="faq"><summary>置入进去了，但位置 / 大小不对？</summary>
-        <p>位置：检查右下角九宫格选的是哪一格；<b>注意置入会吃掉选区</b>，所以"框哪儿放哪儿"要每次重新框。大小：PSD / PDF 这类拿不到像素尺寸的素材不校正，会保持 PS 给的大小，手动缩放一下即可（见 <a href="#s2-4">2.4</a>）。</p>
+        <p>位置：现在只有两条规则 —— <b>有选区落在选区中心，没选区落在画布中心</b>（落点九宫格已经删了）。<b>注意置入会吃掉选区</b>，所以"框哪儿放哪儿"要每次重新框。大小：PSD / PDF 这类拿不到像素尺寸的素材不校正，会保持 PS 给的大小，手动缩放一下即可（见 <a href="#s2-4">2.4</a>）。</p>
       </details>
       <details class="faq"><summary>点「批量出稿」提示"还不能出稿"？</summary>
         <p>看冒号后面那句：<b>"一列都没绑上"</b> ⇒ 去绑定表把列绑到文字层上；<b>"还没有模板"</b> ⇒ 先在画布上选中你的版式图层组；<b>"模板组里没有文字层"</b> ⇒ 出稿靠换文字，模板里必须有文字图层。</p>
@@ -568,7 +665,7 @@
           <tr><td><span class="btnchip">生成表格</span></td><td>表格生成（底部）</td><td>在当前文档里生成表格图层组</td></tr>
           <tr><td><span class="btnchip">重新检测模板</span></td><td>按行批量出稿</td><td>重新读一次当前选中的图层组当模板</td></tr>
           <tr><td><span class="btnchip">生成 N 个稿件</span></td><td>按行批量出稿（底部）</td><td>复制模板 N 份并逐份换文字</td></tr>
-          <tr><td><span class="btnchip">置入到画布</span></td><td>素材库详情区</td><td>把选中的素材以副本形式放进当前画布</td></tr>
+          <tr><td><span class="btnchip">置入</span></td><td>素材库底部详情条</td><td>把选中的素材以副本形式放进当前画布（有选区落选区中心，否则画布中心）</td></tr>
           <tr><td><span class="btnchip">刷新</span></td><td>素材库（右上）</td><td>立刻重新读一次素材清单</td></tr>
           <tr><td><span class="btnchip">存当前色</span></td><td>调色板</td><td>把当前前景色收进「我的颜色」</td></tr>
           <tr><td><span class="btnchip">✕</span> / 右键</td><td>调色板色块</td><td>删掉这个颜色（只有「我的颜色」能删）</td></tr>
@@ -587,7 +684,9 @@
           <tr><td>任务库 / 通用库</td><td>素材的两大来源。任务库挂在任务下；通用库是不属于任何任务的常备件</td></tr>
           <tr><td>镜像 / 插件数据目录</td><td>工作台把素材清单和缩略图写成的本机副本，插件只读这一个目录</td></tr>
           <tr><td>置入</td><td>把素材以<b>副本</b>形式放进当前画布（不动原文件）</td></tr>
-          <tr><td>落点 / 九宫格</td><td>决定素材落在画布哪个位置的九个格子</td></tr>
+          <tr><td>面包屑</td><td>钻进多层目录后出现在顶部的那串「通用库 › 公司素材 › …」，点任意一段跳回那层</td></tr>
+          <tr><td>信息卡</td><td>模板库卡片上的缩略图：不是 PSD 画面，而是品类 / 成品尺寸 / 出血 / 色彩模式的示意图</td></tr>
+          <tr><td>出血</td><td>成品尺寸之外多留的一圈（常用 3mm），印完裁掉。参考线打在<b>成品边</b>上</td></tr>
           <tr><td>模板 / 绑定</td><td>"模板"是你的版式图层组；"绑定"是把表里某一列指到模板里的某个文字层</td></tr>
           <tr><td>出稿</td><td>复制模板 N 份、逐份换文字、排开 —— 一次产出 N 个稿</td></tr>
           <tr><td>UDT</td><td>UXP Developer Tool，Adobe 官方的插件开发 / 调试工具（开发态加载用）</td></tr>
@@ -663,7 +762,7 @@
     var m = idx.filter(function (x) { return x.title.toLowerCase().indexOf(v) > -1 }).slice(0, 12)
     hits.innerHTML = m.length
       ? m.map(function (x) { return '<a href="#' + x.id + '"><b>' + x.title + '</b><span>' + x.where + ' · #' + x.id + '</span></a>' }).join('')
-      : '<div class="none">没有找到「' + q.value + '」。试试换成按钮名，例如「置入到画布」「生成表格」「导入 CSV」。</div>'
+      : '<div class="none">没有找到「' + q.value + '」。试试换成按钮名，例如「置入」「生成表格」「导入 CSV」。</div>'
     hits.classList.add('on')
   }
   q.addEventListener('input', run)
