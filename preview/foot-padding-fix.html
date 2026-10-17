@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>插入面板 · 留白修正对照</title>
+<style>
+  :root { --bg:#1e1e1e; --surf:#252526; --surf2:#2d2d30; --line:#3f3f46; --tx:#e8e8e8; --tx4:#8a8a90; --ac:#0a84ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:26px 30px 30px; background:var(--bg); color:var(--tx);
+         font:14px/1.5 "Segoe UI","Microsoft YaHei UI",sans-serif; }
+  h1 { font-size:17px; font-weight:600; margin:0 0 4px; }
+  .sub { color:var(--tx4); font-size:12px; margin:0 0 22px; }
+  .cols { display:flex; gap:34px; flex-wrap:wrap; }
+  .col { width:460px; }
+  .cap { display:flex; align-items:center; gap:8px; margin:0 0 8px; font-size:12px; }
+  .tag { font-size:10px; padding:2px 6px; border-radius:3px; }
+  .tag.bad { background:#5a2530; color:#ff9a9a; }
+  .tag.ok  { background:#1f4a2e; color:#8ee0a6; }
+
+  /* ── 面板（外面那层 14px 是 .s-lib 的 padding，卡片在它里面）── */
+  .panel { width:460px; background:var(--surf); border:1px solid var(--line);
+           border-radius:4px; padding:12px 14px 0; }
+  .ghost { color:var(--tx4); font-size:12px; padding:6px 0 10px; }
+
+  .foot { border:1px solid var(--line); border-radius:3px; background:var(--surf2); }
+
+  /* 旧（v0.9.7）：padding: 8px 0 ⇒ 内容贴边框 */
+  .foot.old { padding:8px 0; margin:10px 0; }
+  /* 新（v0.9.8）：padding: 8px 10px */
+  .foot.new { padding:8px 10px; margin:10px 0; }
+
+  .main { display:flex; align-items:center; }
+  .l { flex:1 1 auto; min-width:0; }
+  .n { display:block; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .m { display:block; margin-top:2px; font-size:10px; color:var(--tx4);
+       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .btn { flex:0 0 auto; height:24px; line-height:22px; padding:0 10px; margin-left:8px;
+         border-radius:3px; background:var(--ac); color:#fff; font-size:12px; white-space:nowrap; }
+
+  .ruler { position:relative; height:16px; margin-top:6px; }
+  .ruler i { position:absolute; top:5px; height:6px; background:#e0533d; opacity:.85; }
+  .ruler span { position:absolute; top:0; font-size:10px; color:#ff9a8a; }
+
+  .note { margin-top:16px; font-size:12px; color:var(--tx4); line-height:1.8; }
+  .note b { color:var(--tx); font-weight:600; }
+</style>
+</head>
+<body>
+  <h1>插入面板：左右留白修正（v0.9.8）</h1>
+  <p class="sub">用你截的那张素材、同宽 460px 重画。灰框＝卡片边框，红色标尺＝内容到边框的实际距离。</p>
+
+  <div class="cols">
+    <div class="col">
+      <p class="cap"><span class="tag bad">改前 v0.9.7</span> padding: 8px <b>0</b></p>
+      <div class="panel">
+        <div class="ghost">上面是网格（省略）</div>
+        <div class="foot old">
+          <div class="main">
+            <div class="l">
+              <span class="n">图一(1) - 副本 - 副本.jpg</span>
+              <span class="m">1500×1500 · 613.2 KB · 素材</span>
+            </div>
+            <div class="btn">置入</div>
+          </div>
+        </div>
+        <div class="ruler">
+          <i style="left:0;width:2px"></i><span style="left:6px">0px</span>
+          <i style="right:0;width:2px"></i><span style="right:4px">0px</span>
+        </div>
+      </div>
+      <p class="note">文字贴着左边框、按钮贴着右边框 —— <b>看起来就是“溢出”</b>。<br>
+        外层 <code>.s-lib</code> 的 14px 是卡片<b>外面</b>的留白，管不到卡片内部。</p>
+    </div>
+
+    <div class="col">
+      <p class="cap"><span class="tag ok">改后 v0.9.8</span> padding: 8px <b>10px</b></p>
+      <div class="panel">
+        <div class="ghost">上面是网格（省略）</div>
+        <div class="foot new">
+          <div class="main">
+            <div class="l">
+              <span class="n">图一(1) - 副本 - 副本.jpg</span>
+              <span class="m">1500×1500 · 613.2 KB · 素材</span>
+            </div>
+            <div class="btn">置入</div>
+          </div>
+        </div>
+        <div class="ruler">
+          <i style="left:0;width:11px"></i><span style="left:15px">11px</span>
+          <i style="right:0;width:11px"></i><span style="right:13px">11px</span>
+        </div>
+      </div>
+      <p class="note">留白 <b>11px</b>（10px padding + 1px 边框，真机 S71 量到的就是这个数）。<br>
+        高度 <b>53px</b>（改前 52）—— 只动水平方向，硬指标 40–56 仍然成立。</p>
+    </div>
+  </div>
+
+  <p class="note" style="margin-top:22px">
+    <b>为什么 S71 之前没抓到：</b>它只量了高度。这次补了一条几何判据 ——
+    「内容块左沿 − 卡片左沿 ≥ 8px」，<b>不解析 CSS 字符串</b>：样式怎么写都无所谓，
+    看得见的留白才是判据。
+  </p>
+</body>
+</html>

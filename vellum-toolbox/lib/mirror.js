@@ -22,8 +22,16 @@
  *         而两库 id **各自从 1 起** ⇒ 跨库同名会串图（见 §缩略图处的长注释）。
  *      ⇒ 已改为按 **`asset.thumb`**（自带命名空间）做键。
  *   ② §5.4 可选 `asset.source`（`company` | `user`）—— 用于**跨分组筛「我的」**，本文件透传。
- *   ③ §5.3 可选 `groups[].parentId` —— 通用库**两级分组**，本文件在展平时解析成
- *      `group`（顶层名）/ `sub`（子组名），并给出 `groupTree()` 供 UI 与自检复用。
+ *   ③ §5.3 可选 `groups[].parentId` —— 通用库分组，本文件在展平时解析成
+ *      `group`（顶层名）/ `sub`（第 2 层名）/ **`groupPath`（完整路径数组）**，
+ *      并给出 `groupTree()` 供 UI 与自检复用。
+ *
+ * ── v0.9.6（2026-10-17）：**分组层数 2 → 5**（契约 §5.3 放宽；见 D:/vellum-link/）
+ *   背景：用户与软件侧达成共识，**模板库与通用素材库都要做多层目录**。
+ *   本次改动**只动数据层**（展平能读任意层），**不动 UI** —— 现有 chips 界面在多层数据下
+ *   表现为"第 3 层及更深的素材并入第 2 层显示"（**不丢素材、不错乱，但不能单独筛深一层**）。
+ *   ★ **对现有两层数据，输出与改动前逐字段一致** —— 这一点有离线断言钉死（`M5-29`）。
+ *   ⚠️ `group` / `sub` 两个字段**保留**，语义不变（`path[0]` / `path[1]`）⇒ 旧 UI 一行不用改。
  */
 
 const data = require("./data.js");
@@ -34,6 +42,17 @@ const MIRROR_DIR = ["library"]; // MIRROR_DIR
 const MANIFEST_FILE = "manifest.json";
 const THUMB_DIR = "thumb";
 const POLL_MS = 3000; // 契约 §一：每 ~3 秒对一次清单
+
+/**
+ * 分组层数上限（**含顶层**）。
+ *
+ * 契约 §5.3 原本写「两层封顶」；2026-10-17 两侧共识放宽到 **5**（模板库 + 通用素材库都要做多层目录）。
+ * ⚠️ 这个常量是**上限**不是"期望值"：两层数据照样正常工作，行为与放宽前**逐字段一致**。
+ * ⚠️ 它同时是**安全网**的一部分：超过它的子树会被当顶层吐出（**素材一条不丢**），
+ *    用来兜住成环 / 脏数据 / 别人违规产出深层。**别为了"支持更多层"随手调大** ——
+ *    调大要同步改契约 §5.3 与两侧的 DECISIONS。
+ */
+const MAX_DEPTH = 5;
 
 /* ---------- 读 ---------- */
 
@@ -105,6 +124,24 @@ function sortByOrder(arr) {
   });
 }
 
+/**
+ * 素材库页**该显示哪些库**。
+ *
+ * 🔴 模板库（`tpl`）**不在这里**：它有自己的单列入口（用户 2026-10-17 拍板
+ * 「PSD 模板入口单列、不与素材库同入口」）。软件侧一旦在 `manifest.scopes` 里写出
+ * `tpl`，素材库页就会**自动多一个空 tab**（tabs 本就由 scopes 动态生成）——
+ * 那不是"功能上线了"，是"多了一个看起来坏掉的 tab"。
+ *
+ * ⚠️ 过滤规则只在这里写一份：**自检 S20 用同一个函数算期望值**。
+ *    否则"按 scopes 数 tab"会在软件侧一写 tpl 就变红 —— 那种红是假警报，会把真问题淹掉。
+ * ⚠️ 新增 scope 属契约「加法」，不升版本；但**要不要显示在素材库**是插件侧的决定。
+ */
+const LIBRARY_EXCLUDED = { tpl: true };
+
+function libraryScopes(scopes) {
+  return (scopes || []).filter((s) => s && !LIBRARY_EXCLUDED[String(s.id)]);
+}
+
 /** 任务库：projects → packs → versions → assets。 */
 function flattenTask(d) {
   const out = [];
@@ -131,14 +168,22 @@ function flattenTask(d) {
 }
 
 /**
- * 通用库：groups（可两层）→ assets。
+ * 通用库：groups（**任意层，上限 MAX_DEPTH**）→ assets。
  *
- * 契约 §5.3（软件侧 2026-10-10 加法 ③）：分组支持**两层**，子组用 `parentId` 指父组；
- * **顶层组省略或 `null`**。本函数的容错规则都是"宁可当顶层，也**绝不丢素材**"：
+ * 契约 §5.3：分组用 `parentId` 指父组，**顶层组省略或 `null`**。
+ * 本函数的容错规则一律是「**宁可降级，也绝不丢素材**」：
  *   · `parentId` 缺失 / `null` / 空串 → 顶层；
  *   · `parentId` 指向一个**不存在的分组**（父组被删 / id 写错）→ 当顶层；
- *   · 三层以上 / 成环 → 由结尾的兜底循环按顶层吐出。
- * 另外按 `sortOrder` 排序，并保证**父组在前、它的子组紧随其后**（否则网格里的顺序会是乱的）。
+ *   · **成环**（A 父 B、B 父 A）→ 当顶层（`pushed` 集合保证每组建只出一次，且不会无限递归）；
+ *   · **超过 `MAX_DEPTH` 层** → 超出的那棵子树**当顶层吐出**（素材一条不丢）。
+ *
+ * 展平结果里的三个层级字段（**都保留，别删**）：
+ *   · `group`  = `path[0]`（顶层名）—— 旧 chips UI 用
+ *   · `sub`    = `path[1]`（第 2 层名）—— 旧 chips UI 用
+ *   · `groupPath` = **完整路径数组**（任意层）—— 新 UI（面包屑下钻）用
+ *   ⇒ 这样**数据层先升级、UI 可以晚一步**，二者不是同一次发版。
+ *
+ * 顺序：`sortOrder` 排过的序，**父组在前、它的子树紧随其后**（否则网格里顺序是乱的）。
  */
 function flattenBrand(d) {
   const groups = sortByOrder(d.groups);
@@ -147,7 +192,7 @@ function flattenBrand(d) {
 
   /** 归一化后的父组 id；认不到就返回 null（= 当顶层）。 */
   const pidOf = (g) => {
-    const raw = g.parentId;
+    const raw = g && g.parentId;
     if (raw === undefined || raw === null || raw === "") return null;
     const s = String(raw);
     return byId[s] ? s : null;
@@ -162,90 +207,214 @@ function flattenBrand(d) {
 
   const out = [];
   const pushed = {};
-  const push = (g, topName, subName) => {
-    pushed[String(g.id)] = true;
+
+  const emit = (g, path) => {
     for (const a of g.assets || []) {
       out.push({
         asset: a,
         scope: "brand",
-        group: topName || "",
-        sub: subName || "",
-        groupPath: [topName, subName].filter(Boolean),
-        crumb: [topName, subName].filter(Boolean),
+        group: path[0] || "",
+        sub: path[1] || "",
+        groupPath: path.slice(),
+        crumb: path.slice(),
+        depth: path.length,
         versionLabel: "",
         isCurrent: true,
       });
     }
   };
 
-  for (const t of tops) {
-    const tn = t.name || "";
-    push(t, tn, "");
-    for (const k of kidsOf[String(t.id)] || []) push(k, tn, k.name || "");
-  }
-  // 兜底：没能归位的分组（三层以上 / 环）一律当顶层吐出 —— 丢素材比顺序难看严重得多
-  for (const g of groups) if (!pushed[String(g.id)]) push(g, g.name || "", "");
+  /**
+   * 从 `g` 往下走。
+   * ⚠️ `pushed` 是**防环 + 防重复**的唯一保障：成环时 A→B→A 会在第二次遇到 A 时直接返回，
+   *    不会爆栈、也不会把同一个组吐两遍。
+   */
+  const walk = (g, ancestors, depth) => {
+    const id = String(g.id);
+    if (pushed[id]) return;
+    pushed[id] = true;
+    const path = ancestors.concat([g.name || ""]);
+    emit(g, path);
+    if (depth >= MAX_DEPTH) return; // 到顶就不往下；它的后代交给兜底循环当顶层吐出
+    for (const k of kidsOf[id] || []) walk(k, path, depth + 1);
+  };
 
+  for (const t of tops) walk(t, [], 1);
+
+  /* 兜底：没被走到的（成环 / 超深子树）一律当顶层吐出 —— **丢素材比顺序难看严重得多**。
+     用循环是因为"当顶层"之后又可能走出一棵新树，里面仍有没走到的（例如 7 层的链）。
+     `guard` 只是防呆（正常情况下 1~2 轮就稳定）。 */
+  let guard = 0;
+  let changed = true;
+  while (changed && guard++ <= groups.length + 2) {
+    changed = false;
+    for (const g of groups) {
+      if (!pushed[String(g.id)]) {
+        walk(g, [], 1);
+        changed = true;
+      }
+    }
+  }
+  /* 理论上到不了这里；真到了说明有极端脏数据 ⇒ 直接吐素材，**宁可没有层级也不能丢**。 */
+  for (const g of groups) {
+    if (!pushed[String(g.id)]) {
+      pushed[String(g.id)] = true;
+      emit(g, [g.name || ""]);
+    }
+  }
+
+  return out;
+}
+
+/* ---------- 模板库（tpl.json，契约 §5.7 · 2026-10-17 加法） ---------- */
+
+/**
+ * 从一个组 id 往上爬到顶，返回**从根到叶的名字数组**。
+ *
+ * 与 `flattenBrand()` 的差别：那边是"从上往下走树"，这边是"从条目反查上去"——
+ * 因为 `tpl.json` 的 `items[]` 是**扁平**的（层级只由 `groupId` 指向），
+ * 没有嵌套的 `assets[]` 可走。**两边算出来的 `groupPath` 必须同构**，
+ * 否则 `dirlib` 那套面包屑在模板库上会找不到节点。
+ *
+ * 🔴 三种脏数据都要接住（**宁可降级，也绝不丢模板**）：
+ *   · `groupId` 指向不存在的组 → 返回空数组 ⇒ 调用方落到「未分类」；
+ *   · **成环**（A 父 B、B 父 A）→ `seen` 拦住，返回已经爬到的那一段，不爆栈；
+ *   · 超过 `MAX_DEPTH` 层 → 只往回取前 `MAX_DEPTH` 段（与通用库的深度口径一致）。
+ */
+function groupPathOf(byId, gid) {
+  if (gid === undefined || gid === null || gid === "") return [];
+  const names = [];
+  const seen = Object.create(null);
+  let cur = String(gid);
+  while (cur && byId[cur] && !seen[cur] && names.length < MAX_DEPTH) {
+    seen[cur] = true;
+    names.unshift(byId[cur].name || "");
+    const p = byId[cur].parentId;
+    cur = (p === undefined || p === null || p === "") ? "" : String(p);
+  }
+  return names.filter(Boolean);
+}
+
+/**
+ * 模板库：`groups[]`（多层）+ `items[]`（**扁平**）→ 与另外两个库同构的条目数组。
+ *
+ * 输出字段刻意与 `flattenBrand()` **逐字段对齐**（`group` / `sub` / `groupPath` / `crumb` /
+ * `depth` / `versionLabel` / `isCurrent`）⇒ 素材库那套筛选、`dirlib` 面包屑、
+ * `groupTree()` 计数**全都能直接复用**，不用为模板库单写一份。
+ *
+ * ⚠️ **`kind` 仍是 `psd`**（契约 §5.7 口径 1）：靠 `scope === "tpl"` 区分，不新造枚举值。
+ * ⚠️ `items[].width/height` 是**必填**（读不到尺寸的模板软件侧就不收录）——
+ *    所以这里不做"尺寸缺失"的兜底，缺了就是上游违约。
+ */
+function flattenTpl(d) {
+  const groups = sortByOrder((d && d.groups) || []);
+  const byId = Object.create(null);
+  for (const g of groups) byId[String(g.id)] = g;
+
+  const out = [];
+  for (const it of sortByOrder((d && d.items) || [])) {
+    const path = groupPathOf(byId, it && it.groupId);
+    /* 未分组 / 组被删 ⇒ 统一落到「未分类」（一个明确的分组名，比空串好：
+       空串会让面包屑第 0 段变成空白，看起来像坏了）。 */
+    const p = path.length ? path : ["未分类"];
+    out.push({
+      asset: it,
+      scope: "tpl",
+      group: p[0] || "",
+      sub: p[1] || "",
+      groupPath: p.slice(),
+      crumb: p.slice(),
+      depth: p.length,
+      versionLabel: "",
+      isCurrent: true,
+    });
+  }
   return out;
 }
 
 /**
  * 这个 scope 的**形态** —— 用来决定界面怎么排（不是靠 scope id 硬编码）。
- * 契约 §5.2 的 `task.json` 有 `projects`；§5.3 的 `brand.json` 有 `groups`。
- * 认不出来就返回 `"unknown"`，界面按"没有二级结构"处理（宁少不崩）。
+ *
+ * 三个来源按可信度排：
+ *   ① **文件自己写的 `scope` 字段**（`task.json` / `brand.json` / `tpl.json` 都有，契约 §5.1）；
+ *   ② 结构特征：`projects[]` ⇒ 任务库；`groups[]` + `items[]` 两张表 ⇒ 模板库；只有 `groups[]` ⇒ 通用库；
+ *   ③ 都认不出 ⇒ `"unknown"`，界面按"没有二级结构"处理（**宁少不崩**）。
+ *
+ * 🔴 **为什么必须优先看 `scope` 字段**（2026-10-17 踩到）：
+ *   `tpl.json` 也有 `groups[]` ⇒ 只按结构判会**把模板库认成通用库**，
+ *   于是界面按两层 chips 排、`flattenBrand` 拿 `items[]` 当 `assets[]` 全部落空 ⇒ **模板一条都显示不出来**。
+ *   加库的时候这类"看起来像"的误判最贵：不报错、只是空的。
  */
+const KNOWN_KINDS = { task: true, brand: true, tpl: true };
+
 function scopeKind(data) {
   const d = data || {};
+  if (typeof d.scope === "string" && KNOWN_KINDS[d.scope]) return d.scope;
   if (Array.isArray(d.projects)) return "task";
+  if (Array.isArray(d.groups) && Array.isArray(d.items)) return "tpl";
   if (Array.isArray(d.groups)) return "brand";
   return "unknown";
 }
 
-/** 按 scope id 展平。 */
+/**
+ * 按 scope id 展平。
+ *
+ * 🔴 **不能写成 `scopeId === "brand" ? flattenBrand : flattenTask`** ——
+ *    那样任何新 scope 都会**掉进 `flattenTask`**（拿 `d.projects` 去遍历 undefined），
+ *    表现为"新库一条都没有"。旧版就是二元的，加 `tpl` 时正是踩这个坑的地方。
+ *    ⇒ 先按 **id 显式分派**，认不出再用**结构**兜底（将来再加库也不必回来改这里）。
+ */
 function flatten(scopeId, d) {
-  return scopeId === "brand" ? flattenBrand(d) : flattenTask(d);
+  if (scopeId === "tpl") return flattenTpl(d);
+  if (scopeId === "brand") return flattenBrand(d);
+  if (scopeId === "task") return flattenTask(d);
+  const kind = scopeKind(d);
+  if (kind === "tpl") return flattenTpl(d);
+  if (kind === "brand") return flattenBrand(d);
+  return flattenTask(d);
 }
 
 /* ---------- 分组树（给筛选行 / 自检用） ---------- */
 
 /**
- * 由**扁平条目**推两级分组树（契约 §5.3 `groups[].parentId`）。
+ * 由**扁平条目**推分组树（任意层；契约 §5.3 `groups[].parentId`）。
  *
  * 顺序 = 条目里首次出现的顺序 —— 展平时已按 `sortOrder` 排过，这里**不重排**，
  * 免得两处各有各的排序规则、将来对不上。
- * ⚠️ `count` 是**含子组**的总数：父组的计数要能对上"点父组后网格里的卡片数"。
+ * ⚠️ `count` 是**含所有后代**的总数：父组的计数要能对上"点父组后网格里的卡片数"。
+ * ⚠️ 两层数据下输出与旧版（硬编码两层）**结构完全一致** —— 旧 UI（chips）不会察觉变化。
  *
  * @param {Array} items flatten() 的输出
- * @returns {Array<{name:string, count:number, children:Array<{name:string,count:number}>}>}
+ * @returns {Array<{name:string, count:number, children:Array}>} children 可再套 children
  */
 function groupTree(items) {
-  const order = [];
-  const map = {};
+  const root = { children: [], _map: Object.create(null) };
+
   for (const it of items || []) {
-    const g = (it && it.group) || "未分组";
-    if (!map[g]) {
-      map[g] = { name: g, count: 0, children: [], _kids: {} };
-      order.push(g);
-    }
-    const node = map[g];
-    node.count++;
-    const s = (it && it.sub) || "";
-    if (s) {
-      if (!node._kids[s]) {
-        node._kids[s] = { name: s, count: 0 };
-        node.children.push(node._kids[s]);
+    /* 优先用完整路径（任意层）；老数据没有 groupPath 时退化成 [group]，再退化成「未分组」 */
+    const p = (it && Array.isArray(it.groupPath) && it.groupPath.length)
+      ? it.groupPath
+      : [(it && it.group) || "未分组"];
+
+    let node = root;
+    for (const name of p) {
+      if (!name) continue;
+      if (!node._map[name]) {
+        node._map[name] = { name: name, count: 0, children: [], _map: Object.create(null) };
+        node.children.push(node._map[name]);
       }
-      node._kids[s].count++;
+      node = node._map[name];
+      node.count++; // 每一级祖先都算上这个素材 ⇒ count = 含后代
     }
   }
-  return order.map((g) => {
-    const n = map[g];
-    return {
-      name: n.name,
-      count: n.count,
-      children: n.children.map((c) => ({ name: c.name, count: c.count })),
-    };
+
+  /* 把内部索引 `_map` 摘掉再返回（它只是建树用的，不该漏给调用方） */
+  const clean = (n) => ({
+    name: n.name,
+    count: n.count,
+    children: (n.children || []).map(clean),
   });
+  return root.children.map(clean);
 }
 
 /* ---------- 来源（契约 §5.4 可选 asset.source） ---------- */
@@ -436,6 +605,7 @@ function watch(onChange) {
 
 module.exports = {
   CONTRACT,
+  MAX_DEPTH,
   MIRROR_DIR,
   MANIFEST_FILE,
   THUMB_DIR,
@@ -445,7 +615,9 @@ module.exports = {
   flatten,
   flattenTask,
   flattenBrand,
+  flattenTpl,
   scopeKind,
+  libraryScopes,
   groupTree,
   sourceSummary,
   sourceLabel,

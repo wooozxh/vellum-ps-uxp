@@ -56,3 +56,9 @@ Test_project/
 # 插件手册的两个大产物（脚本可重建：tools/manual/make_single.py 与 Edge 无头 print-to-pdf，不入库）
 docs/manual/*.pdf
 docs/manual/*单文件*.html
+
+# ---------- 设计稿的临时产物 ----------
+# `preview/live/` 是 uipanel.py 每次截图覆盖的输出目录；live-now.png 是随手截的中间态。
+# 其余 preview/*.png|html 是**正式设计稿**（docs 里有引用），要入库。
+preview/live/
+preview/live-now.png

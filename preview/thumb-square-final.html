@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 28px 30px; background: #1b1b1e; color: #cfcfd4;
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif; font-size: 12px;
+  }
+  h1 { font-size: 15px; margin: 0 0 5px; color: #f0f0f2; font-weight: 600; }
+  .sub { font-size: 11px; color: #8a8a92; margin-bottom: 18px; line-height: 1.75; }
+  .sub b { color: #d6d6db; }
+
+  .wrap { display: flex; gap: 30px; align-items: flex-start; }
+
+  /* 面板内容区：422 − 左右 padding 14×2 = 394 */
+  /* ⚠️ 真机上 `.nd-body` 只有 padding-bottom，左右没有 padding
+     ⇒ 网格可用宽就是 394。这里 mock 也必须一样，否则两列会被挤成一列（第一版就画错了）。 */
+  .panel {
+    width: 396px; background: #26262a; border: 1px solid #3a3a40;
+    border-radius: 4px; padding: 0; overflow: hidden;
+  }
+  .grid { display: flex; flex-wrap: wrap; justify-content: space-between; }
+  .card {
+    width: 193px; margin-bottom: 8px; padding: 6px;
+    border: 1px solid #3a3a40; border-radius: 3px; background: #2d2d32;
+  }
+  .card.on { border-color: #4a8fd6; }
+  .th {
+    background: #fbfaf7; border-radius: 2px; height: 179px;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .th img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .nm { margin-top: 5px; font-size: 11px; color: #e6e6ea; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mt { margin-top: 2px; font-size: 10px; color: #7d7d86; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .viewport { height: 385px; overflow: hidden; position: relative; }
+  .cut { position: absolute; left: 0; right: 0; bottom: 0; height: 56px;
+    background: linear-gradient(to bottom, rgba(38,38,42,0), rgba(38,38,42,.97)); pointer-events: none; }
+  .cutline { position: absolute; left: 0; right: 0; bottom: 54px; border-top: 1px dashed #e08a5a; }
+  .cutlbl { position: absolute; right: 5px; bottom: 38px; font-size: 9px; color: #e08a5a;
+    background: rgba(0,0,0,.5); padding: 1px 4px; border-radius: 2px; }
+
+  .side { width: 420px; padding-top: 4px; }
+  .side h2 { font-size: 12px; color: #e6e6ea; margin: 0 0 8px; font-weight: 600; }
+  table { border-collapse: collapse; font-size: 11px; width: 100%; }
+  th, td { border: 1px solid #3a3a40; padding: 5px 9px; text-align: left; }
+  th { background: #2d2d32; color: #d6d6db; font-weight: 600; }
+  td.n { font-variant-numeric: tabular-nums; }
+  .calc { margin-top: 16px; font-size: 11px; line-height: 1.9; color: #9a9aa2; }
+  .calc code { color: #6fc48c; font-size: 11px; }
+  .calc b { color: #e6e6ea; }
+  .warn { margin-top: 16px; padding: 9px 11px; border-left: 2px solid #e08a5a;
+    background: rgba(224,138,90,.08); font-size: 11px; line-height: 1.75; color: #c8b0a0; }
+  .warn b { color: #e08a5a; }
+</style>
+</head>
+<body>
+  <h1>缩略图按正方形显示（v0.9.31，真尺寸）</h1>
+  <div class="sub">
+    面板 422 宽（内容 394）；卡片固定 <b>193</b>、间距 8；缩略图盒 <b>179×179</b>（= 193 − padding 12 − border 2）。<br>
+    虚线框 = 网格区实际可用高度 <b>385px</b>。右边是这块尺寸怎么算出来的、以及代价。
+  </div>
+
+  <div class="wrap">
+    <div class="panel">
+      <div class="viewport">
+        <div class="grid">
+          <div class="card">
+            <div class="th"><img src="file:///D:/ps-uxp-dev/preview/_t1.png"></div>
+            <div class="nm">_vellum_logo.psd</div>
+            <div class="mt">5225 × 5225 · 参考线 13 条</div>
+          </div>
+          <div class="card">
+            <div class="th"><img src="file:///D:/ps-uxp-dev/preview/_t2.png"></div>
+            <div class="nm">展架.psd</div>
+            <div class="mt">4783 × 10689 · 参考线 4 条</div>
+          </div>
+          <div class="card on">
+            <div class="th"><img src="file:///D:/ps-uxp-dev/preview/_t3.png"></div>
+            <div class="nm">展架2.psd</div>
+            <div class="mt">4783 × 10689 · 参考线 4 条</div>
+          </div>
+        </div>
+        <div class="cutline"></div>
+        <div class="cutlbl">↓ 下面的要滚</div>
+        <div class="cut"></div>
+      </div>
+    </div>
+
+    <div class="side">
+      <h2>尺寸怎么来的</h2>
+      <div class="calc">
+        卡宽 <b>193</b><br>
+        − 左右 padding <b>12</b>（6×2）<br>
+        − 左右边框 <b>2</b>（1×2，<code>border-box</code>）<br>
+        = 缩略图盒 <b>179 × 179</b> ⇒ <b>正方形</b><br>
+        <br>
+        面板 422 时：<code>193 + 8 + 193 = 394</code> = 内容宽，两列严丝合缝。<br>
+        面板拉宽时两列分开，卡片<b>仍是正方形</b>（这点比百分比方案稳）。
+      </div>
+
+      <h2 style="margin-top:22px">代价</h2>
+      <table>
+        <tr><th>面板高</th><th>一屏几行</th><th>第 3 张</th></tr>
+        <tr><td>732（当前）</td><td class="n">1.5 行</td><td>要滚一点</td></tr>
+        <tr><td>900（你常拉到）</td><td class="n">2.4 行</td><td>能看到</td></tr>
+      </table>
+
+      <div class="warn">
+        <b>注意：真机这一版还没验过。</b>PS 在截图前退出了（暂存盘打满），
+        下面这张是按<b>真实尺寸 + 真实 512 图</b>渲染的等价效果，不是真机截图。
+        重启 PS 后我会再截一次真机确认。
+      </div>
+    </div>
+  </div>
+</body>
+</html>

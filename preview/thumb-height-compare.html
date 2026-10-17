@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 26px 30px;
+    background: #1b1b1e; color: #cfcfd4;
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    font-size: 12px;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; color: #f0f0f2; font-weight: 600; }
+  .sub { font-size: 11px; color: #8a8a92; margin-bottom: 20px; line-height: 1.7; }
+
+  .row { display: flex; gap: 26px; align-items: flex-start; }
+
+  .col { width: 394px; }
+
+  .tag { font-size: 11px; margin-bottom: 7px; color: #d6d6db; }
+  .tag b { color: #6fc48c; }
+  .tag .warn { color: #e08a5a; }
+
+  /* 面板内容区（宽度 = 422 面板 - 左右 padding 14×2） */
+  .panel {
+    width: 394px;
+    background: #26262a;
+    border: 1px solid #3a3a40;
+    border-radius: 4px;
+    padding: 8px 8px 10px;
+    overflow: hidden;
+  }
+
+  .grid { display: flex; flex-wrap: wrap; justify-content: space-between; }
+
+  .card {
+    width: 186px;
+    margin-bottom: 8px;
+    padding: 6px;
+    border: 1px solid #3a3a40;
+    border-radius: 3px;
+    background: #2d2d32;
+  }
+
+  /* 缩略图盒子：底色与信息卡一致 #fbfaf7 */
+  .th {
+    background: #fbfaf7;
+    border-radius: 2px;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  .th img { display: block; width: 100%; height: 100%; object-fit: contain; }
+
+  .nm { margin-top: 5px; font-size: 11px; color: #e6e6ea; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mt { margin-top: 2px; font-size: 10px; color: #7d7d86; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 三块可用高度都按「面板 732 高、固定区 347」算，网格区 385px */
+  .viewport {
+    height: 385px; overflow: hidden; position: relative;
+    border: 1px dashed #4a4a52; border-radius: 3px;
+  }
+  .cut {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 62px;
+    background: linear-gradient(to bottom, rgba(38,38,42,0), rgba(38,38,42,.97));
+    pointer-events: none;
+  }
+  .cutline {
+    position: absolute; left: 0; right: 0; bottom: 60px;
+    border-top: 1px dashed #e08a5a;
+  }
+  .cutlbl {
+    position: absolute; right: 4px; bottom: 44px;
+    font-size: 9px; color: #e08a5a; background: rgba(0,0,0,.5); padding: 1px 4px; border-radius: 2px;
+  }
+
+  .note { margin-top: 9px; font-size: 11px; line-height: 1.75; color: #9a9aa2; }
+  .note b { color: #e6e6ea; }
+  .note .ok { color: #6fc48c; }
+  .note .bad { color: #e08a5a; }
+
+  table { margin-top: 22px; border-collapse: collapse; font-size: 11px; }
+  th, td { border: 1px solid #3a3a40; padding: 5px 10px; text-align: left; }
+  th { background: #2d2d32; color: #d6d6db; font-weight: 600; }
+  td.n { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+  <h1>512×512 信息卡在模板格子里的三种高度（真尺寸，面板 732 高）</h1>
+  <div class="sub">
+    三屏都用真实的 512 信息卡、真实的 186px 卡宽。虚线框 = 网格区实际可用高度 <b>385px</b>（732 − 固定区 347）。<br>
+    关键不是「图能不能显示」—— 三种都能完整显示、不裁不拉伸；差别只在<b>信息卡上的小字（尺寸 / 出血 / 色彩模式）还能不能看清</b>。
+  </div>
+
+  <div class="row">
+    <!-- ① 现状 120 -->
+    <div class="col">
+      <div class="tag">① 现状：缩略图高 <b>120</b>　·　一屏 <span class="warn">2 行</span></div>
+      <div class="panel">
+        <div class="viewport">
+          <div class="grid">
+            <div class="card">
+              <div class="th" style="height:120px"><img src="file:///D:/ps-uxp-dev/preview/_t1.png"></div>
+              <div class="nm">_vellum_logo.psd</div>
+              <div class="mt">5225 × 5225 · 参考线 13 条</div>
+            </div>
+            <div class="card">
+              <div class="th" style="height:120px"><img src="file:///D:/ps-uxp-dev/preview/_t2.png"></div>
+              <div class="nm">展架.psd</div>
+              <div class="mt">4783 × 10689 · 参考线 4 条</div>
+            </div>
+            <div class="card">
+              <div class="th" style="height:120px"><img src="file:///D:/ps-uxp-dev/preview/_t3.png"></div>
+              <div class="nm">展架2.psd</div>
+              <div class="mt">4783 × 10689 · 参考线 4 条</div>
+            </div>
+          </div>
+          <div class="cutline"></div>
+          <div class="cutlbl">↓ 下面的被裁</div>
+          <div class="cut"></div>
+        </div>
+        <div class="note">
+          正方形图缩到 120×120，格子宽 174 <b>左右各空 27px</b> —— 因为底色同色，看不出来，是好事。<br>
+          但小字只有 <span class="bad">≈5px</span>：尺寸勉强能认出形状，<b>出血和色彩模式基本是糊的</b>。
+        </div>
+      </div>
+    </div>
+
+    <!-- ② 正方形 174 -->
+    <div class="col">
+      <div class="tag">② 正方形：缩略图 <b>174×174</b>　·　一屏 <span class="warn">1.5 行</span></div>
+      <div class="panel">
+        <div class="viewport">
+          <div class="grid">
+            <div class="card">
+              <div class="th" style="height:174px"><img src="file:///D:/ps-uxp-dev/preview/_t1.png"></div>
+              <div class="nm">_vellum_logo.psd</div>
+              <div class="mt">5225 × 5225 · 参考线 13 条</div>
+            </div>
+            <div class="card">
+              <div class="th" style="height:174px"><img src="file:///D:/ps-uxp-dev/preview/_t2.png"></div>
+              <div class="nm">展架.psd</div>
+              <div class="mt">4783 × 10689 · 参考线 4 条</div>
+            </div>
+            <div class="card">
+              <div class="th" style="height:174px"><img src="file:///D:/ps-uxp-dev/preview/_t3.png"></div>
+              <div class="nm">展架2.psd</div>
+              <div class="mt">4783 × 10689 · 参考线 4 条</div>
+            </div>
+          </div>
+          <div class="cutline"></div>
+          <div class="cutlbl">↓ 下面的被裁</div>
+          <div class="cut"></div>
+        </div>
+        <div class="note">
+          图占满宽度、无留白，小字 <span class="ok">≈8px</span> —— <b>尺寸和色彩模式能读，出血勉强</b>。<br>
+          代价：卡片高 218，<b>一屏只剩 1.5 行</b>，第 3 张要滚。
+        </div>
+      </div>
+    </div>
+
+    <!-- ③ 折中 150 -->
+    <div class="col">
+      <div class="tag">③ 折中：缩略图高 <b>150</b>　·　一屏 <span class="warn">1.7 行</span></div>
+      <div class="panel">
+        <div class="viewport">
+          <div class="grid">
+            <div class="card">
+              <div class="th" style="height:150px"><img src="file:///D:/ps-uxp-dev/preview/_t1.png"></div>
+              <div class="nm">_vellum_logo.psd</div>
+              <div class="mt">5225 × 5225 · 参考线 13 条</div>
+            </div>
+            <div class="card">
+              <div class="th" style="height:150px"><img src="file:///D:/ps-uxp-dev/preview/_t2.png"></div>
+              <div class="nm">展架.psd</div>
+              <div class="mt">4783 × 10689 · 参考线 4 条</div>
+            </div>
+            <div class="card">
+              <div class="th" style="height:150px"><img src="file:///D:/ps-uxp-dev/preview/_t3.png"></div>
+              <div class="nm">展架2.psd</div>
+              <div class="mt">4783 × 10689 · 参考线 4 条</div>
+            </div>
+          </div>
+          <div class="cutline"></div>
+          <div class="cutlbl">↓ 下面的被裁</div>
+          <div class="cut"></div>
+        </div>
+        <div class="note">
+          小字 <span class="ok">≈6.5px</span> —— 尺寸能读，<b>色彩模式要凑近看</b>。仍然左右留白 12px（同色，看不出）。<br>
+          一屏 1.7 行，比 ② 略好。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <table>
+    <tr>
+      <th>方案</th><th>缩略图</th><th>小字实际字号</th><th>卡片高</th>
+      <th>732 高面板一屏</th><th>900 高（你常用）一屏</th>
+    </tr>
+    <tr>
+      <td>① 现状</td><td class="n">120 高</td><td class="n">≈5px</td><td class="n">190</td>
+      <td class="n">2.0 行</td><td class="n">2.9 行</td>
+    </tr>
+    <tr>
+      <td>② 正方形</td><td class="n">174×174</td><td class="n">≈8px</td><td class="n">218</td>
+      <td class="n">1.5 行</td><td class="n">2.4 行</td>
+    </tr>
+    <tr>
+      <td>③ 折中</td><td class="n">150 高</td><td class="n">≈6.5px</td><td class="n">220 → 修正 197</td>
+      <td class="n">1.7 行</td><td class="n">2.7 行</td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -38,7 +38,10 @@ const RES_FILE = "res.json";
 const CONTRACT = "vellum-link/1";
 const DEFAULT_TIMEOUT_MS = 10000; // 契约 §六.4
 const POLL_MS = 300; // 契约 §六 拓扑图
-const FILE_WAIT_MS = 5000; // 看到 res 之后再给文件落盘多久（见 fetchIncoming 说明）
+/* 2026-10-17 由 5000 调到 12000：真机第一个模板 PSD 是 14MB，
+   5 秒里既等文件落盘、又要重读 res 补 file 字段 ⇒ 偏紧。
+   调大只是「多等一会儿」，不会把失败变成假成功（判据仍是「文件在且读得出字节」）。 */
+const FILE_WAIT_MS = 12000;
 const FILE_POLL_MS = 250;
 
 function dirParts() {
@@ -147,6 +150,22 @@ function incomingName(res) {
 }
 
 /**
+ * 候选文件名（按优先级）。
+ *
+ * 🔴 **为什么需要"候选"**（2026-10-17 真机抓到）：软件侧**先写 res.json 说"完成"、
+ *    后补 `file` 字段并拷文件**。我们可能在中间那一刻就匹配上 reqId，
+ *    于是 `res.file` 是空的 ⇒ `incomingName()` 返回不带扩展名的 `incoming`，
+ *    而盘上真正叫 `incoming.psd` ⇒ **永远找不到**，读数却是 `bytes=0`，
+ *    看起来像"软件侧没拷"，其实是**我们只认一个名字**。
+ *    ⇒ 兜底时把常见扩展名都试一遍（顺序固定，先契约里的 `incoming`）。
+ */
+function incomingCandidates(res) {
+  const n = incomingName(res);
+  if (n && n !== "incoming") return [n];
+  return ["incoming", "incoming.psd", "incoming.jpg", "incoming.png"];
+}
+
+/**
  * 取回原图：**Entry + 字节 + 绝对路径**（只读，不搬不删）。
  * 为什么要 Entry 而不只是路径：UXP 把文件交给 `batchPlay` 时，
  * 需要的是从 **Entry 换出来的会话令牌**，字符串路径会被拒
@@ -168,17 +187,41 @@ async function fetchIncoming(res, opts) {
   const o = opts || {};
   const waitMs = typeof o.waitMs === "number" ? o.waitMs : FILE_WAIT_MS;
   const step = o.intervalMs || FILE_POLL_MS;
-  const name = incomingName(res);
+  let name = incomingName(res);
+  let cur = res;
   const t0 = Date.now();
 
   let entry = null;
   let bin = { ok: false, error: "未尝试" };
   for (;;) {
-    entry = await data.entryIn(dirParts(), name);
-    if (entry) {
-      bin = await data.readBinaryIn(dirParts(), name);
-      if (bin.ok) break;
+    /* ① 软件侧可能"先写完成、后补 file" ⇒ 边等边重读 res.json，把 file 补上 */
+    if (!cur || !cur.file) {
+      const txt = await data.readTextIn(dirParts(), RES_FILE, "");
+      if (txt) {
+        try {
+          const r2 = JSON.parse(txt);
+          if (r2 && r2.file) {
+            cur = r2;
+            name = incomingName(r2);
+          }
+        } catch {
+          /* 正在写、解析不了：下一轮再来 */
+        }
+      }
     }
+    /* ② 按候选名找（file 缺失时 `incoming` / `incoming.psd` / … 都试） */
+    const cands = [name].concat(incomingCandidates(cur).filter((x) => x !== name));
+    for (const cn of cands) {
+      entry = await data.entryIn(dirParts(), cn);
+      if (entry) {
+        bin = await data.readBinaryIn(dirParts(), cn);
+        if (bin.ok) {
+          name = cn; // 用**真正存在的那个名字**回报，别继续报猜的那个
+          break;
+        }
+      }
+    }
+    if (bin.ok) break;
     if (Date.now() - t0 >= waitMs) break;
     await sleep(step);
   }
@@ -188,12 +231,13 @@ async function fetchIncoming(res, opts) {
   // 失败为什么要带上 res 里的读数：这句话要能**区分**两种完全不同的原因 ——
   //   · res 说 ok:true 但文件不在 ⇒ **软件侧没拷成 / 拷晚了**（对方的问题）
   //   · res 说 ok:false ⇒ 软件侧明确报错，看它的 error（原文带出来）
-  const resInfo = res
+  const resInfo = cur
     ? {
-        ok: !!res.ok,
-        size: res.size === undefined || res.size === null ? null : res.size,
-        at: res.at || null,
-        error: res.error === undefined ? null : res.error,
+        file: cur.file === undefined ? null : cur.file,
+        ok: !!cur.ok,
+        size: cur.size === undefined || cur.size === null ? null : cur.size,
+        at: cur.at || null,
+        error: cur.error === undefined ? null : cur.error,
       }
     : null;
 

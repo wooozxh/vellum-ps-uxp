@@ -22,9 +22,11 @@ const palette = require("./palette.js");
 const library = require("./library.js");
 const table = require("./table.js");
 const inspect = require("./inspect.js");
+const review = require("./review.js");
+const newdoc = require("./newdoc.js");
 
 /** 已实现的工具（首页可点）。 */
-const tools = [palette, library, table, inspect];
+const tools = [palette, library, table, inspect, review, newdoc];
 
 /**
  * 规划中的工具（首页显示为灰行，点了给提示）。
@@ -37,18 +39,13 @@ const planned = [
   {
     id: "mcp",
     title: "AI-MCP",
-    subtitle: "把面板能力开放给 AI 客户端",
+    subtitle: "AI 驱动 PS（方向待定案）",
     badge: "M4",
-    note: "M4（待排期）。⚠️ 本条 note 建于更早的会话，方向写的是「把插件的动作暴露成 MCP 工具」，" +
-      "与 2026-10-12 讨论的方向（AI 驱动 PS）**相反**，待用户定案后重写（见 docs/49 §3.4）。",
-  },
-  {
-    id: "template",
-    title: "新建稿",
-    subtitle: "按部门规范建画布",
-    badge: "M5",
-    note: "M5（待排期）。目标：按 spec.json 的模板建稿，出血/安全区参考线随建稿写入" +
-      "（presetJSON 携带 guides 已实测成立）。方案见 docs/49 §3.3。",
+    note: "M4（待排期，**方向待定案**）。候选方向 = 「**AI 驱动 PS**」（AI 客户端经 MCP 操作 PS）。" +
+      "⚠️ 本条 note 原写「把**插件的动作**暴露成 MCP 工具」—— 与上述方向**相反**，" +
+      "已于 2026-10-17 更正留痕（见 docs/49 §3.4）。两条硬事实：**MCP ≠ AI**" +
+      "（MCP 只是工具服务器，智能在客户端）；**MCP 代码搬不进插件**（走 ExtendScript/COM，" +
+      "与 UXP 是两套宿主接口，只能重写不能搬运）。**定案前不要按任何一方实现。**",
   },
 ];
 

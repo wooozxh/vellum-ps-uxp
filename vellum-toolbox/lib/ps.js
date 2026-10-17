@@ -62,6 +62,13 @@ const constants = photoshop.constants || null;
       （它自己数图层，就为了避开循环依赖）。别把它改成双向的。 */
 const undoHistory = require("./history.js");
 
+/* v0.8.0：「导出审核版」要用的两份只读/纯函数库。
+   依赖方向仍是**单向**：ps.js → review.js → inspect.js。
+   inspect.js 只 require("photoshop")、review.js 只 require inspect.js，都不回头 require ps.js
+   ⇒ 不会成环。别把 review.js 改成去 require ps.js。 */
+const inspectLib = require("./inspect.js");
+const reviewLib = require("./review.js");
+
 /** 颜色槽 → ActionDescriptor 里的属性名。 */
 const COLOR_PROP = {
   foreground: "foregroundColor",
@@ -1702,12 +1709,51 @@ async function canEntryFromUrl(url) {
 async function createScratchDoc(opts) {
   const o = opts || {};
   const size = o.size || 32;
+  /* v0.8.0 追加（可选，**不改变既有调用行为**）：`height` / `resolution`。
+     为什么要它：导出审核版的字号是**按 ppi 把像素换算成点**的，
+     要端到端验这条换算，就必须能建出**非 72dpi** 的稿 —— 否则那段逻辑从没被真机跑过。 */
+  const height = o.height || size;
+  const res = o.resolution || 72;
+  /* v0.9.1 追加（可选，**不改变既有调用行为**）：`mode`。
+     为什么要它：用户真机上导出失败的那张稿是 **CMYK** 的 ——
+     要把「色彩模式」这个变量**单独隔离出来**，就得能建 CMYK 的稿（S61 用）。 */
+  const mode = o.mode || "RGB";
   const name = o.name || "Vellum 自检临时文档";
+
+  /* ★ v0.9.1 修正：`mode` 以前直接塞进 `documents.add({mode:"CMYKColorMode"})`，
+     而真机**静默忽略**了它（S66 实测：请求 CMYK、建出来的却是 `RGBColorMode`）。
+     ⇒ 后果很严重：所有标着"CMYK"的探针其实都在验 RGB，**整个 CMYK 分支从没被测过**
+       （而用户那张 84×184cm 展架稿正是 CMYK —— 这就是那次事故查不下去的一半原因）。
+     ⇒ 现在：枚举值走 `constants.DocumentMode`，建完**读回**，不对就 `changeMode` 纠正，
+        还不对就在返回值里标 `modeMismatch`（**绝不假装成功**）。 */
+  const modeKeyOf = function (s) {
+    const t = String(s || "").toUpperCase();
+    if (t.indexOf("CMYK") >= 0) return "CMYK";
+    if (t.indexOf("RGB") >= 0) return "RGB";
+    if (t.indexOf("GRA") >= 0) return "GRAY";
+    if (t.indexOf("LAB") >= 0) return "LAB";
+    return t;
+  };
+  const modeConstant = function (key) {
+    try {
+      const CN = (constants && constants.DocumentMode) || null;
+      const name2 = key === "GRAY" ? "GRAYSCALE" : key;
+      if (CN && CN[name2]) return CN[name2];
+    } catch (e) { /* 忽略 */ }
+    return key === "CMYK" ? "CMYKColorMode"
+      : key === "GRAY" ? "GrayscaleMode"
+      : key === "LAB" ? "LabColorMode"
+      : "RGBColorMode";
+  };
+  const wantKey = modeKeyOf(mode);
+  const modeVal = modeConstant(wantKey);
+
   const variants = [
-    { width: size, height: size, resolution: 72, mode: "RGB", initialFill: "white", name: name },
-    { width: size, height: size, resolution: 72, mode: "RGB", name: name },
-    { width: size, height: size, resolution: 72, initialFill: "white" },
-    { width: size, height: size },
+    { width: size, height: height, resolution: res, mode: modeVal, initialFill: "white", name: name },
+    { width: size, height: height, resolution: res, mode: modeVal, name: name },
+    { width: size, height: height, resolution: res, mode: modeVal },
+    { width: size, height: height, resolution: res, initialFill: "white", name: name },
+    { width: size, height: height, resolution: res },
   ];
   const errs = [];
   for (const v of variants) {
@@ -1717,7 +1763,26 @@ async function createScratchDoc(opts) {
         made = await app.documents.add(v);
       }, "Vellum 工具箱：建临时文档");
       if (made && made.id !== undefined && made.id !== null) {
-        return { ok: true, id: made.id, name: made.name, mode: made.mode, params: Object.keys(v), errors: errs };
+        let real = "";
+        try { real = String(app.activeDocument.mode); } catch (e) { real = ""; }
+        let fixed = false;
+        if (real && modeKeyOf(real) !== wantKey) {
+          try {
+            await runModal(async () => {
+              await app.activeDocument.changeMode(modeVal);
+            }, "Vellum 工具箱：纠正临时文档色彩模式");
+            fixed = true;
+          } catch (e2) {
+            errs.push("changeMode(" + wantKey + ")：" + msg(e2));
+          }
+          try { real = String(app.activeDocument.mode); } catch (e3) { /* 忽略 */ }
+        }
+        return {
+          ok: true, id: made.id, name: made.name, mode: made.mode,
+          modeRequested: wantKey, modeReal: real, modeKeyReal: modeKeyOf(real),
+          modeFixed: fixed, modeMismatch: !!real && modeKeyOf(real) !== wantKey,
+          params: Object.keys(v), errors: errs
+        };
       }
       errs.push("add(" + Object.keys(v).join(",") + ") 没返回文档");
     } catch (e) {
@@ -1818,6 +1883,70 @@ async function closeDocument(id, opts) {
  *    形状图层的 `kind` 是 `solidColor`（内容图层 = 矢量），**不是 pixel** ⇒
  *    这正是"可继续编辑"的判据（见 v0.2.3 那张 kind 表）。
  */
+
+/**
+ * 扫一遍打开的文档，把**属于我们探针/自检的**那些关掉。
+ *
+ * 🔴 为什么要有它（2026-10-17 真机事故）：
+ *   `closeDocument` 在"找不到文档 / 关不掉"时**返回 `{ok:false}` 而不抛异常**，
+ *   而自检里 20+ 处调用都写成 `await ps.closeDocument(id)` **不检查返回值**
+ *   ⇒ 关闭失败被无声吞掉，临时文档就在**用户的 PS 里堆积**
+ *   （实测到 `Vellum 自检临时文档(S51-A)`、`(S60缩放)`、`未标题-1` 三个残留）。
+ *   更糟的是**堆积会反过来把后续自检搞乱**（活动文档不对、建稿尺寸异常）⇒ 一批**假失败**。
+ *   ⇒ 开场先扫一遍清场，收尾再扫一遍确认没漏关，**两边都把结果记进报告**。
+ *
+ * ⚠️ **只关名字匹配前缀的** —— 绝不按"某个非活动文档"之类模糊条件关，
+ *   用户自己的稿一根汗毛都不能碰。
+ *
+ * @param {string[]} [prefixes] 名字前缀；默认是自检/探针用过的几种
+ * @returns {Promise<{closed:string[], failed:{name:string,err:string}[], kept:string[]}>}
+ */
+async function sweepProbeDocs(prefixes) {
+  const list = (Array.isArray(prefixes) && prefixes.length)
+    ? prefixes
+    : ["Vellum 自检临时文档", "Vellum 探针", "TP-"];
+  const out = { closed: [], failed: [], kept: [], unknown: 0 };
+
+  /* 🔴 **先快照（id + name），再动手关** —— 2026-10-17 实测：
+     边遍历边关会让 `app.documents` 的元素**失效**（`d.name` 读成空串），
+     结果 sweep **认不出自己的临时文档**（真机读数：收尾时 3 个文档名字全是 ""）。
+     ⇒ 先一次性取完 id/name，再按 id 关，互不干扰。 */
+  const snap = [];
+  try {
+    const n = app.documents.length;
+    for (let i = 0; i < n; i++) {
+      let d = null;
+      try { d = app.documents[i]; } catch (eA) { d = null; }
+      if (!d) { out.unknown++; continue; }
+      let nm = "";
+      let id = null;
+      try { nm = String(d.name || ""); } catch (eB) { nm = ""; }
+      try { id = d.id; } catch (eC) { id = null; }
+      if (!nm) out.unknown++;          // ★ 读不到名字要**能被发现**（以前静默当"别人的"）
+      snap.push({ id: id, name: nm });
+    }
+  } catch (e0) {
+    out.failed.push({ name: "(列举文档)", err: msg(e0) });
+    return out;
+  }
+
+  for (const it of snap) {
+    let hit = false;
+    for (const pfx of list) {
+      if (it.name && it.name.indexOf(pfx) === 0) { hit = true; break; }
+    }
+    if (!hit) { out.kept.push(it.name); continue; }
+    if (it.id === null || it.id === undefined) {
+      out.failed.push({ name: it.name, err: "拿不到文档 id" });
+      continue;
+    }
+    const r = await closeDocument(it.id);
+    if (r && r.ok) out.closed.push(it.name);
+    else out.failed.push({ name: it.name, err: (r && r.error) || "?" });
+  }
+  return out;
+}
+
 
 /**
  * 建「矩形形状图层」的描述符（**纯函数**，可离线断言命令形状）。
@@ -2532,6 +2661,85 @@ function findTextLayerContents(key) {
  *        （取样矩形全在线上），但**验文字纵向位置时必须用合成**：文字层在字形之外是透明的，
  *        读当前图层只会得到一片恒定值（S43 第一版就是这么白跑一轮的）。
  */
+/* ------------------------------------------------------------ 取色（imaging.getPixels）
+
+   🔴 2026-10-17 实测 + **官方文档**（developer.adobe.com/photoshop/uxp/2022/ps_reference/media/imaging/）确认：
+   · 源区域字段名**只有 `sourceBounds`**（不是 `sourceRect`）。写错时 PS **静默忽略**它，
+     返回**整幅**的平均色 —— 真机表现是"四个不同位置的采样点返回完全相同的值"
+     （`整条=#ABA9A9 条顶=#ABA9A9 条底=#ABA9A9 图区=#ABA9A9`）。
+   · ⚠️ **`targetSize` 小于请求区域时，PS 会用「金字塔缓存层」**（偏好设置 *Performance Cache Levels*），
+     返回的 `sourceBounds` 也随之变成**缓存层坐标**（不是文档坐标）——实测拿到 `{0,0,150,113}`
+     而请求的是 `{0,226,300,298}`（正好一半）。
+     🔴 后果很严重：**刚画上去的内容可能还没进缓存** ⇒ 读到的像素是**旧的**。
+     ⇒ 所以"参数条刚画完就验底色"这种场景**必须避开缓存层**：
+     本函数发现 `level > 0` 时会**再取一次（不传 targetSize，强制全分辨率）**。
+   · 请求区域会被 PS **裁剪到「真正含像素数据的部分」**，回读的 `sourceBounds` 是裁剪后的
+     ⇒ 判据只能是「**回读区域落在请求区域内**」，**不能要求相等**。 */
+async function rawSample(rect, composite, layerId, noScale) {
+  const d = app.activeDocument;
+  const req = {
+    documentID: d.id,
+    componentSize: 8,
+    colorSpace: "RGB",
+    applyAlpha: false,
+    sourceBounds: {
+      left: Math.round(rect.left), top: Math.round(rect.top),
+      right: Math.round(rect.right), bottom: Math.round(rect.bottom),
+    },
+  };
+  /* noScale = 不传 targetSize ⇒ 返回原尺寸 ⇒ 逼 PS 用 level 0（全分辨率） */
+  if (!noScale) req.targetSize = { width: 1, height: 1 };
+  if (!composite && layerId !== null && layerId !== undefined) req.layerID = layerId;
+
+  let out = null;
+  let err = null;
+  await runModal(async () => {
+    try {
+      const res = await imaging.getPixels(req);
+      const img = res && res.imageData;
+      if (!img) throw new Error("getPixels 未返回 imageData");
+      let data = typeof img.getData === "function" ? img.getData({}) : null;
+      if (data && typeof data.then === "function") data = await data;
+      const bytes = data && data.data ? data.data : data;
+      if (!bytes || bytes.length < 3) throw new Error("像素数据结构不符合预期");
+      const comps = (img.components === 4 || bytes.length === 4) ? 4 : 3;
+      let rr = 0;
+      let gg = 0;
+      let bb = 0;
+      let n = 0;
+      for (let p2 = 0; p2 + comps - 1 < bytes.length; p2 += comps) {
+        rr += bytes[p2];
+        gg += bytes[p2 + 1];
+        bb += bytes[p2 + 2];
+        n++;
+      }
+      if (!n) throw new Error("没有读到像素");
+      const sb = res && res.sourceBounds;
+      out = {
+        rgb: { r: clamp255(rr / n), g: clamp255(gg / n), b: clamp255(bb / n) },
+        n: n,
+        level: (typeof res.level === "number") ? res.level : null,
+        got: sb ? { left: sb.left, top: sb.top, right: sb.right, bottom: sb.bottom } : null,
+      };
+    } catch (e) {
+      err = msg(e);
+    }
+  }, "Vellum 工具箱：采样矩形平均色");
+
+  if (err) return { ok: false, error: err };
+  if (!out) return { ok: false, error: "未取到像素" };
+  out.ok = true;
+  return out;
+}
+
+/**
+ * 取某个矩形的平均色（**只读**，不进历史）。
+ *
+ * @param {{left,top,right,bottom}} rect 文档坐标
+ * @param {{composite?:boolean}} [opts] `composite:true` = 取**文档合成**（不传 layerID）
+ * @returns {Promise<{ok:boolean, rgb?:object, hex?:string, n?:number, level?:number,
+ *                    got?:object, fieldOk?:boolean, note?:string, error?:string}>}
+ */
 async function sampleRectAvgColor(rect, opts) {
   const o = opts || {};
   try {
@@ -2541,40 +2749,37 @@ async function sampleRectAvgColor(rect, opts) {
     }
     const d = app.activeDocument;
     const l = d.activeLayers && d.activeLayers[0];
-    const req = {
-      documentID: d.id,
-      sourceRect: {
-        left: Math.round(rect.left), top: Math.round(rect.top),
-        right: Math.round(rect.right), bottom: Math.round(rect.bottom),
-      },
-      targetSize: { width: 1, height: 1 },
-      componentSize: 8,
-      colorSpace: "RGB",
-      applyAlpha: false,
+    const layerId = (l && l.id !== undefined) ? l.id : null;
+    const want = {
+      left: Math.round(rect.left), top: Math.round(rect.top),
+      right: Math.round(rect.right), bottom: Math.round(rect.bottom),
     };
-    /* v0.4.5：`composite:true` = 取**文档合成**（不传 `layerID`）；默认仍是「当前图层」。
-       S43 量文字纵向位置时必须用合成 —— 文字层在字形之外是透明的，读当前图层只会得到一片恒定值。 */
-    if (!o.composite && l && l.id !== undefined) req.layerID = l.id;
 
-    let rgb = null;
-    let rawErr = null;
-    await runModal(async () => {
-      try {
-        const res = await imaging.getPixels(req);
-        const img = res && res.imageData;
-        if (!img) throw new Error("getPixels 未返回 imageData");
-        let data = typeof img.getData === "function" ? img.getData({}) : null;
-        if (data && typeof data.then === "function") data = await data;
-        const bytes = data && data.data ? data.data : data;
-        if (!bytes || bytes.length < 3) throw new Error("像素数据结构不符合预期");
-        rgb = { r: clamp255(bytes[0]), g: clamp255(bytes[1]), b: clamp255(bytes[2]) };
-      } catch (e) {
-        rawErr = msg(e);
+    let r = await rawSample(want, o.composite, layerId, false);
+    let note = "";
+    /* ★ level > 0 = PS 用了金字塔缓存层 ⇒ 可能读不到"刚画上去"的内容
+       ⇒ 再取一次：不传 targetSize（强制全分辨率，level 应为 0）。 */
+    if (r.ok && r.level !== null && r.level > 0) {
+      const r2 = await rawSample(want, o.composite, layerId, true);
+      if (r2.ok) {
+        note = "首次落在 level=" + r.level + " 缓存层，已用全分辨率重取";
+        r = r2;
       }
-    }, "Vellum 工具箱：采样矩形平均色");
-    if (rawErr) return { ok: false, error: rawErr };
-    if (!rgb) return { ok: false, error: "未取到像素" };
-    return { ok: true, rgb: rgb, hex: rgbToHex(rgb) };
+    }
+    if (!r.ok) return { ok: false, error: r.error };
+
+    /* 判据：level 0 时，回读区域必须**落在请求区域内**
+       （PS 会把请求裁剪到"含像素数据的部分"；字段被忽略时它会返回整幅，几乎必然越界） */
+    let fieldOk = true;
+    if (r.level === 0 && r.got) {
+      fieldOk = r.got.left >= want.left - 2 && r.got.top >= want.top - 2 &&
+        r.got.right <= want.right + 2 && r.got.bottom <= want.bottom + 2;
+    }
+    return {
+      ok: true, rgb: r.rgb, hex: rgbToHex(r.rgb), n: r.n,
+      level: r.level, got: r.got, fieldOk: fieldOk,
+      note: fieldOk ? note : (note + " ⚠ 回读区域越出请求范围（疑似 sourceBounds 未被接受）"),
+    };
   } catch (e) {
     return { ok: false, error: msg(e) };
   }
@@ -3226,9 +3431,1120 @@ async function exportByRows(plan, opts) {
   return out;
 }
 
+/* ===========================================================================
+ * 导出审核版（M5 第 4 步；方案 docs/50，缺陷与改法见 docs/52）
+ * ===========================================================================
+ * ★ v0.9.2 起走**备路**（用户 2026-10-17 拍板，理由见 docs/52 §四 修法 1）：
+ *      0 体检 → 1 版式/文字/主题（**都在原稿上，只读**）→
+ *      ① 复制一张**副本** → ①b 副本若非 RGB 先 `changeMode(RGB)`（PNG 只支持 RGB）→
+ *      ② 临时把背景色设成**本条的主题底色**（白条就靠它，黑条同理）→
+ *      ③ 扩画布（下方加条位）→ ④ 写参数条（正文 / 角标 / 右下依据块 + logo）→
+ *      ④c 大稿按长边上限缩放（探到有 API 才做）→ ⑤ asCopy 导出（含**独立复核**）→
+ *      ⑥ 还原背景色 → ⑦ 读副本的飞行读数 → **关掉副本（不保存）** →
+ *      ⑧ 切回原稿，读回自证「**三项都没变**」
+ *
+ * 🔴 为什么从"主路"改成"备路"：
+ *   PS 的 PNG 存储**不支持 CMYK 稿**（真实报错 `#-25923`，而 UXP **会把这个错吞掉**
+ *   ⇒ 表现为"报成功、盘上什么都没有"）—— 用户那张 84×184cm 展架稿正是 CMYK。详见 docs/52。
+ *   备路还顺带把"**临时改用户的稿 + 靠历史状态还原**"那一整类风险**整块消掉**：
+ *   原稿从头到尾**只被读过**，没有"中间那几秒被改过"这回事。
+ *
+ * 四条硬约束（**全部来自 review-probe 的真机实测**，别凭印象改）：
+ *   🔴 `resizeCanvas` 的锚点**必须用 `photoshop.constants.AnchorPosition` 枚举** ——
+ *      传字符串会被**静默忽略**（不报错，但新空间上下各半）—— R7 / R11。
+ *   🔴 导出**必须** `asCopy`：`saveAs.png(entry, {}, true)`。不带第 3 参会把**文档改名**
+ *      成导出文件名，而改名是**文件级属性，`activeHistoryState` 救不回来** —— R8。
+ *   🔴 「白条」不是去"填白"：`resizeCanvas` 的新区域用的是**背景色**填充（R4 像素实测）。
+ *      所以必须**临时**把背景色设成纯白、**用完还原**。
+ *   🔴 `set` 类必须包在模态里；`get` 不用。`readColor` / `setColor` / `restoreColor`
+ *      内部各自 `runModal`，所以这里**不再套第二层模态**。
+ *
+ * ★ 收尾的「读回自证」**不是可选项**：本项目铁律「**没报错 ≠ 生效**」。
+ *   必须读回「画布尺寸 / 图层数 / 背景色」三项都在原位才算成功；
+ *   没回到位就**如实报出来**（并提示按 Ctrl+Z），**不装作没事**。
+ * ========================================================================= */
+
+/** 本地数字转换（null / "" / 对象壳 → null，**不猜 0**）。 */
+function pnum(v) {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "object" && "_value" in v) v = v._value;
+  const n = Number(v);
+  return isFinite(n) ? n : null;
+}
+
+/** 只读：活动文档的三个几何量 + 图层数（deep）。不抛。 */
+function readDocGeom() {
+  const out = { w: null, h: null, ppi: null, layers: null, name: "" };
+  try {
+    const d = app.activeDocument;
+    if (!d) return out;
+    out.w = pnum(d.width);
+    out.h = pnum(d.height);
+    out.ppi = pnum(d.resolution);
+    out.name = String(d.name || "");
+  } catch (e) {
+    /* 读不到就留 null —— 不许拿 0 冒充 */
+  }
+  out.layers = undoHistory.currentLayers();
+  return out;
+}
+
+/** 读回一个 Entry 的字节数（**真读盘**，本项目判据要求读回而不是"没报错"）。 */
+async function entryBytes(entry) {
+  if (!entry) return null;
+  try {
+    const formats = uxpNS && uxpNS.storage && uxpNS.storage.formats;
+    if (!formats) return null;
+    const buf = await entry.read({ format: formats.binary });
+    const n = buf && (buf.byteLength !== undefined ? buf.byteLength : buf.length);
+    return typeof n === "number" ? n : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * 在一个目录里按名字找文件 —— **独立于 `entry.read()`**。
+ *
+ * 🔴 为什么要有它（2026-10-17 真机事故的直接产物）：用户那张 4961×10866 CMYK 的稿
+ *   点「导出审核版」，面板报 `bytes=null`，而 `saveAs` **没抛错**。事后查盘：
+ *   **目标目录里连一个字节都没有**。但旧代码里"读失败"与"文件不存在"**读数一模一样**
+ *   （都是 `entryBytes` 返回 null）⇒ 根本分不清是"**写失败**"还是"**读失败**"，
+ *   这就是那次事故查不下去的原因。
+ *   ⇒ 现在一律**问目录**：这个文件名在不在、多大。这条路不依赖 `read()`。
+ *
+ * @param {object} folder 目录 Entry（拿不到就返回 found=false + error）
+ * @param {string} name   文件名
+ * @returns {Promise<{found:boolean,size:number|null,count:number|null,via:string,error:string}>}
+ */
+async function fileInFolder(folder, name) {
+  const r = { found: false, size: null, count: null, via: "getEntries", error: "" };
+  if (!folder || typeof folder.getEntries !== "function") {
+    r.error = "拿不到目录句柄（调用方没传 folder）";
+    return r;
+  }
+  try {
+    const es = await folder.getEntries();
+    r.count = es ? es.length : 0;
+    for (const e of (es || [])) {
+      if (String(e.name) === String(name)) {
+        r.found = true;
+        try {
+          const b = await e.read({ format: uxpNS.storage.formats.binary });
+          r.size = (b && b.byteLength !== undefined) ? b.byteLength : (b ? b.length : null);
+        } catch (e2) {
+          r.size = null;
+          r.error = "目录里找到了它、但读不出字节：" + msg(e2);
+        }
+        break;
+      }
+    }
+  } catch (e) {
+    r.error = "列举目录失败：" + msg(e);
+  }
+  return r;
+}
+
+/**
+ * 复制当前文档（**备路的地基**，docs/52 §四 修法 1）。
+ *
+ * 🔴 为什么要有它：PS 的 PNG 存储**不支持 CMYK**（真报错 `#-25923`，见 docs/52），
+ *   而 UXP 会把那个错**吞掉** ⇒ 表现为「命令报成功、盘上什么都没有」。
+ *   ⇒ 正解不是"临时把用户的稿改成 RGB 再赌能还原"，而是
+ *     **复制一张副本、在副本上折腾**：副本转 RGB、扩画布、画参数条、缩放、存 PNG，
+ *     然后**关掉副本（不保存）**。**原稿一根汗毛都不动** ——
+ *     连"临时改稿 + 靠历史状态还原"那套风险**整块消失**。
+ *
+ * ⚠️ `duplicate` 的签名各版本不一（要不要 name）⇒ 逐个试，**不猜**。
+ * @returns {Promise<{ok:boolean,id:number|null,name:string,mode:string,error:string,tries:string[]}>}
+ */
+async function duplicateActive(name) {
+  const tries = [];
+  const forms = [
+    { label: "duplicate(name)", run: async (d) => d.duplicate(name) },
+    { label: "duplicate()", run: async (d) => d.duplicate() },
+  ];
+  for (const f of forms) {
+    try {
+      let made = null;
+      await runModal(async () => {
+        made = await f.run(app.activeDocument);
+      }, "Vellum 工具箱：复制一张稿（备路）");
+      if (made && made.id !== undefined && made.id !== null) {
+        return {
+          ok: true, id: made.id, name: String(made.name || ""),
+          mode: String(made.mode || ""), error: "", tries: tries
+        };
+      }
+      tries.push(f.label + " 没返回文档");
+    } catch (e) {
+      tries.push(f.label + "：" + msg(e));
+    }
+  }
+  return { ok: false, id: null, name: "", mode: "", error: tries.join("；"), tries: tries };
+}
+
+/**
+ * 把**当前文档**改成 RGB —— PNG 存储只认 RGB（docs/52）。
+ * ⚠️ **只允许在副本上调用**，绝不能对用户的稿做这件事。
+ * @returns {Promise<boolean>} 是否（本来就是 / 已成功改成）RGB
+ */
+async function ensureRGBDoc(out) {
+  let before = "";
+  try { before = String(app.activeDocument.mode); } catch (e) { before = ""; }
+  if (before && before.indexOf("RGB") >= 0) {
+    out.steps.push("mode 已是 RGB（无需转）");
+    return true;
+  }
+  try {
+    const CN = (constants && constants.DocumentMode) || null;
+    const target = (CN && CN.RGB) || "RGBColorMode";
+    await runModal(async () => {
+      await app.activeDocument.changeMode(target);
+    }, "Vellum 工具箱：把副本转成 RGB（PNG 只支持 RGB）");
+    let after = "";
+    try { after = String(app.activeDocument.mode); } catch (e) { after = ""; }
+    out.steps.push("changeMode → " + after);
+    const okNow = !!after && after.indexOf("RGB") >= 0;
+    if (!okNow) out.warnings.push("副本转 RGB 后读回仍是 " + after + " ⇒ PNG 很可能还是存不出来");
+    return okNow;
+  } catch (e) {
+    out.steps.push("changeMode THREW");
+    out.warnings.push("副本转 RGB 失败（" + msg(e) + "）⇒ PNG 存不出来（PS 的 PNG 只支持 RGB）");
+    return false;
+  }
+}
+
+/**
+ * 保存 PNG + **独立复核**（问目录）+ 必要时重试。审核版与成品图共用。
+ * **不提前 return**（成败记在 `out` 里），由调用方统一收尾。
+ */
+async function savePngWithCheck(out, opt, tag) {
+  if (!opt.entry) {
+    out.steps.push("saveAs 跳过（没给 entry）");
+    return;
+  }
+  const doSave = async function () {
+    await runModal(async () => {
+      await app.activeDocument.saveAs.png(opt.entry, {}, true);
+    }, "Vellum 工具箱：" + tag);
+  };
+  out.file = { name: safeStr(opt.entry.name), path: safeStr(opt.entry.nativePath) };
+  const haveFolder = !!(opt.folder && typeof opt.folder.getEntries === "function");
+
+  /* ① 保存前**确保目标不存在**。
+     ⚠️ 反面教训：曾用"预写 0 字节让 entry 落地"来对付 `createFile` 的惰性，
+        结果目标变成"已存在"，PS 那次保存**一个字节都没写**。正解是反过来的：先清掉。 */
+  const clearTarget = async function (tag2) {
+    if (!haveFolder) return;
+    try {
+      const pre = await fileInFolder(opt.folder, opt.entry.name);
+      if (pre.found) {
+        try { await opt.entry.delete(); out.steps.push(tag2 + " 已清掉同名旧文件"); }
+        catch (eD) { out.steps.push(tag2 + " 清旧文件失败(" + msg(eD) + ")"); }
+      }
+    } catch (e) { out.steps.push(tag2 + " 预检异常(" + msg(e) + ")"); }
+  };
+  await clearTarget("saveAs前");
+
+  /* ② 记下"保存时到底是哪个文档" —— 万一存错稿，这条就是证据 */
+  try {
+    const d0 = app.activeDocument;
+    out.savedDoc = {
+      name: String(d0.name || ""), w: pnum(d0.width), h: pnum(d0.height),
+      mode: String(d0.mode || "")
+    };
+  } catch (eD) { out.savedDoc = { name: "读不到：" + msg(eD) }; }
+
+  /* ③ 保存 */
+  try {
+    await doSave();
+    out.steps.push("saveAs(asCopy) ok");
+  } catch (e) {
+    out.steps.push("saveAs THREW");
+    out.error = "导出失败：" + msg(e);
+    return;
+  }
+
+  /* ④ 独立复核：**问目录**这个文件名在不在（不看 saveAs 有没有报错） */
+  if (haveFolder) {
+    out.fileCheck = await fileInFolder(opt.folder, opt.entry.name);
+    if (!out.fileCheck.found) {
+      out.steps.push("复核①目录里没找到 ⇒ 重试保存一次");
+      await new Promise(function (res) { setTimeout(res, 400); });
+      await clearTarget("重试前");
+      try {
+        await doSave();
+        out.steps.push("saveAs 重试 ok");
+      } catch (eR) {
+        out.steps.push("saveAs 重试 THREW");
+        out.warnings.push("重试保存也失败：" + msg(eR));
+      }
+      await new Promise(function (res) { setTimeout(res, 400); });
+      out.fileCheck = await fileInFolder(opt.folder, opt.entry.name);
+    }
+  } else {
+    out.fileCheck = {
+      found: null, size: null, count: null, via: "退化(entryBytes)",
+      error: "调用方没传 folder ⇒ 只能用老判据"
+    };
+    out.steps.push("复核跳过（没给 folder）");
+  }
+  out.fileBytes = await entryBytes(opt.entry);
+
+  /* ⑤ 命令说 ok、盘上却没有 ⇒ **这才是真相**，如实报出来（不写"没报错就算成功"） */
+  if (haveFolder && !out.fileCheck.found) {
+    let modeNote = "";
+    try {
+      out.docMode = String(app.activeDocument.mode);
+      if (out.docMode.indexOf("CMYK") >= 0) {
+        modeNote = "　⚠ 成因：这张稿是 " + out.docMode +
+          " —— PS 的 PNG 存储不支持 CMYK（真实报错 #-25923「命令「存储」的参数当前是无效的」），" +
+          "而 UXP 会把这个错吞掉。见 docs/52。";
+      }
+    } catch (eM) { /* 忽略 */ }
+    out.error = "PS 报告保存成功，但目标目录里查不到这个文件（已自动重试 1 次）。"
+      + "文件名=" + safeStr(opt.entry.name)
+      + "　目录=" + (safeStr(opt.folder && opt.folder.nativePath) || "（拿不到路径）")
+      + (out.fileCheck.error ? "　复核错误=" + out.fileCheck.error : "")
+      + modeNote;
+  }
+}
+
+/** 关掉一张**副本**（不保存）。失败只记 steps，不抛。 */
+async function closeQuietly(out, id, tag) {
+  if (id === null || id === undefined) return false;
+  try {
+    const r = await closeDocument(id);
+    out.steps.push((tag || "close") + " " + (r && r.ok ? "ok" : "fail"));
+    return !!(r && r.ok);
+  } catch (e) {
+    out.steps.push((tag || "close") + " THREW");
+    return false;
+  }
+}
+
+/** 切回某张文档（失败只记 steps，不抛）。 */
+async function activateQuietly(out, id, tag) {
+  if (id === null || id === undefined) return false;
+  try {
+    await activateDocument(id);
+    out.steps.push((tag || "activate") + " ok");
+    return true;
+  } catch (e) {
+    out.steps.push((tag || "activate") + " THREW");
+    return false;
+  }
+}
+
+/**
+ * 导出审核版 / 成品图。
+ *
+ * @param {object} o
+ *   `o.entry`  目标文件 Entry（**必须已存在**；由调用方用目录 + createFile 拿到）。
+ *              传 null = 只改稿不导出（诊断用）。
+ *   `o.kind`   `"review"`（默认，含参数条）| `"final"`（只 asCopy 导出，**完全不动稿**）
+ *   `o.bleed`  `{ state:"none"|"has"|"unknown", mm:number|null }`
+ *   `o.when`   Date 或时间戳（导出时间，参数条上要印）
+ *   `o.insp`   可选：`docInspect()` 的结果。**不传就在动手之前自己取一份** ——
+ *              参数条的字段只认这一份来源（docs/49 §3.0）。
+ *   `o.text`   false = 扩画布但不写参数条（诊断用）
+ * @returns {Promise<object>} 一份**带读数**的结果（`before` / `after` / `restored` / `lines`…）
+ */
+async function exportReview(o) {
+  const opt = o || {};
+  const kind = opt.kind === "final" ? "final" : "review";
+  const when = opt.when || new Date();
+  const wantText = opt.text !== false;
+  const t0 = Date.now();
+
+  const out = {
+    ok: false,
+    kind: kind,
+    when: when,
+    file: null, fileBytes: null,
+    before: null, after: null,
+    restored: null,
+    resizeReadback: null, bgWhite: null, bgRect: null, bgPixels: null, bgPixelsHit: null,
+    bgProbeReads: null,
+    textReadback: null, tagReadback: null,
+    /* v0.9.0（docs/51）：主题判定 / 缩放计划 / 依据块与 logo 的读回 */
+    theme: null, scale: null, scaleApplied: null,
+    basisReadback: null, logoReadback: null, textInk: null,
+    /* v0.9.1：导出落点的**独立复核**（盘上到底有没有）+ 保存时到底是哪个文档 */
+    fileCheck: null, savedDoc: null, docMode: null,
+    /* v0.9.2（docs/52 修法 1 · 备路）：副本 + 原稿 + 副本上的飞行读数 */
+    dup: null, origId: null, dupHit: null, hitCanvas: null, hitLayers: null,
+    metrics: null, lines: null, bleed: opt.bleed || { state: "unknown", mm: null },
+    /* ⚠️ `undo` / `undoRevert`：v0.9.2 起备路**不再需要还原**（原稿全程没被写过），
+       保留字段只为兼容旧读数与界面。 */
+    undo: null, undoRevert: null, bgRestore: null,
+    steps: [],
+    ms: 0, error: null, warnings: [],
+  };
+
+  if (!hasDocument()) {
+    out.error = "没有打开的文档";
+    out.ms = Date.now() - t0;
+    return out;
+  }
+
+  /* ---- 0. 体检（只读、不进模态）----
+     ★ 必须在**动手之前**取，否则参数条会把"自己刚加的那两层"也算进去
+       （未转曲文字层数会 +1、图层数变化），那是自欺。 */
+  let insp = opt.insp || null;
+  if (!insp) {
+    try {
+      insp = inspectLib.docInspect();
+    } catch (e) {
+      insp = { ok: false, error: msg(e) };
+    }
+  }
+  if (kind === "review" && (!insp || !insp.ok)) {
+    out.error = "体检失败（参数条没有数据来源）：" + ((insp && insp.error) || "未知");
+    out.ms = Date.now() - t0;
+    return out;
+  }
+
+  /* ---- 1. 几何 + 参数条文字（全是纯函数）---- */
+  const geom0 = readDocGeom();
+  out.before = geom0;
+  if (geom0.w === null || geom0.h === null || geom0.w <= 0 || geom0.h <= 0) {
+    out.error = "读不到文档尺寸（宽/高），无法算参数条";
+    out.ms = Date.now() - t0;
+    return out;
+  }
+
+  /* ---- 1. 缩放计划 + 参数条文字 + 版式（全是纯函数）---- */
+  const plan = reviewLib.planScale(geom0.w, geom0.h);
+  out.scale = plan;
+
+  const strip = reviewLib.stripLines(insp, { bleed: out.bleed, when: when, scale: plan });
+  if (kind === "review" && !strip.ok) {
+    out.error = "参数条内容算不出来：" + strip.error;
+    out.ms = Date.now() - t0;
+    return out;
+  }
+  const met = reviewLib.stripMetrics(
+    geom0.w, geom0.h, geom0.ppi, strip.lines, strip.tag, strip.basis
+  );
+  out.metrics = met;
+  out.lines = { ok: strip.ok, lines: strip.lines, tag: strip.tag, basis: strip.basis };
+
+  const bgRaw0 = await readColor("background");
+  out.before.bg = bgRaw0.ok ? bgRaw0.hex : null;
+
+  /* ---- 1b. 主题判定（**只读**：取图片底部横带的平均色）----
+     ★ 用 `imaging.getPixels` 在 1×1 上取平均（`composite:true` = 文档合成）——
+       **只读、不动文档、不进历史**，所以可以放心地放在"记标记"之前。
+     ★ 取不到就退回浅条并标明 `from:"fallback"`，**不假装判过**（docs/51 §3.1）。 */
+  if (kind === "review") {
+    const band = reviewLib.sampleBandRect(geom0.w, geom0.h, met.baseStripH);
+    const sample = await sampleRectAvgColor(band, { composite: true });
+    const ti = reviewLib.pickTheme(sample);
+    ti.band = band;
+    out.theme = ti;
+    out.steps.push("theme " + ti.theme.id + "(" + ti.from + ")");
+  }
+
+  /* ---- 成品图：**也走备路**（PNG 存不了 CMYK；这样原稿一定不动）---- */
+  if (kind === "final") {
+    let origF = null;
+    try { origF = app.activeDocument.id; } catch (e) { origF = null; }
+    out.origId = origF;
+
+    const dupF = await duplicateActive(geom0.name + " · 成品图工作副本");
+    out.dup = { ok: dupF.ok, id: dupF.id, name: dupF.name, mode: dupF.mode, error: dupF.error };
+    out.steps.push("duplicate " + (dupF.ok ? "ok" : "FAILED"));
+    if (!dupF.ok) {
+      out.error = "复制工作副本失败（成品图走的是备路）：" + (dupF.error || "未知") +
+        "　⚠ 你的稿**没有被改动过**。";
+      out.ms = Date.now() - t0;
+      return out;
+    }
+    await ensureRGBDoc(out);
+    await savePngWithCheck(out, opt, "导出成品图（asCopy）");
+
+    out.dupHit = readDocGeom();     // 副本的原始状态（成品图不该动它）
+    out.hitCanvas = false;
+    out.hitLayers = false;
+    await closeQuietly(out, dupF.id, "close 副本");
+    await activateQuietly(out, origF, "切回原稿");
+
+    out.after = readDocGeom();
+    out.after.bg = (await readColor("background")).hex || null;
+    out.restored = {
+      w: out.after.w === out.before.w,
+      h: out.after.h === out.before.h,
+      layers: out.after.layers === out.before.layers,
+      bg: out.after.bg === out.before.bg,
+    };
+    /* 成品图不该动稿 ⇒ 三项都必须"没变"（备路下这是"从头到尾没碰过"） */
+    const untouchedF = !!(out.restored.w && out.restored.h &&
+      out.restored.layers && out.restored.bg);
+    const fileOkF = opt.entry ? (out.fileBytes !== null && out.fileBytes > 0) : true;
+    out.ok = !!(untouchedF && fileOkF && !out.error);
+    if (!out.ok && !out.error) {
+      out.error = !untouchedF
+        ? "成品图导出了，但原稿被动过（**不该发生**：备路只在副本上作业）：" +
+          JSON.stringify(out.restored)
+        : "导出文件读回是空/读不到（bytes=" + out.fileBytes + "）";
+    }
+    out.ms = Date.now() - t0;
+    return out;
+  }
+
+  /* ---- ① 复制一张副本（**备路**：此后所有改动都打在副本上，原稿只被读过）----
+     🔴 为什么必须复制：PS 的 PNG 存储**不支持 CMYK**（docs/52），
+        而"临时把用户的稿改成 RGB、再赌历史状态能还原"是**拿用户的稿在冒险**。
+        副本是**逐像素副本** ⇒「审核版必须真实反映原稿」照样成立。 */
+  let origId = null;
+  try { origId = app.activeDocument.id; } catch (e) { origId = null; }
+  out.origId = origId;
+
+  const dup = await duplicateActive(geom0.name + " · 审核版工作副本");
+  out.dup = { ok: dup.ok, id: dup.id, name: dup.name, mode: dup.mode, error: dup.error };
+  out.steps.push("duplicate " + (dup.ok ? "ok" : "FAILED"));
+  if (!dup.ok) {
+    out.error = "复制工作副本失败（备路必须先复制一张）：" + (dup.error || "未知") +
+      "　⚠ 你的稿**没有被改动过**。";
+    out.ms = Date.now() - t0;
+    return out;
+  }
+
+  /* ---- ①b 副本若不是 RGB 先转 RGB（PNG 存储只认 RGB；见 docs/52）---- */
+  await ensureRGBDoc(out);
+
+  /* ⚠️ 从这里开始 `app.activeDocument` 是**副本**。
+        原稿只在最后被切回去读一次，**全程不做任何写操作**。 */
+
+  /* ---- ② 参数条底色：**不再靠「背景色 + 扩画布填充」**（v0.9.5 改）----
+     🔴 根因（用户 2026-10-17 真机报障「参数条背景无填充」）：
+     `resizeCanvas` 扩出来的新区域**恒为白色**，与当前「背景色」无关 —— 实测：
+       · `setColor("background", #111111)` 的**真读回**就是 `#111111`（`ok` 判据 = 回读命中）；
+       · 而扩画布后该区域像素仍是 `(255,255,255)`（不是透明 —— 透明转 RGB 会是黑）。
+     ⚠️ 更早 `review-probe` 的 R4 结论「新区域 = 背景色填充」**是错的** ——
+       当时背景色恰好是白，实验**无法区分**「填背景色」与「恒填白」（**缺负对照**）。
+     ⇒ 正解：扩画布后，在那个位置**放一个填充矩形层**（`makeRectShapeLayer`，M3a 已验证）。
+     ⇒ 顺带**不再需要「设背景色 / 还原背景色」**那两步（少碰一次 app 级设置、少一个出错点）。 */
+  const theme = out.theme ? out.theme.theme : reviewLib.THEME_LIGHT;
+
+  /* ---- ③ 扩画布：锚点**必须**用枚举（字符串会被静默忽略）---- */
+  try {
+    await runModal(async () => {
+      const d = app.activeDocument;
+      const AN = constants && constants.AnchorPosition ? constants.AnchorPosition.TOPCENTER : null;
+      if (!AN) throw new Error("photoshop.constants.AnchorPosition 不可用（无法保证新空间落在下方）");
+      await d.resizeCanvas(out.metrics.imgW, out.metrics.imgH + out.metrics.stripH, AN);
+      /* ★ 飞行中读回：证明画布**真的变高了**（而不是"命令没报错就算数"）。
+         它不仅当读数，也是负对照 —— 自检拿它和 stripH 对账。 */
+      out.resizeReadback = { w: pnum(d.width), h: pnum(d.height) };
+    }, "Vellum 工具箱：为参数条加高画布");
+    out.steps.push("resizeCanvas ok (+" + out.metrics.stripH + "px)");
+  } catch (e) {
+    out.error = "扩画布失败：" + msg(e) + "　⚠ 你的稿**没有被改动过**（备路只在副本上作业）。";
+    /* 失败就收摊：把副本关掉，原稿本来就是干净的 */
+    await closeQuietly(out, dup.id, "close 副本(失败收摊)");
+    await activateQuietly(out, origId, "切回原稿");
+    out.ms = Date.now() - t0;
+    return out;
+  }
+
+  /* ---- ③b 参数条底色：**填充矩形层**（v0.9.5；替代原来的「背景色 + 扩画布填充」）----
+     判据不靠"命令没报错"：`makeRectShapeLayer` 自己**读回图层数**才算成功。 */
+  try {
+    const st = out.metrics.strip;
+    const rc = await makeRectShapeLayer(
+      { left: st.left, top: st.top, right: st.right, bottom: st.bottom },
+      theme.bg,
+      { name: "参数条底色", fill: true, stroke: false }
+    );
+    out.bgRect = {
+      ok: !!rc.ok, via: rc.via || "", attempts: rc.attempts || [],
+      wantHex: theme.bgHex, rect: rc.rect || null, error: rc.error || ""
+    };
+    out.steps.push("bgRect " + (rc.ok ? "ok(" + theme.bgHex + ")" : "fail(" + (rc.error || "?") + ")"));
+    if (!rc.ok) {
+      out.warnings.push("参数条底色矩形没建出来（" + (rc.error || "") + "）⇒ 底色会是白的（深条会看不清字）");
+    }
+  } catch (eB) {
+    out.steps.push("bgRect THREW");
+    out.warnings.push("建参数条底色矩形抛异常：" + msg(eB));
+  }
+
+  /* ---- ④ 写参数条 ---- */
+  if (wantText) {
+    /* ★ v0.9.3：整块文字要**垂直居中** ⇒ 先定一个"整块下移量"，
+       角标与依据块共用它（三者相对位置不变）。原因见下面读回正文外框那段。 */
+    let textDy = 0;
+    try {
+      /* 🔴 段落分隔符必须是 **`\r`**，不是 `\n` —— 真机样张实测（v0.8.0 第一轮）：
+         用 `\n` 时 PS **不换行**，三行被拼成一行、右侧超出画布被裁掉（连角标都被盖住）。
+         ActionDescriptor 里的文本引擎用 CR 作段落分隔，这是 PS 的老约定。 */
+      const mainText = strip.lines.join("\r");
+      const main = await makeTextLayerBox({
+        text: mainText,
+        box: out.metrics.text,
+        sizePt: out.metrics.fontPt,
+        rgb: theme.fg,
+        name: "审核参数条",
+      });
+      out.steps.push("text(main) " + (main.ok ? "ok" : "fail"));
+      out.mainLayer = main.layer || null;
+      if (!main.ok) out.warnings.push("参数条正文没建出来：" + (main.error || "图层数没增加"));
+
+      /* ★ 读回：把那层的 `textItem.contents` 读出来（本项目铁律：没报错 ≠ 生效）。
+         它同时当"换行真的生效了"的判据 —— 拼接成一行的写法在这里会现形。
+         ⚠️ 找层**不能用我们给的名字**：真机实测 `make textLayer` 的 `name` 不生效
+         （层名会变成「文字图层 n」，这正是 `textLayerBoxDesc` 里 S40 那条警告）。
+         所以一律用 `layerInfo()` 回报的**真实层名**。 */
+      try {
+        const d = app.activeDocument;
+        const nm = main.layer && main.layer.name;
+        const L = (nm ? findLayerDeep(nm, "text") : null) || ((d.activeLayers || [])[0] || null);
+        out.textReadback = (L && L.textItem) ? String(L.textItem.contents || "") : null;
+      } catch (e) {
+        out.textReadback = null;
+      }
+
+      /* ★ v0.9.3（用户报"文字整体有些靠上"）：**按真实墨迹边界垂直居中**。
+         为什么必须读回再平移：`makeTextLayerBox` 只设了**字号**、没设行距
+         ⇒ PS 用**自动行距**，实际行距 ≠ 我们算的 `lineH`
+         ⇒ 按"行数 × lineH"当块高去居中**必然偏上**（真机量过：上留白 13px / 下留白 37px）。
+         ⇒ 量正文层的**真实外框**，整块挪到上下留白相等。 */
+      try {
+        const mb = readActiveLayerBounds();
+        if (mb.ok && out.metrics && out.metrics.strip) {
+          const inkH = mb.bounds.bottom - mb.bounds.top;
+          const targetTop = out.metrics.strip.top + (out.metrics.stripH - inkH) / 2;
+          textDy = Math.round(targetTop - mb.bounds.top);
+          out.textInk = {
+            before: { top: mb.bounds.top, bottom: mb.bounds.bottom },
+            h: inkH, dy: textDy, after: null
+          };
+          if (textDy !== 0) {
+            await applyLayerRect({
+              left: mb.bounds.left, top: mb.bounds.top + textDy,
+              right: mb.bounds.right, bottom: mb.bounds.bottom + textDy,
+            });
+          }
+          const mb2 = readActiveLayerBounds();
+          if (mb2.ok) out.textInk.after = { top: mb2.bounds.top, bottom: mb2.bounds.bottom };
+          out.steps.push("text 垂直居中 dy=" + textDy);
+        } else {
+          out.warnings.push("量不到正文层外框，没法按墨迹居中：" + (mb.error || "未知"));
+        }
+      } catch (eC) {
+        out.warnings.push("正文层居中抛异常：" + msg(eC));
+      }
+    } catch (e) {
+      out.steps.push("text(main) THREW");
+      out.warnings.push("参数条正文抛异常：" + msg(e));
+    }
+    try {
+      /* 右上角标。
+         🔴 **不要传 `align`（段落右对齐）** —— v0.8.0 第二轮真机读回：给角标一个
+            "整宽 + 右对齐"的盒子，PS 把它排到了 x=6403..6548，**整块跑到画布外**，
+            导出图上根本看不见（而建层命令报的是成功）。
+            ⇒ 改成：盒子的位置与宽度**由 review.js 算好**，这里用默认（左）对齐。 */
+      const tag = await makeTextLayerBox({
+        text: strip.tag,
+        /* ★ v0.9.3：跟正文一起下来（**同一个 dy**）⇒ 角标与正文第 1 行的相对位置不变 */
+        box: {
+          left: out.metrics.tag.left, top: out.metrics.tag.top + textDy,
+          right: out.metrics.tag.right, bottom: out.metrics.tag.bottom + textDy
+        },
+        /* ★ v0.9.3：角标用**自己的**字号（比正文大）—— 用户：
+           「审核用·非成品」要稍大些，怕真被当成成品。 */
+        sizePt: out.metrics.tagFontPt || out.metrics.fontPt,
+        rgb: theme.tag,
+        name: "审核角标",
+      });
+      out.steps.push("text(tag) " + (tag.ok ? "ok" : "fail"));
+      out.tagLayer = tag.layer || null;
+      if (!tag.ok) out.warnings.push("角标没建出来：" + (tag.error || "图层数没增加"));
+
+      /* ★ 角标读回：第一轮真机样张里角标**根本没出现在导出图上**，
+         而"建层命令没报错"。所以这里把它的可见性 / 文字 / 外框都读回来，
+         好在自检读数里直接看出是"没建"、"不可见"、还是"位置跑到画布外"。 */
+      try {
+        const nmT = tag.layer && tag.layer.name;
+        const TL = nmT ? findLayerDeep(nmT, "text") : null;
+        if (TL) {
+          const bd = TL.bounds || null;
+          out.tagReadback = {
+            name: String(TL.name || ""),
+            visible: TL.visible === undefined ? null : !!TL.visible,
+            contents: (TL.textItem ? String(TL.textItem.contents || "") : null),
+            bounds: bd
+              ? [pnum(bd._left !== undefined ? bd._left : bd.left),
+                 pnum(bd._top !== undefined ? bd._top : bd.top),
+                 pnum(bd._right !== undefined ? bd._right : bd.right),
+                 pnum(bd._bottom !== undefined ? bd._bottom : bd.bottom)]
+              : null
+          };
+        }
+      } catch (e) {
+        out.tagReadback = { error: msg(e) };
+      }
+    } catch (e) {
+      out.steps.push("text(tag) THREW");
+      out.warnings.push("角标抛异常：" + msg(e));
+    }
+
+    /* ---- ④b 右下「依据」块：文字 + 前面的 logo（v0.9.0 / docs/51 §3.3）----
+       ★ **右对齐不用段落对齐枚举**（v0.8.0 实测：整宽 + align:right 会被排到画布外）。
+         做法：先按估算位置建层 → 读回 `bounds` → 按"右边界差多少"精确平移 → **再读回自证**。 */
+    if (strip.basis) {
+      try {
+        const bk = await makeTextLayerBox({
+          text: strip.basis,
+          /* ★ v0.9.3：同一个 dy */
+          box: {
+            left: out.metrics.basis.text.left, top: out.metrics.basis.text.top + textDy,
+            right: out.metrics.basis.text.right, bottom: out.metrics.basis.text.bottom + textDy
+          },
+          sizePt: out.metrics.fontPt,
+          rgb: theme.fg,
+          name: "审核依据",
+        });
+        out.steps.push("text(basis) " + (bk.ok ? "ok" : "fail"));
+        if (!bk.ok) out.warnings.push("依据块没建出来：" + (bk.error || "图层数没增加"));
+
+        const b1 = readActiveLayerBounds();
+        if (b1.ok) {
+          const dx = out.metrics.basis.text.right - b1.bounds.right;
+          const dy = out.metrics.basis.text.top - b1.bounds.top;
+          if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+            await applyLayerRect({
+              left: b1.bounds.left + dx, top: b1.bounds.top + dy,
+              right: b1.bounds.right + dx, bottom: b1.bounds.bottom + dy,
+            });
+            out.steps.push("basis 平移 dx=" + Math.round(dx) + " dy=" + Math.round(dy));
+          } else {
+            out.steps.push("basis 位置已准（无需平移）");
+          }
+        } else {
+          out.warnings.push("量不到依据层的外框：" + b1.error);
+        }
+        const b2 = readActiveLayerBounds();
+        out.basisReadback = b2.ok ? b2.bounds : { error: b2.error };
+      } catch (e) {
+        out.steps.push("text(basis) THREW");
+        out.warnings.push("依据块抛异常：" + msg(e));
+      }
+
+      /* logo：置入插件自带的品牌 mark，再按算好的矩形精确定位。
+         ⚠️ logo 是**彩色**的（蓝绿 + 米色）⇒ 白条黑条上都看得见，不用做两版。 */
+      try {
+        const lfsL = uxpNS && uxpNS.storage ? uxpNS.storage.localFileSystem : null;
+        let logoEntry = null;
+        if (lfsL && typeof lfsL.getPluginFolder === "function") {
+          const pf = await lfsL.getPluginFolder();
+          const dir = pf ? await pf.getEntry("icons") : null;
+          if (dir) logoEntry = await dir.getEntry("logo-mark.png");
+        }
+        if (!logoEntry) throw new Error("取不到插件里的 icons/logo-mark.png");
+
+        const placed = await placeFile(logoEntry);
+        if (!placed || !placed.ok) {
+          throw new Error("置入失败：" + ((placed && placed.error) || "未知"));
+        }
+        /* ★ v0.9.3（用户报"logo 位置偏了"）：logo 的 x **按依据文字的真实外框**算，
+           **不再用估算宽度** —— 真机量过：估算偏大 ⇒ logo 与文字之间多出
+           **整整一个 logo 宽**的空隙（54px）。
+           判据：logo 右边界 = 依据文字左边界 − gap（且不许压到正文）。 */
+        let logoRect = {
+          left: out.metrics.basis.logo.left,
+          top: out.metrics.basis.logo.top + textDy,
+          right: out.metrics.basis.logo.right,
+          bottom: out.metrics.basis.logo.bottom + textDy
+        };
+        try {
+          if (out.basisReadback && out.basisReadback.left !== undefined) {
+            const bt = out.basisReadback;
+            const logoW = out.metrics.basis.logoW;
+            const logoH = out.metrics.basis.logoH;
+            const gp = out.metrics.basis.gap;
+            const minRight = out.metrics.text.right + gp + logoW;   // 不许压到正文
+            const right = Math.max(minRight, bt.left - gp);
+            /* ★ **垂直也对齐到依据文字的真实外框**（取它的中心线）。
+               真机量过：只对齐 x 的话 logo 会偏下约 7.5px（因为行位是算出来的，
+               而 PS 的真实行距不等于我们算的 lineH）。 */
+            const cy = (bt.top + bt.bottom) / 2;
+            logoRect = {
+              left: right - logoW, top: cy - logoH / 2,
+              right: right, bottom: cy + logoH / 2
+            };
+            out.steps.push("logo x 按真实外框 " + Math.round(logoRect.left) +
+              ".." + Math.round(right));
+          }
+        } catch (eL) { /* 用回估算值 */ }
+        const ar = await applyLayerRect(logoRect);
+        out.steps.push("logo " + (ar.ok ? "ok" : "fail"));
+        if (!ar.ok) out.warnings.push("logo 定位没成功：" + (ar.error || "未知"));
+
+        const lb = readActiveLayerBounds();
+        out.logoReadback = lb.ok ? lb.bounds : { error: lb.error };
+      } catch (e) {
+        out.steps.push("logo THREW");
+        out.warnings.push("logo 置入/定位抛异常：" + msg(e));
+      }
+    }
+  }
+
+  /* ---- ④c 像素自证：参数条的**真实底色**（v0.9.5 新增）----
+     ⚠️ 为什么必须验像素：本次事故正是「层都在、命令全 ok，唯独底色是白的」。
+     ⚠️ 为什么判据用「**整条**参数条的平均**亮度**」而不是「角落一小块」：
+        第一版用左上角 10×10 取样，读到 `#EAEAEA`（该组期望 `#111111`），
+        而**导出的 PNG 上明明是 (17,17,17)**（离线量过）⇒ 小区域的取整/边界不可靠。
+        整条平均亮度这个判据很稳：底色对与不对差 0.6 以上（文字只占小面积，翻不了黑白）。
+     ⇒ 同时把 4 个采样点（整条／条顶／条底／图区）如实打进 steps，便于下次定位坐标问题。 */
+  try {
+    const st = out.metrics.strip;
+    const cx = Math.round(out.metrics.imgW / 2);
+    const midY = Math.round(out.metrics.imgH / 2);
+    const pts = [
+      { k: "整条", r: { left: st.left, top: st.top, right: st.right, bottom: st.bottom }, main: true },
+      { k: "条顶", r: { left: cx - 5, top: st.top + 2, right: cx + 5, bottom: st.top + 12 } },
+      { k: "条底", r: { left: cx - 5, top: st.bottom - 12, right: cx + 5, bottom: st.bottom - 2 } },
+      { k: "图区", r: { left: cx - 5, top: midY - 5, right: cx + 5, bottom: midY + 5 } }
+    ];
+    const reads = [];
+    let main = null;
+    for (const pt of pts) {
+      const s1 = await sampleRectAvgColor(pt.r, { composite: true });
+      if (s1 && s1.ok) {
+        const lum = (0.299 * s1.rgb.r + 0.587 * s1.rgb.g + 0.114 * s1.rgb.b) / 255;
+        reads.push(pt.k + "=" + s1.hex + "(" + lum.toFixed(2) + ")");
+        if (pt.main) main = { hex: s1.hex, rgb: s1.rgb, lum: lum };
+      } else {
+        reads.push(pt.k + "=取不到");
+      }
+    }
+    out.bgPixels = main;
+    out.bgProbeReads = reads.slice();
+    const wantDarkBg = String(theme.id) === "dark";
+    const hit = !!main && (wantDarkBg ? main.lum < 0.5 : main.lum > 0.5);
+    out.bgPixelsHit = hit;
+    out.steps.push("bgPixels[" + reads.join(" ") + "]" + (hit ? " ok" : " MISMATCH"));
+    if (!hit) {
+      out.warnings.push("参数条底色不对：整条平均 " +
+        (main ? main.hex + "（亮度 " + main.lum.toFixed(2) + "）" : "取不到") +
+        "，期望" + (wantDarkBg ? "偏暗" : "偏亮") + "（" + theme.bgHex + "）");
+    }
+  } catch (eP) {
+    out.steps.push("bgPixels THREW");
+    out.warnings.push("参数条底色取像素抛异常：" + msg(eP));
+  }
+
+  /* ---- ④d 大稿缩放（v0.9.0 / docs/51 §四 路线 D）----
+     ⚠️ 「**怎么缩**」在动手前**没有验过**：官方样例与本仓库都没有 `imageSize` 描述符，
+        `Document.resizeImage` 在不在也要实测。所以这里**先探能力再动手** ——
+        有 API 才缩；没有就**如实记「没缩」**，**绝不猜一个描述符**（项目铁律）。
+     ⚠️ 顺序：必须放在**写完参数条之后** —— 参数条要跟着整张图一起缩下去，
+        所以先按原尺寸排好版，再整体缩（比例因此天然保持）。 */
+  if (wantText && out.scale && out.scale.applied) {
+    out.scaleApplied = { applied: false, hasApi: null, reason: "未执行" };
+    try {
+      let hasApi = false;
+      try { hasApi = typeof app.activeDocument.resizeImage === "function"; } catch (e) { hasApi = false; }
+      out.scaleApplied.hasApi = hasApi;
+
+      if (!hasApi) {
+        out.scaleApplied.reason = "本机 Document 上没有 resizeImage ⇒ 没有缩";
+        out.steps.push("resizeImage API 缺失 ⇒ 跳过缩放");
+        out.warnings.push(
+          "这张稿按计划该缩（" + out.scale.reason + "），但本机 UXP 没有 `Document.resizeImage` ⇒ " +
+          "**导出的是原尺寸**。参数条上印的「已缩至 …」是**计划值**，与实际不符 —— 请按 Ctrl+Z 重来或改 spec。"
+        );
+      } else {
+        await runModal(async () => {
+          await app.activeDocument.resizeImage(out.scale.w, out.scale.h);
+        }, "Vellum 工具箱：按长边上限缩放");
+        const rb = readDocGeom();
+        out.scaleApplied = {
+          applied: true, hasApi: true, w: rb.w, h: rb.h, reason: out.scale.reason
+        };
+        out.steps.push("resizeImage → " + rb.w + "×" + rb.h);
+      }
+    } catch (e) {
+      out.scaleApplied = {
+        applied: false, hasApi: out.scaleApplied.hasApi,
+        reason: "缩放抛异常：" + msg(e)
+      };
+      out.steps.push("resizeImage THREW");
+      out.warnings.push("缩放失败（" + msg(e) + "）⇒ 导出的是原尺寸（参数条上的「已缩至 …」是计划值）");
+    }
+  }
+
+  /* ---- ⑤ 导出（**必须 asCopy** + 独立复核 + 重试）---- */
+  await savePngWithCheck(out, opt, "导出审核版（asCopy）");
+
+  /* ---- ⑦ 读**副本**的飞行读数（关掉前读）—— 反向证明前面几步不是空转 ---- */
+  out.dupHit = readDocGeom();
+  out.dupHit.bg = (await readColor("background")).hex || null;
+  out.hitCanvas = !!(out.before.h !== null && out.dupHit.h !== null &&
+    out.dupHit.h !== out.before.h);
+  out.hitLayers = !!(out.before.layers !== null && out.dupHit.layers !== null &&
+    out.dupHit.layers !== out.before.layers);
+  out.steps.push("副本飞行读数 " + out.dupHit.w + "×" + out.dupHit.h +
+    " / " + out.dupHit.layers + " 层");
+
+  /* ---- ⑦b 关掉副本（**不保存**）—— 它彻底消失，用户看不到任何残留 ---- */
+  await closeQuietly(out, dup.id, "close 副本");
+
+  /* ---- ⑧ 切回原稿 + 读回自证：三项都必须“没变”（**这才是判据**）----
+     ★ 备路的判据比主路**更强**：主路是“改过又还回去”，备路是“**从头到尾没碰过**”。 */
+  await activateQuietly(out, origId, "切回原稿");
+  out.after = readDocGeom();
+  out.after.bg = (await readColor("background")).hex || null;
+  out.restored = {
+    w: out.after.w === out.before.w,
+    h: out.after.h === out.before.h,
+    layers: out.after.layers === out.before.layers,
+    bg: out.after.bg === out.before.bg,
+  };
+
+  const untouched = !!(out.restored.w && out.restored.h &&
+    out.restored.layers && out.restored.bg);
+  const dupDidWork = !!(out.hitCanvas || out.hitLayers);
+  const fileOk = opt.entry ? (out.fileBytes !== null && out.fileBytes > 0) : true;
+  out.ok = !!(untouched && fileOk && !out.error);
+  if (!out.ok && !out.error) {
+    out.error = !untouched
+      ? "导出完成了，但**原稿被动过**（不该发生：备路只在副本上作业）：" +
+        JSON.stringify(out.restored)
+      : "导出文件读回是空/读不到（bytes=" + out.fileBytes + "）";
+  }
+  if (!dupDidWork) {
+    out.warnings.push("副本上没读到画布/图层的任何变化 —— 第③④步可能是空转，请复核");
+  }
+  out.ms = Date.now() - t0;
+  return out;
+}
+
+function safeStr(v) {
+  return v === null || v === undefined ? "" : String(v);
+}
+
+/** 还原背景色（失败不抛，记进 warnings）。 */
+async function safeRestoreBg(out, bgRaw0) {
+  if (!bgRaw0 || !bgRaw0.ok || !bgRaw0.raw) {
+    out.warnings.push("没记到原来的背景色（读失败）⇒ 没有还原");
+    return;
+  }
+  try {
+    const r = await restoreColor("background", bgRaw0.raw);
+    out.bgRestore = r;
+    out.steps.push("bg restore " + (r.ok ? "ok" : "fail"));
+    if (!r.ok) out.warnings.push("背景色还原没成功：" + (r.error || "回读不符"));
+  } catch (e) {
+    out.steps.push("bg restore THREW");
+    out.warnings.push("背景色还原抛异常：" + msg(e));
+  }
+}
+
+/** 一步退回（失败不抛，记进 warnings —— 但**绝不谎报成功**）。 */
+/**
+ * 赋回历史状态（**v0.9.2 起 exportReview 已不再使用**：备路全程只读原稿，无需还原）。
+ * 保留它是因为「批量前记标记、批量后退回」这条能力本身仍然有用（`lib/history.js`）。
+ */
+async function safeRevert(out) {
+  try {
+    const rv = await undoHistory.revert({ via: "state" });
+    out.undoRevert = rv;
+    out.steps.push("revert " + (rv.ok ? "ok(" + rv.via + ")" : "FAILED:" + (rv.error || "?")));
+    if (!rv.ok) {
+      out.warnings.push("一步还原没成功：" + (rv.error || "未知") + " ⇒ 请按 Ctrl+Z");
+    }
+  } catch (e) {
+    out.steps.push("revert THREW");
+    out.warnings.push("一步还原抛异常：" + msg(e) + " ⇒ 请按 Ctrl+Z");
+  }
+}
+
 /* --------------------------------------------------------------- 其他 */
 
 /** 当前是否打开了文档（调色板不依赖它，但别的工具要）。 */
+/**
+ * 打开一个文件成**新文档**（`app.open(entry)`）。
+ *
+ * 用途：模板库「从模板建稿」—— 打开参考线已经打好的 PSD，用户接着改。
+ *
+ * ⚠️ 三件必须知道的事：
+ *   1. **必须给 Entry，不能给路径字符串** —— 与 `placeFile` 同源的限制（真机实测
+ *      `invalid file token used`）。Entry 由 `handoff.fetchIncoming()` 给出。
+ *   2. **`app.open` 要包在模态里**（它改文档集合）。S68 已实测：600×400 的 PSD
+ *      打开后 **`guides=4` 还在** —— 这正是模板的价值所在。
+ *   3. **打开的是 handoff 拷来的副本**（`incoming.psd`），不是模板原件 ⇒ 模板绝不会被改坏；
+ *      但用户按 Ctrl+S 会**存回插件缓存目录**。这句话必须由调用方告诉用户（本函数不弹框）。
+ *
+ * @param {object} entry  UXP Entry（来自 handoff）
+ * @param {object} [opts] `{commandName}`
+ * @returns {Promise<object>} `{ok, doc, name, width, height, resolution, mode, guides, error}`
+ */
+async function openFile(entry, opts) {
+  const o = opts || {};
+  if (!entry) return { ok: false, error: "没有文件句柄（Entry），无法打开" };
+  let doc = null;
+  let err = "";
+  /* 🔴 **打开 PSD 前必须先关掉原生对话框**（S68 验过、我第一次实现时漏了）：
+     模板是 CMYK，PS 会弹「配置文件不匹配 / 嵌入配置文件」——那个框在模态里**会卡住**，
+     真机表现就是各种看不懂的宿主错误（这次拿到的是
+     `The 文档 with an id of undefined does not exist.`）。
+     `displayDialogs` 的旧值要还原，别把用户后面的交互也一起静音了。 */
+  let prevDialogs = null;
+  try {
+    prevDialogs = app.displayDialogs;
+    app.displayDialogs = "dontDisplay";
+  } catch {
+    prevDialogs = null;
+  }
+  try {
+    await runModal(async () => {
+      doc = await app.open(entry);
+    }, o.commandName || "Vellum 工具箱：打开文件");
+  } catch (e) {
+    /* 打开失败最常见两种：文件不是 PS 能识别的格式 / 文件正在被别的程序占用。
+       把原始 message 带回去，别翻译成"打开失败"这种没用的话。 */
+    err = (e && e.message) || String(e);
+  }
+  /* 还原对话框设置（无论成败） */
+  if (prevDialogs !== null && prevDialogs !== undefined) {
+    try { app.displayDialogs = prevDialogs; } catch { /* 忽略 */ }
+  }
+  /* ⚠️ 有些版本 `app.open` 会 resolve 出一个"壳"（`id` 都取不到）。
+     真机的可靠做法是**问 activeDocument**：打开文件后它就是新的前台文档。 */
+  if (!doc || doc.id === undefined || doc.id === null) {
+    try {
+      const ad = app.activeDocument;
+      if (ad && ad.id !== undefined && ad.id !== null) doc = ad;
+    } catch {
+      /* 取不到就保持原样，下面报错 */
+    }
+  }
+  if (!doc) return { ok: false, error: err || "app.open 没有返回文档" };
+
+  const num = (v) => {
+    if (v === null || v === undefined) return null;
+    let x = v;
+    if (typeof x === "object" && "_value" in x) x = x._value;
+    const n = Number(x);
+    return isFinite(n) ? n : null;
+  };
+  let info = { width: null, height: null, resolution: null, mode: "", guides: null };
+  try {
+    info.width = num(doc.width);
+    info.height = num(doc.height);
+    info.resolution = num(doc.resolution);
+    info.mode = doc.mode ? String(doc.mode) : "";
+    /* 参考线条数：模板的核心卖点就是"参考线已经打好了"，所以**读回来说给用户听**。
+       ⚠️ `doc.guides` 读不到就当 null（"未探到"），**不写 0** —— 0 是"确认没有参考线"，
+          两者差别很大（和契约 §5.7 的 `guides` 字段同一口径）。 */
+    if (doc.guides && typeof doc.guides.length === "number") info.guides = doc.guides.length;
+  } catch {
+    /* 读不到就保持 null */
+  }
+
+  return {
+    ok: true,
+    doc: doc,
+    name: (doc && doc.title) || o.name || "",
+    width: info.width,
+    height: info.height,
+    resolution: info.resolution,
+    mode: info.mode,
+    guides: info.guides,
+  };
+}
+
+/**
+ * 按 `presetJSON` 建稿（「按规范建稿」的执行端）。
+ *
+ * 🔴 这个函数只负责"把 preset 递进去 + 读回真实结果"，**不做单位换算、不编字段**
+ *    （换算在 `lib/specs.js`，字段集是 S68 验通过的那一份）。
+ *
+ * ⚠️ 三条纪律，全部来自真机踩坑：
+ *   1. **字段集不能缺**：C1/C2 漏了 `scale`/`profile`/`artboards` ⇒ presetJSON **整份被静默忽略**，
+ *      不报错、建出一张默认稿（读回 1946×172 @72、guides=0）。
+ *   2. **`mode` 要读回**：`documents.add({mode})` 曾被静默忽略（S66），`presetJSON` 的
+ *      `mode` 到底生不生效**必须以读回为准**，返回 `modeOk` 让调用方判断。
+ *   3. **参考线条数要读回**：参考线是这个功能唯一的价值，读回 0 就等于没做成。
+ *
+ * @param {object} preset `lib/specs.js::toPresetJson()` 的产物
+ * @param {object} [opts] `{commandName}`
+ * @returns {Promise<object>} `{ok, doc, width, height, resolution, mode, guides, modeOk, error}`
+ */
+async function createFromSpec(preset, opts) {
+  const o = opts || {};
+  if (!preset || !preset.width || !preset.height) {
+    return { ok: false, error: "preset 缺少 width / height" };
+  }
+  const json = typeof preset === "string" ? preset : JSON.stringify(preset);
+
+  let doc = null;
+  let err = "";
+  try {
+    await runModal(async () => {
+      doc = await app.createDocument({
+        presetJSON: json,
+        name: o.name || preset.name || "Vellum 新建稿",
+      });
+    }, o.commandName || "Vellum 工具箱：按规范建稿");
+  } catch (e) {
+    err = (e && e.message) || String(e);
+  }
+  if (!doc) return { ok: false, error: err || "createDocument 没有返回文档" };
+
+  const num = (v) => {
+    if (v === null || v === undefined) return null;
+    let x = v;
+    if (typeof x === "object" && "_value" in x) x = x._value;
+    const n = Number(x);
+    return isFinite(n) ? n : null;
+  };
+  let width = null;
+  let height = null;
+  let resolution = null;
+  let mode = "";
+  let guides = null;
+  try {
+    width = num(doc.width);
+    height = num(doc.height);
+    resolution = num(doc.resolution);
+    mode = doc.mode ? String(doc.mode) : "";
+    if (doc.guides && typeof doc.guides.length === "number") guides = doc.guides.length;
+  } catch {
+    /* 读不到就保持 null */
+  }
+
+  /* 模式是否真的生效：只比"大类"（CMYK / RGB / GRAY / LAB），
+     因为读回的是 `CMYKColorMode` 这种常量名，而我们要的是"是不是 CMYK"。 */
+  const keyOf = (v) => {
+    const t = String(v || "").toUpperCase();
+    if (t.indexOf("CMYK") >= 0) return "CMYK";
+    if (t.indexOf("RGB") >= 0) return "RGB";
+    if (t.indexOf("GRAY") >= 0) return "GRAY";
+    if (t.indexOf("LAB") >= 0) return "LAB";
+    return t;
+  };
+  const wantKey = keyOf(preset.mode);
+  const modeOk = wantKey ? keyOf(mode) === wantKey : null;
+
+  return {
+    ok: true,
+    doc: doc,
+    name: (doc && doc.title) || o.name || "",
+    width: width,
+    height: height,
+    resolution: resolution,
+    mode: mode,
+    modeOk: modeOk,
+    guides: guides,
+  };
+}
+
 function hasDocument() {
   try {
     return !!(app.documents && app.documents.length > 0);
@@ -3252,6 +4568,10 @@ module.exports = {
   hexToRgb,
   clamp255,
   hasDocument,
+  /* v0.9.12 新增：打开文件（模板库「从模板建稿」） */
+  openFile,
+  /* v0.9.14 新增：按 presetJSON 建稿（「按规范建稿」） */
+  createFromSpec,
   /* v0.2.2 新增 */
   fillLayer,
   fillDescColor,
@@ -3261,6 +4581,7 @@ module.exports = {
   hasSelection,
   createScratchDoc,
   closeDocument,
+  sweepProbeDocs,
   activateDocument,
   /* v0.2.3 新增：图层类型判定 + 内容图层改色 */
   layerInfo,
@@ -3338,4 +4659,9 @@ module.exports = {
   findTextLayerContents,
   sampleRectAvgColor,
   findLayerDeep,
+  /* v0.8.0 追加：M5 第 4 步「导出审核版 / 成品图」（docs/50 主路） */
+  exportReview,
+  readDocGeom,
+  entryBytes,
+  fileInFolder,
 };

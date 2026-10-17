@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>现在的目录区（v0.9.10）</title>
+<style>
+  :root { --bg:#1e1e1e; --surf:#252526; --line:#3f3f46; --line2:#4a4a50;
+          --tx:#e8e8e8; --tx3:#a8a8ae; --tx4:#8a8a90; --ac:#0a84ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:22px 26px 26px; background:var(--bg); color:var(--tx);
+         font:14px/1.5 "Segoe UI","Microsoft YaHei UI",sans-serif; }
+  h1 { font-size:16px; font-weight:600; margin:0 0 4px; }
+  .sub { color:var(--tx4); font-size:12px; margin:0 0 18px; }
+  .row { display:flex; gap:26px; flex-wrap:wrap; align-items:flex-start; }
+  .col { width:340px; }
+  .cap { font-size:11px; color:var(--tx4); margin:0 0 6px; }
+  .panel { background:var(--surf); border:1px solid var(--line); border-radius:4px; padding:10px 12px; }
+
+  /* 面包屑 */
+  .bc { display:flex; align-items:center; font-size:11px; margin:0 0 7px; }
+  .bc-s { max-width:104px; padding:1px 4px; border-radius:3px; color:var(--tx3);
+          white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+  .bc-s.on { color:var(--tx); font-weight:600; cursor:default; }
+  .bc-sep { color:var(--tx4); margin:0 1px; }
+  .bc-n { margin-left:auto; padding-left:8px; font-size:10px; color:var(--tx4); white-space:nowrap; }
+
+  /* 目录行 */
+  .dirs { display:block; margin:0 0 4px; }
+  .dir { display:flex; align-items:center; height:26px; padding:0 8px; margin:0 0 3px;
+         border:1px solid var(--line2); border-radius:3px; color:var(--tx3); font-size:12px; cursor:pointer; }
+  .dir .i { width:16px; height:16px; margin-right:7px; opacity:.85; flex:0 0 auto;
+            display:flex; align-items:center; justify-content:center; }
+  .dir .dn { flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dir .dc { flex:0 0 auto; margin-left:8px; font-size:10px; color:var(--tx4); }
+  .dir.more { border-style:dashed; justify-content:center; color:var(--tx4); }
+
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+  .card { height:74px; border:1px solid var(--line2); border-radius:3px;
+          background:linear-gradient(135deg,#2b3a52,#1f2a3a); }
+  .h { font-size:10px; color:#7fd29a; margin-top:6px; }
+</style>
+</head>
+<body>
+  <h1>目录区现在的样子（v0.9.10）</h1>
+  <p class="sub">340px 宽、真尺寸。左边＝根层，右边＝点进「公司素材」之后。图标是新增的 16×16 folder。</p>
+
+  <div class="row">
+    <div class="col">
+      <p class="cap">① 根层（不画面包屑，只有目录行）</p>
+      <div class="panel">
+        <div class="dirs">
+          <div class="dir">
+            <i class="i"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+              stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2.4 4.9h4.1l1.4 1.8h5.7v5.4H2.4z"/></svg></i>
+            <span class="dn">公司素材</span><span class="dc mono">3 项</span>
+          </div>
+          <div class="dir">
+            <i class="i"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+              stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2.4 4.9h4.1l1.4 1.8h5.7v5.4H2.4z"/></svg></i>
+            <span class="dn">个人收藏</span><span class="dc mono">1 项</span>
+          </div>
+        </div>
+        <div class="grid"><div class="card"></div><div class="card"></div></div>
+      </div>
+      <p class="h">目录区 70px（真机 S72 量到）</p>
+    </div>
+
+    <div class="col">
+      <p class="cap">② 点进「公司素材」之后</p>
+      <div class="panel">
+        <div class="bc">
+          <span class="bc-s">通用库</span><span class="bc-sep">›</span>
+          <span class="bc-s on">公司素材</span>
+          <span class="bc-n mono">第 1/2 层</span>
+        </div>
+        <div class="dirs">
+          <div class="dir">
+            <i class="i"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+              stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2.4 4.9h4.1l1.4 1.8h5.7v5.4H2.4z"/></svg></i>
+            <span class="dn">22</span><span class="dc mono">1 项</span>
+          </div>
+        </div>
+        <div class="grid"><div class="card"></div><div class="card"></div></div>
+      </div>
+      <p class="h">目录区 67px（面包屑 26 + 一行 29）</p>
+    </div>
+  </div>
+</body>
+</html>

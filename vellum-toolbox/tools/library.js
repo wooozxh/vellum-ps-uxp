@@ -64,9 +64,22 @@ const ps = require("../lib/ps.js");
 const data = require("../lib/data.js");
 const mirror = require("../lib/mirror.js");
 const handoff = require("../lib/handoff.js");
+/* 目录导航（面包屑 + 子目录行）—— 与模板库共用一套，别在工具里各写一遍 */
+const dirlib = require("../lib/dirlib.js");
 
 /** 界面偏好的落盘文件（记忆"上次看的是哪个库"）。不是镜像内容，写在 PluginData 根。 */
 const PREF_FILE = "library-pref.json";
+
+/**
+ * 置入落点**固定居中**（v0.9.7，用户 2026-10-17 拍板）。
+ *
+ * 落点九宫格已从界面移除（同事反馈没人用），但**置入仍然需要定位** ⇒
+ * `ps.anchorOffset()` 与 `anchorInfo()` 全部保留，只是锚点不再由用户选。
+ * ⚠️ 别因为"界面上没有落点"就把 `anchorOffset` 一起删了 —— 它是置入定位的核心。
+ * ⚠️ 自检 S24 / S25 也照旧保留：它们验的是 `placeEvent` 的真实落点规则
+ *    （默认落点 = 选区中心 / 无选区则画布中心），与有没有这个 UI 无关。
+ */
+const FIXED_ANCHOR = "mc"; // mc = 居中
 
 /* ------------------------------------------------------------------ 状态 */
 
@@ -183,10 +196,15 @@ function anchorInfo(a) {
   };
 }
 
-/** 记住"上次看哪个库 / 上次选的落点"。 */
+/**
+ * 记住"上次看哪个库"。
+ *
+ * ⚠️ v0.9.7 起**不再写 `anchor`** —— 落点功能已移除。老 pref 文件里那个字段
+ * 读的时候直接忽略（留着无害，不清它，免得为了一个无用字段去改用户文件）。
+ */
 async function savePref() {
   try {
-    await store.writeJson(PREF_FILE, { tab: S && S.tabId, anchor: S && S.anchor });
+    await store.writeJson(PREF_FILE, { tab: S && S.tabId });
   } catch {
     /* 记不住就记不住，不影响使用 */
   }
@@ -236,16 +254,20 @@ function build() {
   refs.bar = dom.el("div", { class: "lib-bar", id: "vt-lib-bar" });
   wrap.appendChild(refs.bar);
 
-  /* ③ 选中详情 + 置入（**在网格上方**）
-     ⚠️ v0.3.2 按用户要求挪到顶部：素材一多，"选完再滚到最底下按置入"很难受
-        （用户原话：「可以把置入放在顶部（库选择和目录筛选下方，瀑布流上方）」）。
-        代价是详情块常占约 150px；未选中时只有一行提示，不占地方。 */
-  refs.foot = dom.el("div", { class: "lib-foot", id: "vt-lib-foot" });
-  wrap.appendChild(refs.foot);
-
-  /* ④ 网格 / 状态块 */
+  /* ③ 网格 / 状态块（**中间唯一的滚动区**） */
   refs.body = dom.el("div", { class: "lib-body", id: "vt-lib-body" });
   wrap.appendChild(refs.body);
+
+  /* ④ 选中详情 + 置入（**固定在面板底部**）
+     ────────────────────────────────────────────────────────────────
+     v0.9.8（用户 2026-10-17 拍板的三段式）：**目录选择器固定在上、插入面板固定在下、
+     中间只有网格滚动**。用的时候把面板垂直拉到最高即可。
+     ⚠️ 历史：v0.3.2 曾挪到**顶部**，理由是"选完素材还要滚到最底下按置入很难受"。
+        现在改回底部是**成立的** —— 关键在于 `flex: 0 0 auto` 让它**固定在容器底部、
+        不随网格滚动**，痛点消失。**别把它再挪回滚动区里**，那样痛点会回来。
+     ⚠️ 未选中时只有一行提示，现在读起来像"状态栏"，正好。 */
+  refs.foot = dom.el("div", { class: "lib-foot", id: "vt-lib-foot" });
+  wrap.appendChild(refs.foot);
 
   binder.on(refresh, "click", () => manualRefresh());
 
@@ -443,12 +465,28 @@ function renderMeta() {
 
 /* ------------------------------------------------------------- 筛选 chips */
 
-/** 只按「分组 / 子组」筛（**不含**来源）—— 来源行要基于它算，否则一选中来源那一行就自己消失了。 */
+/**
+ * 改当前目录（**唯一的入口** —— 别处一律不许直接写 `S.group` / `S.sub`）。
+ *
+ * `S.group` / `S.sub` 仍然保留，但它们是 **`S.path` 的派生值**（`path[0]` / `path[1]`）：
+ *   · 保留是因为任务库的项目下拉、日志、状态行都还在读它们；
+ *   · **派生**是因为真相只能有一份 —— 两份各自被改就一定会分叉（这次改多层目录的初衷）。
+ */
+function setPath(arr) {
+  S.path = (arr || []).filter(Boolean);
+  S.group = S.path[0] || "";
+  S.sub = S.path[1] || "";
+  S.dirsAll = false; // 换目录 → 子目录折叠状态复位
+}
+
+/** 只按「当前目录（前缀匹配）」筛（**不含**来源）—— 来源行要基于它算。 */
 function itemsInGroup() {
-  let out = S.items;
-  if (S.group) out = out.filter((it) => (it.group || "未分组") === S.group);
-  if (S.sub) out = out.filter((it) => (it.sub || "") === S.sub);
-  return out;
+  if (!S.path.length) return S.items;
+  return S.items.filter((it) => {
+    const p = dirlib.pathOf(it);
+    for (let i = 0; i < S.path.length; i++) if (p[i] !== S.path[i]) return false;
+    return true;
+  });
 }
 
 /** 三个筛选条件全上。 */
@@ -460,9 +498,7 @@ function visibleItems() {
 
 /** 当前筛选的一句话描述（状态行用）。 */
 function filterLabel() {
-  const bits = [];
-  if (S.group) bits.push(S.group);
-  if (S.sub) bits.push(S.sub);
+  const bits = S.path.slice();
   if (S.source) bits.push(mirror.sourceLabel(S.source));
   return bits.length ? bits.join(" › ") : "全部";
 }
@@ -513,8 +549,8 @@ function makeFrow(label, chips, cls, onPick) {
  * （这次 UI 调整就是在给它减负）；而通用库的顶层只有「公司素材 / 我的收藏」，
  * 少而稳、点一下就到，所以那边**仍然保留按钮**。
  *
- * ⚠️ 它**复用 `S.group`** —— 也就是"顶层分组"这一个筛选条件。
- *    所以 itemsInGroup / visibleItems / filterLabel / pruneFilters 全都不用改。
+ * ⚠️ 它读写的是 **`S.group`** —— 而 `S.group` 现在是 `S.path[0]` 的派生值，
+ *    所以这里**必须走 `setPath([k])`**，不能直接赋值（否则 S.path 与 S.group 会分叉）。
  * ⚠️ 只在**任务库**出现（`S.kind === "task"`）：形态判定在 `mirror.scopeKind()`，
  *    不靠 scope id 硬编码 —— 软件侧将来加库、改名都不影响这里。
  */
@@ -541,8 +577,7 @@ function renderProjSel() {
       allTitle: "所有项目",
       title: "只看某个项目",
       onPick: (k) => {
-        S.group = k;
-        S.sub = ""; // 换项目 → 任务包筛选必须复位（不同项目下可能有同名任务包）
+        setPath(k ? [k] : []); // 换项目 → 任务包筛选复位（不同项目下可能有同名任务包）
         S.source = "";
         refreshAfterFilter();
       },
@@ -580,12 +615,21 @@ function refreshAfterFilter() {
 }
 
 /**
- * 重画整个筛选区。
- * 布局（2026-10-11 按用户要求调整）：
- *   · **通用库**：一级（公司素材 / 我的收藏）仍是按钮，**二级子类下拉挂在同一行的最右侧**；
- *   · **任务库**：项目筛选已挪到顶部行（`renderProjSel`），这里只剩「任务包」下拉 + 来源；
- *   · 「任务包」这类二级下拉**永远靠行尾**，与通用库保持同一种视觉。
- * ⚠️ **不构成筛选的行一律不画** —— 只有一种取值的"筛选"是噪音，沿用旧版判断。
+ * 重画整个筛选区（v0.9.9：**面包屑下钻**，用户 2026-10-17 拍板的"方向 B"）。
+ *
+ * 结构（从上到下，**都固定在网格上方、不随网格滚动**）：
+ *   ① 面包屑 —— **只在下钻后出现**；根层不画（只显示一个「全部」是噪音）
+ *   ② 子目录行 —— 根层就是原来那排一级 chips（**长相不变**）；深层是当前节点的 children
+ *   ③ 来源行 —— 保持原样（通用库里通常因"与顶层分组重复"而不画）
+ *
+ * 🔴 三条来自 docs/55 §九 的硬约束（都是高度预算逼出来的，别推翻）：
+ *   · **根层与叶子层看到的东西和旧版一致** —— 绝大多数时候用户就停在这两层；
+ *   · **子目录超过 4 个折叠**成「还有 N 个」—— 子目录数量由软件侧决定，
+ *     10 个 = 320px 会把网格挤没；
+ *   · 深层**不再单独画「全部」chip** —— 回上级交给面包屑（两处各一个「全部」，点哪个都心虚）。
+ *
+ * ⚠️ 判断"当前在哪一层"一律用 `S.path`（真相），**不要用 `S.group`/`S.sub`** ——
+ *    那两个是派生值，只留给任务库下拉 / 日志 / 状态行读。
  */
 function renderFilters() {
   dom.clear(refs.bar);
@@ -593,78 +637,64 @@ function renderFilters() {
 
   const tree = mirror.groupTree(S.items);
   const srcs = mirror.sourceSummary(itemsInGroup());
-  // 只选了一个顶层组时，子组行也该出来（哪怕全库只有这一个顶层组）
-  const activeTop = S.group || (tree.length === 1 ? tree[0].name : "");
-  let activeNode = null;
-  for (const t of tree) if (t.name === activeTop) activeNode = t;
-  const kids = activeNode ? activeNode.children : [];
 
-  // 任务库的项目筛选在顶部，这里不再画一排项目 chip（否则同一个条件出现两次）
-  const showTopRow = S.kind !== "task" && tree.length > 1;
+  const path = (S.path || []).slice();
+  /* 路径解析不到（软件侧删了目录）时**不在这里改状态** —— 渲染函数只管画，
+     收拾残局是 `pruneFilters()` 的职责（它下一轮就会把无效段截掉）。 */
+  const node = path.length ? dirlib.resolve(tree, path) : null;
+  const livePath = node ? path : [];
+  const atRoot = !livePath.length;
+  /* 面包屑右端那句「第 N/M 层」用**整棵树**的最大层数算（不是当前子树）——
+     否则进到叶子层时会显示成「第 3/3 层」，而旁边的面包屑明明还有上级，
+     两句话自相矛盾。 */
+  const depthAll = dirlib.maxDepth(tree) || 1;
 
-  if (!showTopRow && !kids.length && srcs.length <= 1) {
+  /* ① 面包屑
+     ⚠️ 第 0 段是**库名**（不是「全部」）—— 根层本来就等于整个库，
+        写「全部」等于给同一件事两个名字（用户对过 mock：`通用库 › 品牌视觉 › Logo`）。 */
+  const bc = dirlib.breadcrumb(dom, binder, {
+    path: livePath,
+    rootLabel: S.tabLabel || "全部",
+    levelText: livePath.length
+      ? "第 " + livePath.length + "/" + depthAll + " 层"
+      : "",
+    onPick: (idx) => {
+      setPath(livePath.slice(0, idx)); // 下标 0 = 回根（整个库）
+      S.source = "";
+      refreshAfterFilter();
+    },
+  });
+  if (bc) refs.bar.appendChild(bc);
+
+  /* ② 子目录（**整行**：📁 + 名字 + N 项，以 mock 为准）
+     ⚠️ 任务库的根层**不画**：项目筛选已在顶部行（`renderProjSel`），
+        这里再列一遍项目就是同一个条件出现两次。
+     任务库也没有更深的层级（`flattenTask` 的 `groupPath` 只到项目）⇒ kids 恒空。 */
+  const kids = node
+    ? (node.children || [])
+    : (S.kind === "task" ? [] : tree);
+
+  const dirs = dirlib.dirRow(dom, binder, {
+    kids: kids,
+    expanded: !!S.dirsAll,
+    onPick: (k) => {
+      setPath(atRoot ? [k] : livePath.concat([k]));
+      S.source = "";
+      refreshAfterFilter();
+    },
+    onExpand: (v) => {
+      S.dirsAll = !!v;
+      renderFilters(); // 只重画筛选区，网格不动
+    },
+  });
+  if (dirs) refs.bar.appendChild(dirs);
+
+  /* 什么都没有可画时，至少说一句"共几张" —— 否则这块是纯空白，看着像坏了 */
+  if (!bc && !dirs && srcs.length <= 1) {
     refs.bar.appendChild(
       dom.el("span", { class: "lib-count mono" }, ["共 " + S.items.length + " 张"])
     );
     return;
-  }
-
-  /* ① 一级分组 chips（通用库）—— 二级下拉一会儿挂到**这一行的末尾** */
-  let hostRow = null;
-  if (showTopRow) {
-    const chips = [{ key: "", label: "全部", n: S.items.length, on: !S.group }];
-    for (const t of tree) chips.push({ key: t.name, label: t.name, n: t.count, on: S.group === t.name });
-    hostRow = makeFrow("", chips, "", (k) => {
-      S.group = k;
-      S.sub = ""; // 换父组 → 子组筛选必须复位（不同父组下可能有同名子组）
-      S.source = "";
-      refreshAfterFilter();
-    });
-    refs.bar.appendChild(hostRow);
-  }
-
-  /* ② 二级（子类 / 任务包）—— **自绘下拉**，一律靠行尾
-     ════════════════════════════════════════════════════════════════════
-     为什么自绘：原生 `<select>` 外观改不动、`sp-picker` 真机未注册（见 docs/25）。
-     纪律写在 `makeSelect()` 的注释里（浮层不覆盖触发条 / 根节点正着判关层 / 幂等 /
-     浮层必须落在滚动容器内）。 */
-  if (kids.length) {
-    const total = activeNode ? activeNode.count : 0;
-    const cur = S.sub || "";
-    let curN = total;
-    for (const k of kids) if (k.name === cur) curN = k.count;
-
-    const opts = [{ key: "", label: "全部子类", n: total }].concat(
-      kids.map((k) => ({ key: k.name, label: k.name, n: k.count }))
-    );
-    const sel = makeSelect({
-      wrapId: "vt-lib-subwrap",
-      trigId: "vt-lib-subsel",
-      popId: "vt-lib-subpop",
-      optAttr: "data-opt",
-      items: opts,
-      cur: cur,
-      placeholder: "全部子类",
-      allTitle: "这个父组下全部",
-      title: "选择「" + (activeTop || "") + "」下的子类",
-      onPick: (k) => {
-        S.sub = k;
-        refreshAfterFilter();
-      },
-    });
-
-    if (hostRow) {
-      // 通用库：与一级按钮**同一行**，靠最右
-      hostRow.appendChild(sel);
-    } else {
-      // 任务库：一级（项目）在顶部，这一行只有「任务包」+ 下拉
-      const row = dom.el("div", { class: "frow mid" });
-      const box = dom.el("div", { class: "fchips" });
-      box.appendChild(dom.el("span", { class: "frow-lb" }, ["任务包"]));
-      row.appendChild(box);
-      row.appendChild(sel);
-      refs.bar.appendChild(row);
-    }
   }
 
   /* ③ 来源（契约 §5.4 加法 ② 的可选 asset.source）
@@ -706,28 +736,30 @@ function renderFilters() {
  */
 function pruneFilters() {
   const tree = mirror.groupTree(S.items);
-  const names = tree.map((t) => t.name);
-  if (S.group && names.indexOf(S.group) < 0) {
-    S.group = "";
-    S.sub = "";
+
+  /* 目录路径：**截断到仍然存在的最长前缀**，不能整体清空。
+     ────────────────────────────────────────────────────────────────
+     🔴 这条是**多层目录独有的坑**（旧版只有两层时"清空"和"截断"看不出差别）：
+        用户在「公司素材 › 节日 › 春节」里，软件侧下一版把中间那层「节日」删了 ⇒
+        如果整体清空，用户会被**无声地弹回顶层**，还以为自己点错了。
+        截断到「公司素材」则是"退一步但仍然在原来的大目录里"，打断最小。
+     ⚠️ 解析用的是 `dirlib.resolve()` —— 与渲染、筛选**同一套**判据，
+        否则会出现"面包屑说在这里、网格却是空的"。 */
+  const full = (S.path || []).slice();
+  let keep = 0;
+  let level = tree;
+  for (const name of full) {
+    let hit = null;
+    for (const n of level) if (n.name === name) hit = n;
+    if (!hit) break;
+    keep++;
+    level = hit.children || [];
   }
-  // ⚠️ `kids` 必须在外层声明：下面"没有子组就收起下拉"要用到它
-  //    （上一版把它写在 if 块里的 const，块外引用会直接 ReferenceError）
-  let kids = [];
-  if (S.group) {
-    let node = null;
-    for (const t of tree) if (t.name === S.group) node = t;
-    kids = node ? node.children.map((c) => c.name) : [];
-    if (S.sub && kids.indexOf(S.sub) < 0) S.sub = "";
-    if (!kids.length) S.sub = "";
-  } else {
-    S.sub = "";
-  }
-  // 没有子组了：下拉随 `renderFilters()` 一起消失。
-  // ⚠️ 展开态**不需要在这里清** —— 现在的展开态存在模块级的 `openSel`（wrap 的 id）里，
-  //    而 `renderProjSel()` / `renderFilters()` 开头都会 `closeSelect()`。
-  //    （旧版把它存在 `S.subOpen` 里，只清 DOM class 是不够的：留着 true 会让**下一次**
-  //     渲染出来的下拉一上来就是打开的。）
+  if (keep !== full.length) setPath(full.slice(0, keep));
+
+  // 展开态**不需要在这里清**：它存在 `S.dirsAll` 里，`setPath()` 会复位；
+  // 而下拉（项目）的展开态存在模块级的 `openSel` 里，`renderProjSel()` / `renderFilters()`
+  // 开头都会 `closeSelect()`。
   if (S.source) {
     const vals = mirror.sourceSummary(itemsInGroup()).map((s) => s.value);
     if (vals.indexOf(S.source) < 0) S.source = "";
@@ -1008,17 +1040,42 @@ function renderFoot() {
   const sel = S.selected;
   if (!sel) {
     refs.foot.appendChild(
-      dom.el("span", { class: "lf-hint" }, ["在下面选一张素材 —— 这里会出现置入按钮与落点"])
+      dom.el("span", { class: "lf-hint" }, ["在下面选一张素材 —— 右侧会出现「置入」"])
     );
     return;
   }
   const a = sel.asset;
   const plan = mirror.insertPlan(a);
+  const canIns = !!(plan.supported && !a.missing);
 
-  refs.foot.appendChild(dom.el("span", { class: "lf-t" }, [a.name]));
-  if (sel.crumb && sel.crumb.length) {
-    refs.foot.appendChild(dom.el("span", { class: "lf-s" }, ["位置：" + sel.crumb.join(" › ")]));
-  }
+  /* 不能置入的原因（原文件丢失 / 类型不支持）：进 `title` 与按钮置灰，
+     **不占版面** —— 它只在真正要置入时才重要。 */
+  const warn = a.missing
+    ? "原文件已丢失，无法置入"
+    : (!plan.supported ? plan.note : "");
+
+  /* ════════════════════════════════════════════════════════════════════
+     v0.9.7（用户 2026-10-17 拍板）：**去掉落点九宫格**
+     ----------------------------------------------------------------
+     动机：同事反馈落点几乎没人用。省下来的主力是**九宫格那 66px**，
+     不是按钮宽度 —— 面板从 150px 压到约 50px，580 高的面板下网格多出 100px。
+     形态：左＝素材名 + 一行元信息；右＝「置入」两字（44px）。
+     ⚠️ 原来占版面的「位置 / 标签 / 原图路径」**全部进 title**（hover 看）——
+        平时不看，排障时要能拿到；删掉它们比删落点更划算。
+     ⚠️ 别为了"信息更全"往回加行 —— 这个面板的硬指标就是 ≤50px。
+     ════════════════════════════════════════════════════════════════════ */
+  const tips = [];
+  if (sel.crumb && sel.crumb.length) tips.push("位置：" + sel.crumb.join(" › "));
+  if (a.tags && a.tags.length) tips.push("标签：" + a.tags.join(" / "));
+  if (a.absPath) tips.push("原图：" + a.absPath);
+  if (warn) tips.push("⚠️ " + warn);
+  const tipText = tips.join("\n");
+
+  const row = dom.el("div", { class: "lf-main" });
+  const left = dom.el("div", { class: "lf-l" });
+
+  left.appendChild(dom.el("span", { class: "lf-n", title: tipText }, [a.name]));
+
   const bits = [];
   const d = fmtDims(a);
   if (d) bits.push(d);
@@ -1026,86 +1083,22 @@ function renderFoot() {
   if (sz) bits.push(sz);
   if (a.role) bits.push(a.role);
   if (a.source) bits.push("来源：" + mirror.sourceLabel(a.source));
-  if (a.modifiedAt) bits.push("改于 " + fmtTime(a.modifiedAt));
-  refs.foot.appendChild(dom.el("span", { class: "lf-s mono" }, [bits.join(" · ") || "—"]));
-  if (a.tags && a.tags.length) {
-    refs.foot.appendChild(dom.el("span", { class: "lf-s" }, ["标签：" + a.tags.join(" / ")]));
-  }
-  if (a.absPath) {
-    refs.foot.appendChild(dom.el("span", { class: "lf-s lf-path mono" }, [a.absPath]));
-  }
-
-  /* ── 分隔线：素材信息与动作区之间（**细、不抢视线**，用户 2026-10-11 指定）── */
-  refs.foot.appendChild(dom.el("div", { class: "lf-sep" }));
-
-  /* ── 动作区：左＝置入按钮（下方跟一句说明），右＝落点九宫格 ────────────
-     布局依据（用户 2026-10-11 指定）：按钮**居左**、落点**居右**；
-     「落点」二字在九宫格**上方**；说明文字放到**按钮下方**；
-     原来的「置入为新图层 / 置入为智能对象」**去掉** ——
-     按钮上的"置入到画布"已经说明了动作，类型差异是噪音（只在**不可置入**时才提示）。 */
-  const act = dom.el("div", { class: "lf-act" });
-  const left = dom.el("div", { class: "lf-act-l" });
-
-  const ai = anchorInfo(a);
-  const warn = a.missing
-    ? "原文件已丢失，无法置入"
-    : (!plan.supported ? plan.note : "");
+  left.appendChild(
+    dom.el("span", { class: "lf-m mono", title: tipText }, [bits.join(" · ") || "—"])
+  );
+  row.appendChild(left);
 
   const btn = dom.el("div", {
-    class: "mini pri" + (plan.supported && !a.missing ? "" : " is-off"),
+    class: "lf-btn" + (canIns ? "" : " is-off"),
     id: "vt-lib-insert",
     role: "button",
     tabindex: "0",
-    // ⚠️ `plan.note` 从版面上撤掉了，但**放进 title** 保住信息（不占地方）
-    title: warn || plan.note,
-  });
-  btn.appendChild(icons.holder("plus", "i"));
-  btn.appendChild(dom.el("span", {}, ["置入到画布"]));
+    title: warn || plan.note || "置入到画布（居中）",
+  }, ["置入"]);
   binder.on(btn, "click", () => doInsert());
-  left.appendChild(btn);
+  row.appendChild(btn);
 
-  // 说明文字：有"为什么不能置入"就先说那个（那种时候它在用户眼前最重要），否则说落点会落在哪
-  const noteText = warn || ai.note;
-  if (noteText) {
-    left.appendChild(
-      dom.el("span", { class: "lf-note" + (warn ? " is-warn" : ai.ok ? " mono" : "") }, [noteText])
-    );
-  }
-  act.appendChild(left);
-
-  /* 落点：九宫格（v0.3.0）
-     ════════════════════════════════════════════════════════════════════
-     依据（2026-10-11 MCP 真机实测）：`placeEvent` 的默认落点是**选区中心**
-     （没有选区才是画布中心）且不缩放，而 `offset` 与图层位移 **1:1 精确**
-     ⇒ 选一个锚点就能把素材贴到画布对应位置。
-     ⚠️ 所以基准必须由 `placeBaseCenter()` 动态取，**绝不能硬编码画布中心** ——
-        有选区时那样会整体推偏、而且**不报错**（见 docs/26 §三 / 自检 S24）。
-     ⚠️ 它只管**位置**，不管尺寸（素材不会被缩放）。 */
-  const anchorWrap = dom.el("div", { class: "anchor-wrap" });
-  anchorWrap.appendChild(dom.el("span", { class: "anchor-hd" }, ["落点"]));
-  const agrid = dom.el("div", { class: "anchors", id: "vt-lib-anchors" });
-  for (const an of ps.ANCHORS) {
-    const on = S.anchor === an;
-    const cell = dom.el("div", {
-      class: "anchor-cell" + (on ? " is-on" : ""),
-      role: "button",
-      tabindex: "0",
-      "data-anchor": an,
-      title: "置入到「" + ps.anchorLabel(an) + "」",
-    });
-    cell.appendChild(dom.el("span", { class: "anchor-dot" }));
-    binder.on(cell, "click", () => {
-      S.anchor = an;
-      renderFoot();
-      status("落点：[" + ps.anchorLabel(an) + "] " + anchorInfo(a).note);
-      savePref();
-    });
-    agrid.appendChild(cell);
-  }
-  anchorWrap.appendChild(agrid);
-  act.appendChild(anchorWrap);
-
-  refs.foot.appendChild(act);
+  refs.foot.appendChild(row);
 }
 
 function select(item) {
@@ -1175,14 +1168,32 @@ async function load(fromUser) {
   }
 
   const changedScopeList = !S.manifest ||
-    (S.manifest.scopes || []).map((s) => s.id + ":" + s.revision).join(",") !==
-      m.scopes.map((s) => s.id + ":" + s.revision).join(",");
+    mirror.libraryScopes(S.manifest.scopes || []).map((s) => s.id + ":" + s.revision).join(",") !==
+      mirror.libraryScopes(m.scopes).map((s) => s.id + ":" + s.revision).join(",");
   S.manifest = m;
-  S.scopes = m.scopes;
+  /* 🔴 `manifest.scopes[]` 里**不是每个库都该出现在素材库页**：
+     模板库（`tpl`）有自己的单列入口，混进来只会多一个空 tab 让人以为坏了。
+     过滤规则收在 `mirror.libraryScopes()` 里 —— 自检 S20 用的是**同一个函数**算期望值，
+     否则"按 scopes 数 tab"会在软件侧一写 tpl 就红。 */
+  S.scopes = mirror.libraryScopes(m.scopes);
+
+  /* 契约 §5.7 的建议：被排除掉的 scope 在 boot.log 留**一行痕**。
+     为什么值得写这行：将来有人翻日志看到"manifest 里有 tpl、插件却没有这个 tab"，
+     第一反应会是"丢库了"（历史上真发生过一次误判）。留痕 = 有据可查。
+     ⚠️ 只在 scope 列表**变了**的时候记，否则每次轮询都会刷一行。 */
+  const droppedScopes = (m.scopes || [])
+    .filter((x) => !S.scopes.some((y) => y.id === x.id))
+    .map((x) => x.id);
+  if (droppedScopes.length && changedScopeList) {
+    await log.appendLog(
+      "library 已排除 scope：" + droppedScopes.join(",") +
+      "（模板库走「新建稿」页，不进素材库 —— 契约 §5.7）"
+    );
+  }
 
   let tabId = S.tabId;
   if (!tabId || !scopeById(tabId)) {
-    tabId = pickTab(m.scopes);
+    tabId = pickTab(S.scopes);
   }
   S.tabId = tabId;
   const sc = scopeById(tabId);
@@ -1285,8 +1296,7 @@ async function switchScope(id) {
   if (S.tabId === id) return;
   try {
     S.tabId = id;
-    S.group = "";
-    S.sub = "";
+    setPath([]); // 换库 ⇒ 目录回到根（path + group/sub + 折叠态一起复位）
     S.source = "";
     S.selected = null;
     closeSelect();
@@ -1526,14 +1536,10 @@ async function mount(container, context) {
   loadToken++;
 
   let want = null;
-  let wantAnchor = "mc";
   try {
     const pref = await store.readJson(PREF_FILE, null);
     want = pref && pref.tab ? String(pref.tab) : null;
-    // 落点锚点也记住（缺省居中；非法值一律回落到 mc，别信磁盘上的旧值）
-    if (pref && pref.anchor && ps.ANCHORS.indexOf(String(pref.anchor)) >= 0) {
-      wantAnchor = String(pref.anchor);
-    }
+    /* ⚠️ 老 pref 里的 `anchor` 字段**故意忽略**（落点功能 v0.9.7 已移除） */
   } catch {
     want = null;
   }
@@ -1553,10 +1559,15 @@ async function mount(container, context) {
     // 当前库的**形态**（task / brand / unknown）—— 由 mirror.scopeKind() 从镜像结构判定，
     // 决定"顶层分组用按钮还是下拉、有没有项目筛选"。**不靠 scope id 硬编码。**
     kind: "unknown",
+    /* 当前目录（**真相**）。`group` / `sub` 是它的派生值（path[0] / path[1]），
+       只为兼容任务库下拉、日志、状态行而保留 —— **写的时候一律走 `setPath()`**。 */
+    path: [],
     group: "",
     sub: "",
+    /* 子目录超过 `dirlib.MAX_VISIBLE` 时是否已展开（点「还有 N 个」置 true）。 */
+    dirsAll: false,
     source: "",
-    anchor: wantAnchor,
+    anchor: FIXED_ANCHOR, // 固定居中；落点 UI 已移除（见 FIXED_ANCHOR 注释）
     selected: null,
     busy: false,
     watcher: null,

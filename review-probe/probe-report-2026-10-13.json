@@ -1,0 +1,59 @@
+{
+  "plugin": "com.wooozxh.reviewprobe",
+  "version": "1.0.0",
+  "at": "2026-10-13 19:42:35",
+  "trigger": "samples",
+  "uxp": "uxp-9.0.2-uxp1-e0d9ef0",
+  "dataFolder": "C:\\Users\\17736\\AppData\\Roaming\\Adobe\\UXP\\PluginsStorage\\PHSP\\27\\Developer\\com.wooozxh.reviewprobe\\PluginData",
+  "durationMs": 3701,
+  "ok": true,
+  "summary": "1 通过 / 0 失败 / 0 无结论（共 1 项）",
+  "counts": {
+    "pass": 1,
+    "fail": 0,
+    "inconclusive": 0,
+    "total": 1
+  },
+  "docsBefore": 2,
+  "docsAfter": 2,
+  "userDocsUntouched": true,
+  "cleanup": [
+    "未标题-3 已关闭",
+    "未标题-4 已关闭",
+    "未标题-5 已关闭"
+  ],
+  "artifacts": [
+    {
+      "name": "review-probe-r17-strip-4pct.png",
+      "path": "C:\\Users\\17736\\AppData\\Roaming\\Adobe\\UXP\\PluginsStorage\\PHSP\\27\\Developer\\com.wooozxh.reviewprobe\\PluginData\\review-probe-r17-strip-4pct.png",
+      "bytes": 32205
+    },
+    {
+      "name": "review-probe-r17-strip-6pct.png",
+      "path": "C:\\Users\\17736\\AppData\\Roaming\\Adobe\\UXP\\PluginsStorage\\PHSP\\27\\Developer\\com.wooozxh.reviewprobe\\PluginData\\review-probe-r17-strip-6pct.png",
+      "bytes": 38936
+    },
+    {
+      "name": "review-probe-r17-strip-8pct.png",
+      "path": "C:\\Users\\17736\\AppData\\Roaming\\Adobe\\UXP\\PluginsStorage\\PHSP\\27\\Developer\\com.wooozxh.reviewprobe\\PluginData\\review-probe-r17-strip-8pct.png",
+      "bytes": 45652
+    }
+  ],
+  "sample": null,
+  "census": null,
+  "pickedCanvas": null,
+  "pickedExport": null,
+  "pickedFont": null,
+  "results": [
+    {
+      "id": "R17",
+      "name": "参数条样张：按图宽的 4% / 6% / 8% 三档出真图，供选比例",
+      "note": "★ 本项产出是**给人看的样张**，不是能力验证",
+      "status": "PASS",
+      "ok": true,
+      "ms": 2719,
+      "detail": "── 4pct：图宽 1600 → 条高 64px（4%）──\n  背景色已还原：是\n  报错：（无）\n  样张：review-probe-r17-strip-4pct.png（32205 B）\n  条高 64px · 行高 17px · 字号 10pt\n\n── 6pct：图宽 1600 → 条高 96px（6%）──\n  背景色已还原：是\n  报错：（无）\n  样张：review-probe-r17-strip-6pct.png（38936 B）\n  条高 96px · 行高 25px · 字号 15pt\n\n── 8pct：图宽 1600 → 条高 128px（8%）──\n  背景色已还原：是\n  报错：（无）\n  样张：review-probe-r17-strip-8pct.png（45652 B）\n  条高 128px · 行高 34px · 字号 20pt\n\n── 说明（给你看图时对照）──\n  · 图片区是**占位色**，不是真图；条内的字段值也是示例（真实现从 docInspect 取）。\n  · 字体是 PS 的**默认中文字体**（本轮已证明程序化改不了字体，见 §三 3）。\n  · 三张图的画布总高不同（1200+条高），条高分别 64px / 96px / 128px。\n\n⇒ 已产出 3 张样张。挑一个比例（或说「都不合适、换成 X%」）。",
+      "error": ""
+    }
+  ]
+}

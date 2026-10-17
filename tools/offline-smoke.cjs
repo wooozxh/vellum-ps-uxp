@@ -1698,8 +1698,9 @@ async function main() {
       "展平=" + JSON.stringify(shape) + "　树=" + JSON.stringify(tree)
     );
 
-    /* 30. §5.3 容错：缺失 / 坏 parentId / 三层 —— 一律当顶层，**绝不丢素材**
-       判据是"条数不变"，因为丢素材是最难发现的那种错（界面不报，只是少东西）。 */
+    /* 30. §5.3 容错：parentId **缺失 / 指向不存在的组** → 当顶层，**绝不丢素材**
+       判据是"条数不变"，因为丢素材是最难发现的那种错（界面不报，只是少东西）。
+       ⚠️ 2026-10-17 起「三层」**不再**属于容错分支 —— 它能正常展开成三级（见 30a）。 */
     const safeRows = mirror.flattenBrand({
       groups: [
         { id: 5, name: "孤儿", parentId: 999, assets: [{ id: 1, name: "x.png", ext: "png", thumb: "thumb/b1.png" }] },
@@ -1710,13 +1711,94 @@ async function main() {
       ],
     });
     check(
-      "30 §5.3 容错：parentId 缺失 / 指向不存在的组 / 三层 → 当顶层，一个素材都不丢",
+      "30 §5.3 容错：parentId 缺失 / 指向不存在的组 → 当顶层，一个素材都不丢",
       safeRows.length === 3 &&
         safeRows.filter((r) => r.group === "孤儿").length === 1 &&
         safeRows.filter((r) => r.group === "老镜像无此字段").length === 1 &&
-        safeRows.filter((r) => r.group === "C").length === 1,
+        /* A→B→C 这条链现在是**正常三级**（C 的 group=A、sub=B），不再被拍平成顶层 */
+        safeRows.filter((r) => r.asset.name === "z.png" && r.group === "A" && r.sub === "B").length === 1,
       "条数=" + safeRows.length + "（应为 3）　" +
         JSON.stringify(safeRows.map((r) => [r.group, r.sub]))
+    );
+
+    /* 30a. §5.3 放宽（2026-10-17，2 → 5 层）：三层必须**正常展开成三级**。
+       ★ 这条是「插件侧兼容版」的核心验收：软件侧放开多层后，插件**不改 UI 也不会把层级搞乱**。 */
+    const three = mirror.flattenBrand({
+      groups: [
+        { id: 1, name: "品牌视觉", sortOrder: 0, assets: [{ id: 1, name: "top.png" }] },
+        { id: 11, name: "Logo", parentId: 1, sortOrder: 0, assets: [{ id: 2, name: "logo.png" }] },
+        { id: 12, name: "基准式样", parentId: 11, sortOrder: 0, assets: [{ id: 3, name: "base.png" }] },
+      ],
+    });
+    const threePaths = three.map((r) => r.groupPath.join("\u203a"));
+    const threeTree = mirror.groupTree(three);
+    check(
+      "30a 放宽后：三层展开成三级（groupPath 三段），group/sub 仍只取前两层",
+      three.length === 3 &&
+        threePaths.join("|") === "品牌视觉|品牌视觉\u203aLogo|品牌视觉\u203aLogo\u203a基准式样" &&
+        three[2].group === "品牌视觉" && three[2].sub === "Logo" && three[2].depth === 3 &&
+        threeTree.length === 1 && threeTree[0].count === 3 &&
+        threeTree[0].children.length === 1 &&
+        threeTree[0].children[0].name === "Logo" && threeTree[0].children[0].count === 2 &&
+        threeTree[0].children[0].children[0].name === "基准式样" &&
+        threeTree[0].children[0].children[0].count === 1,
+      "paths=" + JSON.stringify(threePaths) + "\u3000树=" + JSON.stringify(threeTree)
+    );
+
+    /* 30b. **超过上限**（MAX_DEPTH=5）：第 6 层降级成顶层，但**素材一条不丢**。
+       上限的意义不是"拦数据"，是**兜住脏数据 / 别人违规产出深层的**。 */
+    const deepRows = mirror.flattenBrand({
+      groups: [
+        { id: 1, name: "L1", assets: [{ id: 1, name: "1.png" }] },
+        { id: 2, name: "L2", parentId: 1, assets: [{ id: 2, name: "2.png" }] },
+        { id: 3, name: "L3", parentId: 2, assets: [{ id: 3, name: "3.png" }] },
+        { id: 4, name: "L4", parentId: 3, assets: [{ id: 4, name: "4.png" }] },
+        { id: 5, name: "L5", parentId: 4, assets: [{ id: 5, name: "5.png" }] },
+        { id: 6, name: "L6", parentId: 5, assets: [{ id: 6, name: "6.png" }] },
+      ],
+    });
+    const deepMap = deepRows.map((r) => r.asset.name + "@" + r.depth);
+    check(
+      "30b 超上限（6 层）：第 6 层降级成顶层，6 条素材一条不丢",
+      deepRows.length === 6 && mirror.MAX_DEPTH === 5 &&
+        deepRows.filter((r) => r.asset.name === "5.png" && r.depth === 5).length === 1 &&
+        deepRows.filter((r) => r.asset.name === "6.png" && r.depth === 1 && r.group === "L6").length === 1,
+      "depth=" + JSON.stringify(deepMap) + "\u3000MAX_DEPTH=" + mirror.MAX_DEPTH
+    );
+
+    /* 30c. **成环**（A 父 B、B 父 A）：不许爆栈、不许重复吐，素材仍要全在。 */
+    const cycRows = mirror.flattenBrand({
+      groups: [
+        { id: 1, name: "A", parentId: 2, assets: [{ id: 1, name: "a.png" }] },
+        { id: 2, name: "B", parentId: 1, assets: [{ id: 2, name: "b.png" }] },
+      ],
+    });
+    check(
+      "30c 成环（A\u2194B）：不爆栈、每组只吐一次、素材都在",
+      cycRows.length === 2 && cycRows.map((r) => r.asset.name).sort().join(",") === "a.png,b.png",
+      "条数=" + cycRows.length + "\u3000" +
+        JSON.stringify(cycRows.map((r) => [r.asset.name, r.groupPath.join("\u203a")]))
+    );
+
+    /* 30d. ★ 回归等价性：**两层数据**在新代码下的输出必须与旧行为**逐项一致**。
+       判据不写"看起来一样"，而是把旧行为的关键字段写成**期望值**逐项比 ——
+       这条是"UI 一行不用改"的硬证据。 */
+    const legacyRows = mirror.flattenBrand({
+      groups: [
+        { id: 1, name: "公司素材", sortOrder: 0, assets: [{ id: 1, name: "a.png" }, { id: 2, name: "b.png" }] },
+        { id: 2, name: "我的收藏", sortOrder: 1, assets: [{ id: 3, name: "c.png" }] },
+        { id: 11, name: "节日素材", parentId: 1, sortOrder: 0, assets: [{ id: 4, name: "d.png" }] },
+        { id: 12, name: "另一子组", parentId: 1, sortOrder: 1, assets: [{ id: 5, name: "e.png" }] },
+      ],
+    });
+    const legacySeq = legacyRows.map((r) => r.asset.name + "@" + r.group + "/" + r.sub).join("|");
+    const legacyWant =
+      "a.png@公司素材/|b.png@公司素材/|d.png@公司素材/节日素材|e.png@公司素材/另一子组|c.png@我的收藏/";
+    check(
+      "30d \u2605两层数据零变化：顺序 / group / sub 与放宽前**逐项一致**（旧 UI 不用改）",
+      legacyRows.length === 5 && legacySeq === legacyWant &&
+        legacyRows.every((r) => r.groupPath.length === (r.sub ? 2 : 1)),
+      "实际=" + legacySeq
     );
 
     /* 31. §5.4 加法 ②：source 是**可选**的 —— 老镜像没有它就是空数组，不许当异常 */
@@ -1901,17 +1983,26 @@ async function main() {
     const pop = (/\.fsel-pop\s*\{[^}]*\}/.exec(css) || [""])[0];
     const proj = (/\.lib-proj\s*\{[^}]*\}/.exec(css) || [""])[0];
     const fchips = (/\.fchips\s*\{[^}]*\}/.exec(css) || [""])[0];
-    const sep = (/\.lf-sep\s*\{[^}]*\}/.exec(css) || [""])[0];
-    const hd = (/\.anchor-hd\s*\{[^}]*\}/.exec(css) || [""])[0];
+    /* v0.9.7（用户 2026-10-17 拍板）：落点九宫格已移除，插入面板改成
+       「两行信息 + 右侧置入按钮」。所以这里判两件事：
+         ① 新结构在（`.lf-main` 是 flex 行、`.lf-btn` 用主题蓝）
+         ② **落点样式彻底删干净**（不是留着不用 —— 留着就会有人以为还在用） */
+    const lfMain = (/\.lf-main\s*\{[^}]*\}/.exec(css) || [""])[0];
+    const lfBtn = (/\.lf-btn\s*\{[^}]*\}/.exec(css) || [""])[0];
+    const anchorGone =
+      !/\.anchor-wrap\s*\{/.test(css) &&
+      !/\.anchor-cell\s*\{/.test(css) &&
+      !/\.anchor-hd\s*\{/.test(css);
     const rightAnchored = pop.indexOf("right: 0") >= 0 && pop.indexOf("left: 0") < 0;
     check(
-      "38 四条调整的结构件齐备（下拉右对齐 / chips 可伸缩 / 顶部槽位 / 分隔线 / 落点标题）",
+      "38 结构件齐备（下拉右对齐 / chips 可伸缩 / 顶部槽位 / 插入面板两行+置入按钮 / 落点样式已删净）",
       rightAnchored && proj.indexOf("flex") >= 0 && fchips.indexOf("flex: 1 1 auto") >= 0 &&
-        /height:\s*1px/.test(sep) && !!hd,
+        lfMain.indexOf("display: flex") >= 0 && lfBtn.indexOf("var(--vt-ac)") >= 0 && anchorGone,
       "浮层右对齐（right:0 且无 left:0）=" + rightAnchored +
         "　.lib-proj=" + !!proj + "　.fchips 可伸缩=" + (fchips.indexOf("flex: 1 1 auto") >= 0) +
-        "　.lf-sep=" + (/height:\s*1px/.test(sep) ? "1px 细线" : "缺少") +
-        "　.anchor-hd=" + !!hd
+        "　.lf-main 是 flex=" + (lfMain.indexOf("display: flex") >= 0) +
+        "　.lf-btn=" + (lfBtn ? "在" : "缺少") +
+        "　落点样式已删净=" + anchorGone
     );
   }
 
@@ -2096,12 +2187,46 @@ async function main() {
       }
       return null;
     };
+    /* v0.9.9：二级下拉（`vt-lib-subsel`）**整块被面包屑下钻取代**。
+       判据换成三段，缺一不可：
+         ① 点进「公司素材」后**出现面包屑**，且有 2 段（全部 / 公司素材），
+            当前段带 `is-on`（= 不可点的当前层）；
+         ② 子目录 chip 出现（测试数据里「公司素材」下挂着「节日素材」）；
+         ③ 深层**不再画「全部」chip**（回上级交给面包屑），点面包屑第 0 段能回根。 */
     click(findChip("公司素材"));
     await sleep(200);
-    const subSel = document.getElementById("vt-lib-subsel");
-    const rowOfChip = ancWith(findChip("公司素材"), "frow");
-    const rowOfSub = ancWith(subSel, "frow");
-    const sameRow = !!(attached(subSel) && rowOfChip && rowOfSub && rowOfChip === rowOfSub);
+
+    const bc = document.getElementById("vt-lib-bc");
+    const segs = bc ? collectByAttr(bc, "data-crumb", []) : [];
+    const segClass = (idx) => {
+      for (const g of segs) {
+        if (g.getAttribute("data-crumb") === String(idx)) {
+          return String(g.getAttribute("class") || "");
+        }
+      }
+      return "";
+    };
+    const bcOk = !!(bc && segs.length === 2 &&
+      segClass(1).indexOf("is-on") >= 0 && segClass(0).indexOf("is-on") < 0);
+    const childChipOk = !!findChip("节日素材");
+    const noAllChip = !findChip(""); // 深层不画「全部」
+
+    // ③ 面包屑第 0 段 = 全部 ⇒ 点回根：面包屑消失、一级 chip 回来
+    const backSeg = (function () {
+      for (const g of segs) if (g.getAttribute("data-crumb") === "0") return g;
+      return null;
+    })();
+    click(backSeg);
+    await sleep(200);
+    /* ⚠️ 必须用 `attached()` 判，不能 `!!getElementById(...)`：
+       mock 的 byId 只增不减（见上面 `attached` 的注释），脱离 DOM 的老节点仍能被找到。
+       我第一次就是踩在这个坑上 —— 读数说"面包屑还在"，其实早就被 clear 掉了。 */
+    const bcAfter = attached(bc);
+    const chipAfter = !!findChip("公司素材");
+    const backOk = !bcAfter && chipAfter;
+    // 再进一次，后面还要验详情区（下面第 ④ 段用得上）
+    click(findChip("公司素材"));
+    await sleep(200);
     // 失败时"自己解释自己"：把筛选区的结构签名打出来（只看直接子节点的 class + 里面的 chip key）
     const barSig = () => {
       if (!bar) return "no-bar";
@@ -2122,37 +2247,48 @@ async function main() {
     click(g2 ? firstCardIn(g2) : null);
     await sleep(150);
     const foot = document.getElementById("vt-lib-foot");
-    let sepOk = false;
-    let hdOk = false;
+    /* v0.9.7：详情区改成「素材名 + 一行元信息 + 右侧置入按钮」，落点整块移除。
+       判据同时看两边 —— 新的在、旧的**彻底不在**（否则就是"删了 UI 没删代码"）。 */
+    let nOk = false;
+    let mOk = false;
+    let btnOk = false;
+    let anchorAlive = false;
     if (foot) {
       const walk = (n) => {
         for (const c of n.children) {
           const cl = String((c.getAttribute && c.getAttribute("class")) || "");
-          if (cl.split(/\s+/)[0] === "lf-sep") sepOk = true;
-          if (cl.split(/\s+/)[0] === "anchor-hd") hdOk = true;
+          const first = cl.split(/\s+/)[0];
+          if (first === "lf-n") nOk = true;
+          if (first === "lf-m") mOk = true;
+          if (first === "lf-btn") btnOk = true;
+          if (first === "anchor-hd" || first === "anchor-cell" || first === "anchor-wrap") anchorAlive = true;
           walk(c);
         }
       };
       walk(foot);
     }
     const footTxt = foot ? String(foot.textContent || "") : "";
+    const insertBtnOk = btnOk && footTxt.indexOf("置入") >= 0;
     const planNoteGone = footTxt.indexOf("置入为新图层") < 0 && footTxt.indexOf("置入为智能对象") < 0;
 
     check(
-      "40 真实挂载：项目下拉在顶部槽位/不重复画 chip · 二级与一级同行 · 详情区分隔线+落点标题",
+      "40 真实挂载：项目下拉在顶部槽位/不重复画 chip · 面包屑下钻（深层不画「全部」、可回根）· 详情区两行+「置入」· 落点已移除",
       inSlot && optCount === 3 && cardsTask === 1 && barChips === 0 &&
-        projGone && sameRow && sepOk && hdOk && planNoteGone,
+        projGone && bcOk && childChipOk && noAllChip && backOk &&
+        nOk && mOk && insertBtnOk && !anchorAlive && planNoteGone,
       "项目下拉在顶部槽位=" + inSlot +
         "　选项数=" + optCount + "（期望 3 = 2 项目 + 全部）" +
         "　选「乙项目」→卡片=" + cardsTask + "（期望 1）" +
         "　筛选区里的 chip 数=" + barChips + "（须 0：项目条件已挪到顶部，不许重复画）" +
         "　切通用库后项目下拉已摘下=" + projGone +
-        "　二级与一级同一 .frow=" + sameRow +
-        "　详情区 .lf-sep=" + sepOk + "·.anchor-hd=" + hdOk +
+        "　面包屑段数=" + segs.length + "（须 2）·当前段加粗=" + bcOk +
+        "　子目录 chip（节日素材）=" + childChipOk +
+        "　深层不画「全部」=" + noAllChip + "　面包屑可回根=" + backOk +
+        "（回根后 bc 还在=" + bcAfter + "　一级 chip 回来=" + chipAfter + "）" +
+        "　详情区 名称=" + nOk + "·元信息=" + mOk + "·置入按钮=" + insertBtnOk +
+        "·落点残留=" + anchorAlive + "（须 false）" +
         "　「置入为新图层」文案已去掉=" + planNoteGone +
-        "　‖ 失败时看这里·筛选区结构=" + barSig() +
-        "　（二级下拉 attached=" + attached(subSel) + "　chip 所在行=" + !!rowOfChip +
-        "　下拉所在行=" + !!rowOfSub + "）"
+        "　‖ 失败时看这里·筛选区结构=" + barSig()
     );
 
     /* ---- 47（v0.3.4）：通用库不再画重复的「来源」行 ----
@@ -2170,7 +2306,10 @@ async function main() {
     await sleep(50);
   }
 
-  /* ---- 41. 详情/置入区必须在**瀑布流上方**（用户第 3 条：素材多时不必滚到底部按置入） ----
+  /* ---- 41. 三段式：筛选行在上 / 网格居中滚动 / **详情+置入固定在底部** ----
+     v0.9.8 用户拍板的三段式。⚠️ 判据不只是"顺序"，还要验**它没有掉进滚动区里** ——
+     `vt-lib-foot` 的 parentNode 必须是外层 wrap，**不能**是 `vt-lib-body`
+     （掉进去就会跟着网格滚走，v0.3.2 那个"选完要滚到底按置入"的痛点会原样回来）。
      ⚠️ mock DOM 没有 compareDocumentPosition —— 用"在父节点 children 里的下标"比顺序，
         这比读源码里的书写顺序更硬（它验的是**实际挂载出来的结构**）。 */
   {
@@ -2195,16 +2334,23 @@ async function main() {
     const footIdx = idxOf("vt-lib-foot");
     const bodyIdx = idxOf("vt-lib-body");
     const barIdx = idxOf("vt-lib-bar");
-    // 顺序应当是：筛选行 → 详情/置入 → 网格
-    const orderOk = barIdx >= 0 && footIdx > barIdx && bodyIdx > footIdx;
+    // 顺序应当是：筛选行 → 网格 → 详情/置入（v0.9.8 三段式，插入面板固定底部）
+    const orderOk = barIdx >= 0 && bodyIdx > barIdx && footIdx > bodyIdx;
+    // 置入区**不能**在滚动容器里
+    const footEl41 = document.getElementById("vt-lib-foot");
+    const bodyEl41 = document.getElementById("vt-lib-body");
+    const footOutOfScroll = !!(footEl41 && bodyEl41 &&
+      footEl41.parentNode !== bodyEl41 &&
+      !(bodyEl41.contains && bodyEl41.contains(footEl41)));
     // 两个库时不该显示"只有 N 个库"的提示
     const note = document.getElementById("vt-lib-metanote");
     const noteHidden = !!(note && String(note.style.display) === "none");
     check(
-      "41 详情/置入区在瀑布流上方（筛选行 → 详情 → 网格），且两个库时不显示提示",
-      orderOk && noteHidden,
-      "筛选行 index=" + barIdx + "　详情 index=" + footIdx + "　网格 index=" + bodyIdx +
-        "（须 筛选<详情<网格）　库数提示隐藏=" + noteHidden
+      "41 三段式：筛选行 → 网格 → 置入区（底部固定，不在滚动区里），且两个库时不显示提示",
+      orderOk && footOutOfScroll && noteHidden,
+      "筛选行 index=" + barIdx + "　网格 index=" + bodyIdx + "　置入 index=" + footIdx +
+        "（须 筛选<网格<置入）　置入区在滚动区外=" + footOutOfScroll +
+        "　库数提示隐藏=" + noteHidden
     );
     libMod.unmount();
     await sleep(50);
@@ -2976,14 +3122,21 @@ async function main() {
     const tids = reg.tools.map((t) => t.id);
     const inspMod = reg.byId("inspect");
     const wronglyReady = reg.planned.filter((p) => p.ready === true).length;
+    /* v0.9.12：**「新建稿」已从 planned 转正**（模板库入口落在这一页）。
+       判据跟着换代：它必须在 tools 里、必须有 ready + mount/unmount，
+       并且 **planned 里不许再留一个同 id 的占位**（否则首页会出现两行同名）。 */
+    const newdocMod = reg.byId("template");
     check(
-      "M5-10 宫格：出图体检已上线（tools + ready + mount/unmount），「新建稿」仍是灰行",
+      "M5-10 宫格：出图体检 + 新建稿都已上线（tools + ready + mount/unmount），planned 里无同名占位",
       tids.indexOf("inspect") >= 0 && pids.indexOf("inspect") < 0 &&
-        pids.indexOf("template") >= 0 && wronglyReady === 0 &&
+        tids.indexOf("template") >= 0 && pids.indexOf("template") < 0 && wronglyReady === 0 &&
         !!inspMod && inspMod.ready === true &&
-        typeof inspMod.mount === "function" && typeof inspMod.unmount === "function",
+        typeof inspMod.mount === "function" && typeof inspMod.unmount === "function" &&
+        !!newdocMod && newdocMod.ready === true &&
+        typeof newdocMod.mount === "function" && typeof newdocMod.unmount === "function",
       "tools = " + JSON.stringify(tids) + "　planned = " + JSON.stringify(pids) +
       "　inspect.ready = " + (inspMod ? inspMod.ready : "无") +
+      "　template.ready = " + (newdocMod ? newdocMod.ready : "无") +
       "　标成 ready 的规划项数 = " + wronglyReady + "（须 0）"
     );
 
@@ -3114,8 +3267,710 @@ async function main() {
       !hBackRef,
       "history.js 里" + (hBackRef ? "**有**" : "没有") + " require(\"./ps.js\")"
     );
+
+    /* ==================================================================
+     * M5 第 4 步：导出审核版 · 参数条（纯函数）
+     * ================================================================== */
+    const rev = require(path.join(PKG, "lib", "review.js"));
+    const inspLib = require(path.join(PKG, "lib", "inspect.js"));
+
+    /* M5-18 条高：图宽 × 8%，下限 72px；1600 宽 @72ppi 必须复现样张那一档 */
+    try {
+      const m72 = rev.stripMetrics(1600, 1200, 72, null);
+      const narrow = rev.stripMetrics(400, 300, 72, null);
+      const ok18 =
+        Math.round(1600 * 0.08) === 128 && m72.stripH === 128 &&
+        m72.lineHPx === 34 && Math.abs(m72.fontPt - 20) < 0.1 &&
+        m72.padXPx === 20 &&                  // v0.9.0：条高 × 0.16（原 0.125 = 16px）
+        narrow.stripH === 72;                 // 下限兜底（400×0.08=32 → 抬到 72）
+      check(
+        "M5-18 参数条几何：条高=图宽×8%（下限 72）、留白=条高×0.16，1600 宽复现样张",
+        ok18,
+        "1600×1200@72 → 条高 " + m72.stripH + "、字号 " + m72.fontPt + "pt、行高 " +
+          m72.lineHPx + "、留白 " + m72.padXPx + "（须 20）　400 宽 → 条高 " + narrow.stripH + "（下限）"
+      );
+    } catch (e) {
+      check("M5-18 参数条几何", false, (e && e.message) || String(e));
+    }
+
+    /* M5-19 ★ 字号必须按 ppi 换算（不然 300dpi 稿上字会大到离谱） */
+    try {
+      const a = rev.stripMetrics(1600, 1200, 72, null);
+      const b = rev.stripMetrics(1600, 1200, 300, null);
+      const ratio = a.fontPt / b.fontPt;
+      const ok19 = b.stripH === a.stripH && Math.abs(ratio - 300 / 72) < 0.02;
+      check(
+        "M5-19 ★字号按 ppi 换算：条高（像素）不变，pt 随 ppi 反比缩小（300dpi 字不该撑爆）",
+        ok19,
+        "条高 " + a.stripH + " vs " + b.stripH + "（须相等）　fontPt " + a.fontPt + " → " +
+          b.fontPt + "，比值 " + ratio.toFixed(2) + "（须 ≈ " + (300 / 72).toFixed(2) + "）"
+      );
+    } catch (e) {
+      check("M5-19 字号按 ppi 换算", false, (e && e.message) || String(e));
+    }
+
+    /* M5-20 三行文字：来源唯一（缺字体走 inspect.missingFonts）+ 空值不留 "· ·" */
+    try {
+      const fakeInsp = {
+        ok: true,
+        spec: { specName: "Vellum 出图规范", specVersion: 3, effectiveFrom: "2026-10-12" },
+        snapshot: {
+          info: { docName: "品牌主视觉_v3.psd", pxW: 1600, pxH: 1200, ppi: 300 },
+          layers: { textCount: 3, fonts: [{ layer: "标题", font: "NoSuchFont-XYZ" }] },
+          fontNames: { ps: ["arialmt"], loose: ["arial"], count: 583 }
+        },
+        findings: [
+          { key: "mode", value: "CMYKColorMode" },
+          { key: "bits", value: "bitDepth8" },
+          { key: "ppi", value: "300 dpi" },
+          { key: "px", value: "1600 × 1200 px" },
+          { key: "phys", value: "135.5 × 101.6 mm" },
+          { key: "profile", value: "Japan Color 2001 Coated" }
+        ]
+      };
+      const L = rev.stripLines(fakeInsp, { bleed: { state: "has", mm: 3 }, when: new Date(2026, 9, 16, 23, 30) });
+      const mf = inspLib.missingFonts(fakeInsp.snapshot);
+      const ok20 =
+        L.ok && L.lines.length === 3 &&
+        L.textCount === 3 && L.missing === mf.missing.length && mf.missing.length === 1 &&
+        L.lines[0].indexOf("品牌主视觉_v3.psd") === 0 &&
+        L.lines[0].indexOf("导出 2026-10-16 23:30") >= 0 &&
+        L.lines[1].indexOf("CMYK") === 0 &&
+        L.lines[1].indexOf("8 位") >= 0 &&
+        L.lines[1].indexOf("· ·") < 0 &&
+        L.lines[2].indexOf("未转曲文字层 3 个") >= 0 &&
+        L.lines[2].indexOf("缺失字体 1 个") >= 0;
+      check(
+        "M5-20 参数条三行：未转曲/缺字体与 inspect 同源（missingFonts）+ 空值不留「· ·」",
+        ok20,
+        "缺字体（本机清单里没有 NoSuchFont-XYZ）= " + mf.missing.length +
+          "，参数条 = " + L.missing + "\n        L1 " + L.lines[0] +
+          "\n        L2 " + L.lines[1] + "\n        L3 " + L.lines[2]
+      );
+
+      /* M5-24 ★ v0.9.0 版式：竖线分隔 /「依据」摘成独立右对齐块 / 与正文盒子不重叠 */
+      try {
+        const SEP = rev.STRIP.sep;
+        const NOL_BASIS = rev.stripLines(fakeInsp, { bleed: { state: "has", mm: 3 }, when: new Date(2026, 9, 16, 23, 30) });
+        const met = rev.stripMetrics(
+          1600, 1200, 300, NOL_BASIS.lines, NOL_BASIS.tag, NOL_BASIS.basis
+        );
+        const tagTxt = NOL_BASIS.tag, basisTxt = NOL_BASIS.basis;
+
+        const okSep =
+          NOL_BASIS.lines[1].indexOf(" · ") < 0 && NOL_BASIS.lines[1].indexOf(SEP) > 0 &&
+          NOL_BASIS.lines[0].indexOf(SEP) > 0 && NOL_BASIS.lines[2].indexOf(SEP) > 0;
+
+        const okBasis =
+          basisTxt.indexOf("依据 Vellum 出图规范 v3") === 0 &&
+          basisTxt.indexOf("2026-10-12 生效") > 0 &&
+          NOL_BASIS.lines[2].indexOf("依据") < 0;      // 已摘出去，正文里不该再有
+
+        /* 三个盒子必须互不重叠：正文 < logo < 依据文字 ≤ 右留白线；角标在右上、行高 1 行 */
+        const okBoxes =
+          met.text.right < met.basis.logo.left &&
+          met.basis.logo.right <= met.basis.text.left + 0.001 &&
+          Math.abs(met.basis.text.right - (met.imgW - met.padXPx)) < 0.01 &&
+          Math.abs(met.basis.logo.bottom - met.basis.logo.top - met.basis.logoH) < 0.001 &&
+          Math.abs(met.basis.logoW / met.basis.logoH - 256 / 164) < 0.01 &&
+          Math.abs(met.tag.right - (met.imgW - met.padXPx)) < 0.01 &&
+          /* ★ v0.9.3：角标盒子用的是**它自己的**行高（比正文大），
+             且要容得下它自己的字号。 */
+          Math.abs(met.tag.bottom - met.tag.top - met.tagLineHPx) < 0.001 &&
+          met.tagLineHPx > met.lineHPx &&
+          (met.tag.bottom - met.tag.top) >= met.tagFontPx &&
+          met.basis.rowTop > met.tag.top;
+
+        check(
+          "M5-24 ★版式：参数一律竖线分隔；「依据」摘成独立右对齐块（带 logo），三个盒子互不重叠",
+          okSep && okBasis && okBoxes,
+          "L1 " + NOL_BASIS.lines[0] + "\n        L2 " + NOL_BASIS.lines[1] +
+            "\n        L3 " + NOL_BASIS.lines[2] + "\n        依据块 " + JSON.stringify(basisTxt) +
+            "\n        正文右=" + met.text.right.toFixed(0) + " < logo左=" + met.basis.logo.left.toFixed(0) +
+            " < logo右=" + met.basis.logo.right.toFixed(0) + " ≤ 依据文字左=" + met.basis.text.left.toFixed(0) +
+            "；依据右=" + met.basis.text.right + "（右留白线=" + (met.imgW - met.padXPx) + "）" +
+            "；logo " + met.basis.logoW.toFixed(1) + "×" + met.basis.logoH +
+            "（比 " + (256 / 164).toFixed(3) + "）"
+        );
+      } catch (e) {
+        check("M5-24 版式", false, (e && e.message) || String(e));
+      }
+
+      /* M5-25 ★ v0.9.0 主题判定：底部深 ⇒ 浅条；浅 ⇒ 深条；取不到 ⇒ 退回浅条并标明 */
+      try {
+        const tDark = rev.pickTheme({ ok: true, rgb: { r: 24, g: 24, b: 28 } });
+        const tLight = rev.pickTheme({ ok: true, rgb: { r: 242, g: 240, b: 236 } });
+        const tMid = rev.pickTheme({ ok: true, rgb: { r: 128, g: 128, b: 128 } });
+        const tNone = rev.pickTheme({ ok: false, error: "读不到像素" });
+        const band = rev.sampleBandRect(1600, 1200, 128);
+        const ok25 =
+          tDark.theme.id === "light" && tDark.from === "sampled" &&
+          tLight.theme.id === "dark" && tLight.from === "sampled" &&
+          tMid.theme.id === "dark" &&                        // 128/255=0.502 ≥ 0.5
+          tNone.theme.id === "light" && tNone.from === "fallback" &&
+          String(tNone.note).indexOf("退回浅条") > 0 &&
+          /* 深浅两套的底色/字色必须真的相反 */
+          rev.THEME_LIGHT.bgHex === "#FFFFFF" && rev.THEME_LIGHT.fgHex === "#222222" &&
+          rev.THEME_DARK.bgHex === "#111111" && rev.THEME_DARK.fgHex === "#F2F2F2" &&
+          rev.THEME_LIGHT.tagHex !== rev.THEME_DARK.tagHex &&
+          /* 取样带 = 图片最下面全宽一条 */
+          band.left === 0 && band.right === 1600 && band.bottom === 1200 && band.top === 1072;
+        check(
+          "M5-25 ★主题判定：底部深→浅条 / 浅→深条 / 取不到→退回浅条并标明（不静默猜）",
+          ok25,
+          "深(" + tDark.theme.id + "/" + tDark.from + ")　浅(" + tLight.theme.id + "/" +
+            tLight.from + ")　中灰 luma=" + tMid.luma.toFixed(3) + "→" + tMid.theme.id +
+            "　取不到→" + tNone.theme.id + "/" + tNone.from +
+            "\n        取样带 " + JSON.stringify(band) +
+            "；浅条 " + rev.THEME_LIGHT.bgHex + "+" + rev.THEME_LIGHT.fgHex + "/角标" + rev.THEME_LIGHT.tagHex +
+            "　深条 " + rev.THEME_DARK.bgHex + "+" + rev.THEME_DARK.fgHex + "/角标" + rev.THEME_DARK.tagHex
+        );
+      } catch (e) {
+        check("M5-25 主题判定", false, (e && e.message) || String(e));
+      }
+
+      /* M5-26 ★ v0.9.0 缩放计划（docs/51 §四 路线 D）：只在长边超阈值时才缩，且印在参数条上 */
+      try {
+        const big = rev.planScale(4724, 10630);      // 用户举的 80×180cm @150ppi
+        const small = rev.planScale(1600, 1200);
+        const txtBig = rev.scaleText(big);
+        const txtSmall = rev.scaleText(small);
+        const Lscaled = rev.stripLines(fakeInsp, {
+          bleed: { state: "none" }, when: new Date(2026, 9, 16, 23, 30), scale: big
+        });
+        const ok26 =
+          big.applied === true && big.w === 1778 && big.h === 4000 &&
+          Math.abs(big.pct - 37.63) < 0.05 &&
+          small.applied === false && txtSmall === "" &&
+          txtBig.indexOf("已缩至 38%") >= 0 && txtBig.indexOf("导出 1778 × 4000 px") > 0 &&
+          /* ★ 缩过就必须印在参数条上（否则看版的人以为看的是 100%） */
+          Lscaled.lines[2].indexOf("已缩至 38%") > 0 &&
+          Lscaled.lines[2].indexOf("导出 1778 × 4000 px") > 0;
+        check(
+          "M5-26 ★缩放计划：长边超 4000 才等比缩（4724×10630 → 1778×4000、38%），且**印在参数条上**",
+          ok26,
+          "大稿 " + JSON.stringify({ applied: big.applied, w: big.w, h: big.h, pct: Math.round(big.pct) }) +
+            "　小稿 applied=" + small.applied + "、说明=" + JSON.stringify(txtSmall) +
+            "\n        " + big.reason + "\n        参数条第 3 行 " + Lscaled.lines[2]
+        );
+      } catch (e) {
+        check("M5-26 缩放计划", false, (e && e.message) || String(e));
+      }
+    } catch (e) {
+      check("M5-20 参数条三行", false, (e && e.message) || String(e));
+    }
+
+    /* M5-21 出血三态：文案固定 + 非法输入必须被拒（不许猜一个默认值） */
+    try {
+      const tNone = rev.bleedText({ state: "none" });
+      const tHas = rev.bleedText({ state: "has", mm: 3 });
+      const tUnk = rev.bleedText({ state: "unknown" });
+      const g1 = rev.makeBleed("has", "3");
+      const g2 = rev.makeBleed("has", "");
+      const g3 = rev.makeBleed("has", "0");
+      const g4 = rev.makeBleed("has", "abc");
+      const g5 = rev.makeBleed("has", "500");
+      const g6 = rev.makeBleed("none", "9");
+      const g7 = rev.makeBleed("garbage", "");
+      const ok21 =
+        tNone === "出血 无" && tHas === "出血 含 3 mm" && tUnk === "出血 无法判断" &&
+        g1.ok && g1.mm === 3 &&
+        !g2.ok && g2.mm === null && !g3.ok && !g4.ok && !g5.ok &&
+        g6.ok && g6.state === "none" && g6.mm === null &&
+        g7.ok && g7.state === "unknown";
+      check(
+        "M5-21 出血三态：文案固定；「有出血」缺毫米/0/非数字/超限一律拒绝（不猜默认值）",
+        ok21,
+        "文案 " + JSON.stringify([tNone, tHas, tUnk]) +
+          "　has/3 ok=" + g1.ok + "　has/空 ok=" + g2.ok + "　has/0 ok=" + g3.ok +
+          "　has/abc ok=" + g4.ok + "　has/500 ok=" + g5.ok + "　none/9 → mm=" + g6.mm +
+          "　乱填 state → " + g7.state
+      );
+    } catch (e) {
+      check("M5-21 出血三态", false, (e && e.message) || String(e));
+    }
+
+    /* M5-22 导出文件名：去扩展名 / 洗掉非法字符 / 带时间戳 / 两类互不相同 */
+    try {
+      const n1 = rev.exportFileName("品牌主视觉_v3.psd", "review", new Date(2026, 9, 16, 23, 30));
+      const n2 = rev.exportFileName("a/b:c*d?e\"f<g>h|i", "final", new Date(2026, 9, 16, 23, 30));
+      const n3 = rev.exportFileName("", "review", new Date(2026, 9, 16, 23, 30));
+      const ok22 =
+        n1 === "品牌主视觉_v3-审核版-20261016-2330.png" &&
+        n1 !== rev.exportFileName("品牌主视觉_v3.psd", "final", new Date(2026, 9, 16, 23, 30)) &&
+        n2.indexOf("/") < 0 && n2.indexOf(":") < 0 && n2.indexOf("*") < 0 && n2.indexOf("?") < 0 &&
+        n2.indexOf('"') < 0 && n2.indexOf("<") < 0 && n2.indexOf(">") < 0 && n2.indexOf("|") < 0 &&
+        n2.indexOf(".png") === n2.length - 4 &&
+        n3.indexOf("未命名") === 0;
+      check(
+        "M5-22 导出文件名：去扩展名 + 洗掉 \\/:*?\"<>| + 带时间戳 + 审核/成品不重名",
+        ok22,
+        n1 + "　" + n2 + "　" + n3
+      );
+    } catch (e) {
+      check("M5-22 导出文件名", false, (e && e.message) || String(e));
+    }
+
+    /* M5-23 依赖方向：review.js 不许回头 require ps.js（防循环） */
+    try {
+      const rsrc = fs.readFileSync(path.join(PKG, "lib", "review.js"), "utf8");
+      const prsrc = fs.readFileSync(path.join(PKG, "lib", "ps.js"), "utf8");
+      const rBack = /require\(\s*["'][^"']*ps\.js["']\s*\)/.test(rsrc);
+      const psUses = /require\(\s*["']\.\/review\.js["']\s*\)/.test(prsrc);
+      check(
+        "M5-23 依赖方向：ps.js → review.js → inspect.js 单向（review 不许回头 require ps）",
+        !rBack && psUses,
+        "review.js 里" + (rBack ? "**有**" : "没有") + " require ps.js；ps.js 里" +
+          (psUses ? "有" : "**没有**") + " require review.js"
+      );
+    } catch (e) {
+      check("M5-23 依赖方向", false, (e && e.message) || String(e));
+    }
+
+    /* M5-27 备路结构（v0.9.2 / docs/52 修法 1）：导出**必须**在副本上作业 */
+    try {
+      const psSrc = fs.readFileSync(path.join(PKG, "lib", "ps.js"), "utf8");
+      const erBody = psSrc.slice(
+        psSrc.indexOf("async function exportReview("),
+        psSrc.indexOf("function safeStr(")
+      );
+      const helpers = ["duplicateActive", "ensureRGBDoc", "savePngWithCheck", "fileInFolder"]
+        .every(function (n) { return psSrc.indexOf("async function " + n + "(") >= 0; });
+      const noMark = erBody.indexOf("undoHistory.mark") < 0;
+      const noRevert = erBody.indexOf("safeRevert(out)") < 0;
+      const dupCalls = (erBody.match(/await duplicateActive\(/g) || []).length;
+      const rgbCall = erBody.indexOf("await ensureRGBDoc(out)") >= 0;
+      const ok28 = helpers && noMark && noRevert && dupCalls >= 2 && rgbCall;
+      check(
+        "M5-27 备路结构：exportReview 只在**副本**上作业（无记标记 / 无还原），四个新助手都在",
+        ok28,
+        "助手齐全=" + helpers + "　exportReview 里没有 undoHistory.mark=" + noMark +
+          "　没有 safeRevert=" + noRevert +
+          "　duplicateActive 调用数=" + dupCalls + "（须 ≥ 2：审核版 + 成品图）" +
+          "　有 ensureRGBDoc=" + rgbCall
+      );
+    } catch (e) {
+      check("M5-27 备路结构", false, (e && e.message) || String(e));
+    }
+
+    /* M5-28 角标字号（v0.9.3 / 用户：怕被当成成品） */
+    try {
+      const m28 = rev.stripMetrics(4961, 10866, 150,
+        ["a", "b", "c"], "审核用 · 非成品", "依据 Vellum 出图规范 v3 · 2026-10-12 生效");
+      const ratio28 = m28.tagFontPt / m28.fontPt;
+      const boxFits = (m28.tag.bottom - m28.tag.top) >= m28.tagFontPx;
+      const noOverlap = m28.text.right < m28.tag.left;
+      check(
+        "M5-28 角标字号 = 正文 × 1.3 、盒子容得下它、且不压正文（用户：怕被当成成品）",
+        Math.abs(ratio28 - 1.3) < 0.01 && boxFits && noOverlap,
+        "正文 " + m28.fontPt + "pt　角标 " + m28.tagFontPt + "pt　倍数 " + ratio28.toFixed(2) +
+          "　角标盒高 " + (m28.tag.bottom - m28.tag.top) + " ≥ 角标字号 " + m28.tagFontPx +
+          "　正文盒右 " + Math.round(m28.text.right) + " < 角标盒左 " + Math.round(m28.tag.left)
+      );
+    } catch (e) {
+      check("M5-28 角标字号", false, (e && e.message) || String(e));
+    }
   } catch (e) {
     check("M5 出图体检纯函数离线断言（自身抛异常）", false, (e && e.message) || String(e));
+  }
+
+  /* ---- 51. 目录导航（`lib/dirlib.js`）：三层解析 / 面包屑 / 折叠 / 老数据兼容 ----
+     v0.9.9 把"两行 chips + 二级下拉"换成了**面包屑下钻**。这里验的是**纯函数**那一层
+     （树里找不到、路径怎么截、超 4 个怎么折）—— 挂载后的整合行为在断言 40 里验。 */
+  try {
+    const dir = require(path.join(PKG, "lib", "dirlib.js"));
+    const dom2 = require(path.join(PKG, "lib", "dom.js"));
+    const binder2 = dom2.makeBinder();
+
+    const tree51 = [{
+      name: "A", count: 6, children: [
+        {
+          name: "A1", count: 4, children: [
+            { name: "A1a", count: 2, children: [] },
+          ],
+        },
+        { name: "A2", count: 2, children: [] },
+      ],
+    }];
+
+    const deep = dir.resolve(tree51, ["A", "A1", "A1a"]);
+    const miss = dir.resolve(tree51, ["A", "不存在"]);
+    const root51 = dir.resolve(tree51, []);
+
+    /* 面包屑：根层不画（只一个「全部」是噪音）；深层 = 全部 + 每层一段，末段 is-on */
+    const bcRoot = dir.breadcrumb(dom2, binder2, { path: [], rootLabel: "全部", onPick() {} });
+    const bcDeep = dir.breadcrumb(dom2, binder2, {
+      path: ["A", "A1"], rootLabel: "全部", levelText: "第 2/3 层", onPick() {},
+    });
+    const countBy = (el, cls) => {
+      let n = 0;
+      const walk = (node) => {
+        for (const c of node.children || []) {
+          const cl = String((c.getAttribute && c.getAttribute("class")) || "");
+          if (cl.split(/\s+/).indexOf(cls) >= 0) n++;
+          walk(c);
+        }
+      };
+      if (el) walk(el);
+      return n;
+    };
+    const segsN = countBy(bcDeep, "bc-s");
+    let onN = 0;
+    for (const c of (bcDeep ? bcDeep.children : [])) {
+      const cl = String((c.getAttribute && c.getAttribute("class")) || "");
+      if (cl.split(/\s+/).indexOf("is-on") >= 0) onN++;
+    }
+
+    /* 折叠：6 个子目录、上限 3 行 ⇒ 画 3 行 + 1 行「还有 3 个」；展开后 6 行 + 「收起」
+       ⚠️ v0.9.10 起子目录是**整行**（`.dir`），不是 chips —— 判据跟着换成数 `.dir`。 */
+    const six = [];
+    for (let i = 1; i <= 6; i++) six.push({ name: "D" + i, count: i, children: [] });
+    const rowFold = dir.dirRow(dom2, binder2, {
+      kids: six, expanded: false, onPick() {}, onExpand() {},
+    });
+    const rowOpen = dir.dirRow(dom2, binder2, {
+      kids: six, expanded: true, onPick() {}, onExpand() {},
+    });
+    const foldN = countBy(rowFold, "dir");
+    const openN = countBy(rowOpen, "dir");
+    const moreTxt = rowFold ? String(rowFold.textContent || "") : "";
+    const lessTxt = rowOpen ? String(rowOpen.textContent || "") : "";
+
+    /* 老数据没有 `groupPath` 时按 `group` 退化 */
+    const pOld = dir.pathOf({ group: "旧组" });
+    const pNew = dir.pathOf({ groupPath: ["X", "Y"] });
+
+    check(
+      "51 目录导航：三层可解析 / 缺失层返回 null / 根层不画面包屑 / 超 3 行折叠",
+      !!deep && deep.name === "A1a" && miss === null && root51 === null &&
+        bcRoot === null && segsN === 3 && onN === 1 &&
+        foldN === 4 && openN === 7 &&
+        moreTxt.indexOf("还有 3 个") >= 0 && lessTxt.indexOf("收起") >= 0 &&
+        pOld.length === 1 && pOld[0] === "旧组" && pNew.length === 2,
+      "三层解析=" + (deep ? deep.name : "null") +
+        "　缺失层=" + miss + "（须 null）　根层节点=" + root51 + "（须 null）" +
+        "　根层面包屑=" + (bcRoot ? "画了" : "不画（对）") +
+        "　深层段数=" + segsN + "（须 3 = 全部+A+A1）·is-on 段数=" + onN + "（须 1）" +
+        "　折叠时行数=" + foldN + "（须 4 = 3 + 还有3个）·展开时=" + openN + "（须 7 = 6 + 收起）" +
+        "　折叠文案=" + JSON.stringify(moreTxt.slice(0, 24)) +
+        "　老数据 pathOf=" + JSON.stringify(pOld)
+    );
+    binder2.offAll();
+  } catch (e51) {
+    check("51 目录导航（自身抛异常）", false, (e51 && e51.stack) || String(e51));
+  }
+
+  /* ---- 52. 模板库数据层（`tpl.json`，契约 §5.7）----
+     Step 1 只做数据层，不碰界面。这里验的是**最容易错、错了还不报错**的四件事：
+       ① `scopeKind` 不能把 tpl 认成 brand（两者都有 `groups[]`）；
+       ② `flatten()` 不能把 tpl 掉进 `flattenTask`（旧版是二元分派）；
+       ③ `items[]` 是**扁平**的，路径得靠 `groupId` 反查 `groups[]/parentId`；
+       ④ 脏数据三种：未分组 / 组被删 / 成环 —— 都**不许丢模板**，最多落到「未分类」。 */
+  try {
+    const mir = require(path.join(PKG, "lib", "mirror.js"));
+
+    const doc = {
+      contract: "vellum-link/1",
+      scope: "tpl",
+      revision: 1,
+      generatedAt: "2026-10-17T15:40:00+08:00",
+      groups: [
+        { id: 1, name: "易拉宝", sortOrder: 0 },
+        { id: 2, name: "2026春季", sortOrder: 0, parentId: 1 },
+        { id: 3, name: "海南", sortOrder: 0, parentId: 2 },
+        /* 成环：4 父 5、5 父 4 —— 反查路径时必须停住，不能爆栈 */
+        { id: 4, name: "环A", sortOrder: 0, parentId: 5 },
+        { id: 5, name: "环B", sortOrder: 0, parentId: 4 },
+      ],
+      items: [
+        { id: 11, groupId: 3, name: "易拉宝80x180.psd", kind: "psd", width: 1772, height: 4134 },
+        { id: 12, groupId: null, name: "散模板.psd", kind: "psd", width: 100, height: 100 },
+        { id: 13, groupId: 99, name: "组被删.psd", kind: "psd", width: 100, height: 100 },
+        { id: 14, groupId: 4, name: "成环组下的.psd", kind: "psd", width: 100, height: 100 },
+      ],
+    };
+
+    const kind = mir.scopeKind(doc);
+    /* 通用库没有 `items[]`，模板库有 —— 这是"长得像"时唯一可靠的区分特征 */
+    const kindBrand = mir.scopeKind({ contract: "vellum-link/1", scope: "brand", groups: [] });
+    const kindTask = mir.scopeKind({ contract: "vellum-link/1", projects: [] });
+    /* 文件里没写 scope 时也要能靠结构认出来 */
+    const kindNoScope = mir.scopeKind({ groups: [{ id: 1, name: "A" }], items: [] });
+
+    const rows = mir.flatten("tpl", doc);
+    const byName = {};
+    for (const r of rows) byName[r.asset.name] = r;
+
+    const deep = byName["易拉宝80x180.psd"];
+    const loose = byName["散模板.psd"];
+    const orphan = byName["组被删.psd"];
+    const cyc = byName["成环组下的.psd"];
+
+    /* 三层路径必须与 flattenBrand 同构：group / sub 是前两段，groupPath 是全路径 */
+    const deepOk = !!deep && deep.groupPath.join(">") === "易拉宝>2026春季>海南" &&
+      deep.group === "易拉宝" && deep.sub === "2026春季" && deep.depth === 3 &&
+      deep.scope === "tpl";
+    const looseOk = !!loose && loose.groupPath.length === 1 && loose.groupPath[0] === "未分类";
+    const orphanOk = !!orphan && orphan.groupPath[0] === "未分类";
+    /* 成环：只要求"不爆栈 + 落到某个具体路径"，具体切在哪一层不做硬断言 */
+    const cycOk = !!cyc && cyc.groupPath.length >= 1 && cyc.groupPath.length <= 5;
+
+    const tree = mir.groupTree(rows);
+    const treeOk = tree.length === 3 &&
+      tree[0].name === "易拉宝" && tree[0].count === 1 &&
+      tree[0].children.length === 1 &&
+      tree[0].children[0].children[0].name === "海南";
+    /* 4 条模板一条都不能丢 —— 这是"宁可降级也不丢"的底线 */
+    const noDrop = rows.length === 4;
+
+    check(
+      "52 模板库数据层：scopeKind 认 tpl / flatten 不掉进 task / groupId 反查三层路径 / 脏数据不丢模板",
+      kind === "tpl" && kindNoScope === "tpl" && kindBrand === "brand" && kindTask === "task" &&
+        deepOk && looseOk && orphanOk && cycOk && treeOk && noDrop,
+      "scopeKind：tpl 文件=" + kind + "（须 tpl）·无 scope 字段=" + kindNoScope +
+        "（须 tpl）·通用库=" + kindBrand + "·任务库=" + kindTask + "\n" +
+        "        条数=" + rows.length + "（须 4，一条不丢）　三层路径=" +
+        (deep ? deep.groupPath.join(" › ") : "无") + "（group/sub/depth=" +
+        (deep ? deep.group + "/" + deep.sub + "/" + deep.depth : "-") + "）\n" +
+        "        未分组→" + (loose ? loose.groupPath[0] : "无") +
+        "　组被删→" + (orphan ? orphan.groupPath[0] : "无") +
+        "　成环组→" + (cyc ? cyc.groupPath.join(" › ") + "（" + cyc.groupPath.length + " 段，不爆栈）" : "无") + "\n" +
+        "        groupTree 顶层=" + tree.map((t) => t.name + "(" + t.count + ")").join(" / ")
+    );
+  } catch (e52) {
+    check("52 模板库数据层（自身抛异常）", false, (e52 && e52.stack) || String(e52));
+  }
+
+  /* ---- 53. 新建稿页（模板库入口）：真实挂载 ----
+     v0.9.12 把「新建稿」从灰行转正，模板库列表 + 打开按钮都在这一页。
+     这里验**结构**（数据→网格→下钻→回根 + 无分区时的引导），不验打开（打开要真 PS）。 */
+  {
+    const newdoc = require(path.join(PKG, "tools", "newdoc.js"));
+    const savedMan53 = files["library/manifest.json"];
+    const man53 = JSON.parse(savedMan53);
+    const savedTpl53 = files["library/tpl.json"];
+
+    /* 造一份带 tpl 分区的镜像：3 层组 + 2 条模板（其中 1 条未分组） */
+    man53.scopes = man53.scopes.filter((x) => x.id !== "tpl");
+    man53.scopes.push({ id: "tpl", label: "模板", file: "tpl.json", revision: 5, count: 2 });
+    files["library/manifest.json"] = JSON.stringify(man53);
+    files["library/tpl.json"] = JSON.stringify({
+      contract: "vellum-link/1",
+      scope: "tpl",
+      revision: 5,
+      generatedAt: "2026-10-17T19:00:00+08:00",
+      groups: [
+        { id: 1, name: "易拉宝", sortOrder: 0 },
+        { id: 2, name: "2026春季", sortOrder: 0, parentId: 1 },
+      ],
+      items: [
+        { id: 11, groupId: 2, name: "易拉宝80x180.psd", ext: "psd", kind: "psd",
+          size: 2400000, width: 1772, height: 4134, guides: 4, missing: false, thumb: "" },
+        { id: 12, groupId: null, name: "散模板.psd", ext: "psd", kind: "psd",
+          size: 100000, width: 800, height: 600, guides: 0, missing: false, thumb: "" },
+      ],
+    });
+
+    /* `collectByAttr` 是断言 40 块内的局部助手，这里够不着 —— 自己写一个（同名冲突更麻烦） */
+    const byAttr53 = (rootEl, attr) => {
+      const out = [];
+      const walk = (n) => {
+        for (const c of (n.children || [])) {
+          if (c.getAttribute) {
+            const v = c.getAttribute(attr);
+            if (v !== null && v !== undefined) out.push(c);
+          }
+          walk(c);
+        }
+      };
+      if (rootEl) walk(rootEl);
+      return out;
+    };
+
+    /* 同上的道理：`attached` 也是断言 40 的局部助手 */
+    const attached53 = (el) => {
+      for (let n = el; n; n = n.parentNode) {
+        if (n === global.document.documentElement) return true;
+      }
+      return false;
+    };
+
+    const ctx53 = {
+      setStatus() {},
+      data: require(path.join(PKG, "lib", "data.js")),
+      ps: require(path.join(PKG, "lib", "ps.js")),
+    };
+
+    await newdoc.mount(view, ctx53);
+    await sleep(400);
+
+    const grid53 = document.getElementById("vt-nd-grid");
+    const cardsAtRoot = grid53 ? grid53.querySelectorAll(".nd-card").length : -1;
+    const dirKeys = byAttr53(document.getElementById("vt-nd-bar"), "data-key")
+      .map((c) => c.getAttribute("data-key"));
+
+    /* 下钻一层：点「易拉宝」 */
+    let hit53 = null;
+    for (const c of byAttr53(document.getElementById("vt-nd-bar"), "data-key")) {
+      if (c.getAttribute("data-key") === "易拉宝") hit53 = c;
+    }
+    if (hit53) hit53.dispatchEvent(new Event("click", { bubbles: true }));
+    await sleep(250);
+    const bc53 = document.getElementById("vt-lib-bc");
+    const bcSegs53 = bc53 ? byAttr53(bc53, "data-crumb").length : 0;
+    const grid53b = document.getElementById("vt-nd-grid");
+    const cardsInDir = grid53b ? grid53b.querySelectorAll(".nd-card").length : -1;
+    const childKeys = byAttr53(document.getElementById("vt-nd-bar"), "data-key")
+      .map((c) => c.getAttribute("data-key"));
+
+    /* 点面包屑第 0 段回根 */
+    let seg0 = null;
+    if (bc53) {
+      for (const g of byAttr53(bc53, "data-crumb")) {
+        if (g.getAttribute("data-crumb") === "0") seg0 = g;
+      }
+    }
+    if (seg0) seg0.dispatchEvent(new Event("click", { bubbles: true }));
+    await sleep(250);
+    const bcGone53 = !attached53(bc53);
+    const grid53c = document.getElementById("vt-nd-grid");
+    const cardsBack = grid53c ? grid53c.querySelectorAll(".nd-card").length : -1;
+
+    /* 选中一条 → 底栏出现「打开」按钮（不点它：真打开要 PS） */
+    let firstCard53 = null;
+    if (grid53c && grid53c.querySelectorAll) firstCard53 = grid53c.querySelectorAll(".nd-card")[0];
+    if (firstCard53) firstCard53.dispatchEvent(new Event("click", { bubbles: true }));
+    await sleep(200);
+    const openBtn = document.getElementById("vt-nd-open");
+    const openTxt = openBtn ? String(openBtn.textContent || "").trim() : "";
+    const footName = document.getElementById("vt-nd-foot")
+      ? String(document.getElementById("vt-nd-foot").textContent || "") : "";
+
+    /* ---- 切到「按规范建稿」：规范列表 5 行 + 选中后底栏出现「新建」 ---- */
+    const specTab = document.getElementById("vt-nd-mode-spec");
+    if (specTab) specTab.dispatchEvent(new Event("click", { bubbles: true }));
+    await sleep(200);
+    const specRows = byAttr53(document.getElementById("vt-nd-body"), "data-spec");
+    const specNames = specRows.map((r) => String(r.textContent || "").slice(0, 20));
+    let firstSpec = specRows[0] || null;
+    if (firstSpec) firstSpec.dispatchEvent(new Event("click", { bubbles: true }));
+    await sleep(200);
+    const createBtn = document.getElementById("vt-nd-create");
+    const createTxt = createBtn ? String(createBtn.textContent || "").trim() : "";
+    const specFootTxt = document.getElementById("vt-nd-foot")
+      ? String(document.getElementById("vt-nd-foot").textContent || "") : "";
+    /* 底栏必须把"画布 px / dpi / 成品 mm"说清楚 —— 这是用户判断"建出来的对不对"的唯一依据 */
+    const specFootOk = specFootTxt.indexOf("画布") >= 0 &&
+      specFootTxt.indexOf("dpi") >= 0 && specFootTxt.indexOf("mm") >= 0;
+
+    newdoc.unmount();
+    await sleep(80);
+
+    /* 没有 tpl 分区时：必须给"去软件里启用"的引导，不能一片空白 */
+    const manNoTpl = JSON.parse(savedMan53);
+    manNoTpl.scopes = manNoTpl.scopes.filter((x) => x.id !== "tpl");
+    files["library/manifest.json"] = JSON.stringify(manNoTpl);
+    await newdoc.mount(view, ctx53);
+    await sleep(350);
+    const bodyNoTpl = document.getElementById("vt-nd-body");
+    const noTplTxt = bodyNoTpl ? String(bodyNoTpl.textContent || "") : "";
+    newdoc.unmount();
+    await sleep(80);
+
+    /* 还原镜像 */
+    files["library/manifest.json"] = savedMan53;
+    if (savedTpl53 === undefined) delete files["library/tpl.json"];
+    else files["library/tpl.json"] = savedTpl53;
+
+    check(
+      "53 新建稿页：模板网格 / 目录下钻可回根 / 底栏「打开」/ 按规范 5 个规格 + 「新建」/ 无分区有引导",
+      cardsAtRoot === 2 &&
+        dirKeys.indexOf("易拉宝") >= 0 && dirKeys.indexOf("未分类") >= 0 &&
+        bcSegs53 === 2 && cardsInDir === 1 &&
+        childKeys.indexOf("2026春季") >= 0 &&
+        bcGone53 && cardsBack === 2 &&
+        openTxt === "打开" && footName.indexOf("易拉宝") >= 0 &&
+        specRows.length === 5 && createTxt === "新建" && specFootOk &&
+        noTplTxt.indexOf("PSD") >= 0 && noTplTxt.indexOf("模板") >= 0,
+      "根层卡片=" + cardsAtRoot + "（须 2）　目录行=" + JSON.stringify(dirKeys) +
+        "（须含 易拉宝 / 未分类）\n" +
+        "        下钻「易拉宝」：面包屑段数=" + bcSegs53 + "（须 2）　卡片=" + cardsInDir + "（须 1）" +
+        "　子目录=" + JSON.stringify(childKeys) + "\n" +
+        "        回根：面包屑已移除=" + bcGone53 + "　卡片=" + cardsBack + "（须 2）\n" +
+        "        选中后底栏按钮文案=" + JSON.stringify(openTxt) + "　底栏含模板名=" +
+        (footName.indexOf("易拉宝") >= 0) + "\n" +
+        "        按规范：规格行数=" + specRows.length + "（须 5）　首个=" +
+        JSON.stringify(specNames[0] || "-") + "　新建按钮=" + JSON.stringify(createTxt) +
+        "　底栏说清画布/dpi/mm=" + specFootOk + "\n" +
+        "        无 tpl 分区时正文=" + JSON.stringify(noTplTxt.slice(0, 60))
+    );
+  }
+
+  /* ---- 54. 规范表（`lib/specs.js`）：mm→px 换算 / 参考线落在成品边 / preset 字段集完整 ----
+     Step 4 的核心是**算术**和**字段集**，两样都能离线验死：
+       · 800×1800mm + 3mm 出血 @150dpi ⇒ 画布 4760×10665px、出血 18px、四条参考线在 18 / 4742 / 18 / 10647；
+       · `presetJSON` 的字段**一个都不能少** —— C1/C2 漏了 `scale`/`profile`/`artboards`，
+         PS **整份静默忽略**（不报错、建出默认稿）。这条断言就是为了别再漏。 */
+  {
+    const sp = require(path.join(PKG, "lib", "specs.js"));
+
+    const round = sp.byId("rollup-80x180");
+    const c = sp.toCanvas(round);
+    const pj = sp.toPresetJson(c, round);
+
+    const guidePairs = c.guides.map((g) => g.direction + g.coordinate).join(",");
+    const mathOk = c.ok &&
+      c.width === 4760 && c.height === 10665 && c.bleedPx === 18;
+
+    /* 🔴 **参考线必须是「百分比」**（2026-10-17 用户截图报障后加的）：
+       之前这里断的是像素 `v18,v4742,h18,h10647` —— 而 PS 的 presetJSON **按百分比解释**
+       ⇒ 4742% 落到画布外 ⇒ 用户只看到 2 条参考线，**而这条断言一直是绿的**。
+       ⇒ 现在改成断**语义**（不写死具体数字，防止再被"看起来对"的值蒙过去）：
+         · 全部落 0–100（百分比区间）
+         · 左+右 = 100，上+下 = 100
+         · 按百分比回算的 px ≈ bleedPx（±1px，验证它确实落在成品边） */
+    const vs = c.guides.filter((g) => g.direction === "v").map((g) => g.coordinate);
+    const hs = c.guides.filter((g) => g.direction === "h").map((g) => g.coordinate);
+    const pctOk = c.guides.length === 4 &&
+      c.guides.every((g) => typeof g.coordinate === "number" &&
+        g.coordinate > 0 && g.coordinate < 100);
+    const sumOk = vs.length === 2 && hs.length === 2 &&
+      Math.abs(vs[0] + vs[1] - 100) < 0.01 && Math.abs(hs[0] + hs[1] - 100) < 0.01;
+    const backPxOk = Math.abs((vs[0] / 100) * c.width - c.bleedPx) <= 1 &&
+      Math.abs((hs[0] / 100) * c.height - c.bleedPx) <= 1;
+    const guideOk = pctOk && sumOk && backPxOk;
+
+    const unitOk = sp.mmToPx(25.4, 100) === 100 && sp.mmToPx(1, 72) === 3;
+
+    const NEED = ["width", "height", "units", "resolution", "resolutionUnits",
+      "depth", "scale", "mode", "fill", "profile", "guides", "artboards"];
+    const missing = NEED.filter((k) => !(k in pj));
+    const fieldOk = missing.length === 0 &&
+      pj.units === "pixelsUnit" && pj.resolutionUnits === "inchesUnit" &&
+      pj.scale === 1 && Array.isArray(pj.artboards) && Array.isArray(pj.guides) &&
+      pj.guides.length === 4 && !!pj.profile;
+
+    /* 超 PS 上限要**在本地判掉**，不能递进去换一个看不懂的报错 */
+    const huge = sp.toCanvas({ w: 100000, h: 100000, dpi: 300 });
+    const guardOk = huge.ok === false && String(huge.error).indexOf("300000") >= 0;
+
+    /* 规格表本身要能全部算出画布（防止手写数据里混进非法值） */
+    const allOk = sp.SPECS.every((x) => sp.toCanvas(x).ok);
+
+    check(
+      "54 规范表：mm→px 换算准确 / **参考线是百分比且落在成品边** / presetJSON 字段集完整 / 超上限本地拦下",
+      mathOk && guideOk && unitOk && fieldOk && guardOk && allOk,
+      "易拉宝 800×1800 + 3mm 出血 @150dpi ⇒ 画布 " + c.width + "×" + c.height +
+        "px（须 4760×10665）　出血 " + c.bleedPx + "px（须 18）\n" +
+        "        参考线=" + guidePairs + "（**必须是百分比 0–100**）" +
+        "　全在百分比区间=" + pctOk + "　左右和/上下和=100：" + sumOk +
+        "　回算落在成品边=" + backPxOk + "\n" +
+        "        单位换算 25.4mm@100dpi=" + sp.mmToPx(25.4, 100) + "px　1mm@72dpi=" + sp.mmToPx(1, 72) + "px\n" +
+        "        preset 字段缺失=" + (missing.length ? JSON.stringify(missing) : "无（对）") +
+        "　profile=" + JSON.stringify(pj.profile) + "\n" +
+        "        超上限：ok=" + huge.ok + "　err=" + JSON.stringify(String(huge.error).slice(0, 40)) +
+        "　规格表全部可算=" + allOk
+    );
   }
 
   /* ---- 收尾 ---- */

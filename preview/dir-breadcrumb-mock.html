@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>目录导航 · 面包屑下钻（v0.9.9）</title>
+<style>
+  :root { --bg:#1e1e1e; --surf:#252526; --surf2:#2d2d30; --line:#3f3f46; --line2:#4a4a50;
+          --tx:#e8e8e8; --tx3:#a8a8ae; --tx4:#8a8a90; --ac:#0a84ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px 28px 30px; background:var(--bg); color:var(--tx);
+         font:14px/1.5 "Segoe UI","Microsoft YaHei UI",sans-serif; }
+  h1 { font-size:17px; font-weight:600; margin:0 0 4px; }
+  .sub { color:var(--tx4); font-size:12px; margin:0 0 20px; }
+  .row { display:flex; gap:22px; flex-wrap:wrap; }
+  .col { width:322px; }
+  .cap { font-size:11px; color:var(--tx4); margin:0 0 6px; }
+  .cap b { color:var(--tx); }
+
+  .band { background:var(--surf); border:1px solid var(--line); border-radius:4px; padding:8px 10px; }
+
+  /* 面包屑 */
+  .bc { display:flex; align-items:center; font-size:11px; margin:0 0 6px; }
+  .bc-s { max-width:104px; padding:1px 4px; border-radius:3px; color:var(--tx3);
+          white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+  .bc-s.on { color:var(--tx); font-weight:600; cursor:default; }
+  .bc-sep { color:var(--tx4); margin:0 1px; }
+  .bc-n { margin-left:auto; padding-left:8px; font-size:10px; color:var(--tx4); white-space:nowrap; }
+
+  /* chips */
+  .fchips { display:flex; flex-wrap:wrap; align-items:center; gap:6px 6px; }
+  .fchip { height:22px; line-height:20px; padding:0 8px; border-radius:3px; border:1px solid var(--line2);
+           color:var(--tx3); font-size:11px; white-space:nowrap; cursor:pointer; }
+  .fchip.on { background:var(--surf); border-color:var(--line); color:var(--tx); }
+  .fchip .n { margin-left:5px; opacity:.7; font-size:10px; }
+  .fchip.more { border-style:dashed; color:var(--tx4); }
+
+  .hmark { font-size:10px; color:#6fc48c; margin-top:6px; }
+  .note { margin-top:18px; font-size:12px; color:var(--tx4); line-height:1.85; }
+  .note b { color:var(--tx); }
+</style>
+</head>
+<body>
+  <h1>目录导航：面包屑下钻（v0.9.9）</h1>
+  <p class="sub">四屏都是真尺寸 322px 宽。绿色＝这个状态下的目录区高度（真机 S72 量的是 34 / 60）。</p>
+
+  <div class="row">
+    <div class="col">
+      <p class="cap"><b>① 根层</b>　和现在一模一样（没画面包屑）</p>
+      <div class="band">
+        <div class="fchips">
+          <div class="fchip on">全部<span class="n">3</span></div>
+          <div class="fchip">公司素材<span class="n">3</span></div>
+          <div class="fchip">个人收藏<span class="n">0</span></div>
+        </div>
+      </div>
+      <p class="hmark">34px（只有子目录一行）</p>
+    </div>
+
+    <div class="col">
+      <p class="cap"><b>② 下钻一层</b>　面包屑 + 子目录</p>
+      <div class="band">
+        <div class="bc">
+          <span class="bc-s">全部</span><span class="bc-sep">›</span>
+          <span class="bc-s on">公司素材</span>
+          <span class="bc-n">共 3 张</span>
+        </div>
+        <div class="fchips">
+          <div class="fchip">22<span class="n">1</span></div>
+          <div class="fchip">logo<span class="n">2</span></div>
+        </div>
+      </div>
+      <p class="hmark">60px = 34 + 一行面包屑 26</p>
+    </div>
+
+    <div class="col">
+      <p class="cap"><b>③ 再深一层</b>　段数跟着长，高度不变</p>
+      <div class="band">
+        <div class="bc">
+          <span class="bc-s">全部</span><span class="bc-sep">›</span>
+          <span class="bc-s">公司素材</span><span class="bc-sep">›</span>
+          <span class="bc-s on">22</span>
+          <span class="bc-n">共 1 张</span>
+        </div>
+        <div class="fchips">
+          <div class="fchip">春节<span class="n">1</span></div>
+        </div>
+      </div>
+      <p class="hmark">60px（层数再多也不会变高）</p>
+    </div>
+
+    <div class="col">
+      <p class="cap"><b>④ 子目录超过 4 个</b>　折叠，网格不被挤没</p>
+      <div class="band">
+        <div class="bc">
+          <span class="bc-s">全部</span><span class="bc-sep">›</span>
+          <span class="bc-s on">公司素材</span>
+          <span class="bc-n">共 12 张</span>
+        </div>
+        <div class="fchips">
+          <div class="fchip">春节<span class="n">3</span></div>
+          <div class="fchip">中秋<span class="n">2</span></div>
+          <div class="fchip">国庆<span class="n">2</span></div>
+          <div class="fchip">年会<span class="n">1</span></div>
+          <div class="fchip more">还有 2 个</div>
+        </div>
+      </div>
+      <p class="hmark">60px（再多也还是 60）</p>
+    </div>
+  </div>
+
+  <p class="note">
+    <b>三条关键：</b>① 根层与叶子层<b>看到的东西和旧版一样</b>（绝大多数时候用户停在这两层）；
+    ② 深一层只多一行 26px，<b>层数再多也不加高</b>；③ 子目录超过 4 个折叠 —— 软件侧给出 10 个子目录，
+    固定区也不会把网格吃掉。<br>
+    <b>深层不再单独画「全部」</b>：回上级交给面包屑（两处各一个「全部」，点哪个都心虚）。
+  </p>
+</body>
+</html>

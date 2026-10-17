@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>方案 B 高度预算对比</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 22px 30px 30px; background: #1b1b1b;
+         font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; color: #e6e6e6; }
+  h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; }
+  .sub { font-size: 12.5px; color: #9a9a9a; margin: 0 0 18px; line-height: 1.65; }
+  .sub b { color: #d8d8d8; }
+  .row { display: flex; gap: 22px; align-items: flex-start; }
+  .col { width: 340px; }
+
+  .cap { font-size: 13px; font-weight: 600; margin: 0 0 2px; }
+  .cap .t2 { font-size: 10.5px; font-weight: 400; color: #8f8f8f; margin-left: 6px; }
+  .verdict { font-size: 11.5px; margin: 0 0 8px; height: 16px; }
+  .verdict.ok { color: #6fc48c; }
+  .verdict.bad { color: #e0a06d; }
+  .verdict.mid { color: #9a9a9a; }
+
+  /* ================= 面板（真实 340×580，暗色） ================= */
+  .panel {
+    width: 340px; height: 580px; background: #323232; border: 1px solid #1c1c1c;
+    border-radius: 2px; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .blk { flex: 0 0 auto; }
+  .bt { background: #2b2b2b; border-bottom: 1px solid #1c1c1c; display: flex;
+        align-items: center; padding: 0 9px; }
+  .bt .ttl { font-size: 11.5px; }
+  .bt .sp { flex: 1 1 auto; }
+  .bt .ic { width: 18px; height: 18px; border: 1px solid #4a4a4a; border-radius: 3px;
+            display: flex; align-items: center; justify-content: center; font-size: 9px; color: #a2a2a2; }
+
+  .tabs { padding: 5px 9px 0; }
+  .ltab { display: inline-block; height: 24px; line-height: 22px; padding: 0 9px; margin: 0 5px 4px 0;
+          border-radius: 3px; border: 1px solid #4a4a4a; background: #2e2e2e; color: #a2a2a2; font-size: 11.5px; }
+  .ltab.on { background: #1473e6; border-color: #1473e6; color: #fff; }
+  .ltab .n { margin-left: 5px; font-size: 10px; opacity: .75; }
+
+  .meta { padding: 0 9px 7px; font-size: 10px; color: #5f5f5f; }
+
+  .chips { padding: 0 9px; border-bottom: 1px solid #3f3f3f; }
+  .crow { display: flex; align-items: center; margin-bottom: 4px; }
+  .clb { font-size: 9.5px; color: #5f5f5f; width: 28px; flex: 0 0 auto; }
+  .ch { height: 20px; line-height: 18px; padding: 0 7px; margin: 0 5px 0 0; border-radius: 3px;
+        border: 1px solid #3f3f3f; color: #7e7e7e; font-size: 10.5px; white-space: nowrap; }
+  .ch.on { background: #1473e6; border-color: #1473e6; color: #fff; }
+
+  .bc { padding: 0 9px; display: flex; align-items: center; font-size: 11px;
+        border-bottom: 1px solid #3f3f3f; background: #2e2e2e; }
+  .bc .seg { color: #a2a2a2; }
+  .bc .seg.cur { color: #e6e6e6; }
+  .bc .sep { color: #5f5f5f; margin: 0 5px; }
+  .bc .sp { flex: 1 1 auto; }
+  .bc .depth { font-size: 9.5px; color: #5f5f5f; }
+
+  /* 子目录行（紧凑 28px） */
+  .fd { display: flex; align-items: center; height: 28px; padding: 0 8px; margin-bottom: 4px;
+        border: 1px solid #3f3f3f; border-radius: 3px; background: #2e2e2e; }
+  .fd .tri { width: 0; height: 0; border-top: 4px solid transparent;
+             border-bottom: 4px solid transparent; border-left: 5px solid #7e7e7e; margin-right: 7px; }
+  .fd .fic { width: 14px; height: 11px; border: 1px solid #7e7e7e; border-radius: 2px; margin-right: 7px; }
+  .fd .nm { font-size: 11px; color: #e6e6e6; }
+  .fd .cnt { margin-left: auto; font-size: 10px; color: #7e7e7e; }
+
+  .foot { padding: 0 9px; }
+  .footline { height: 30px; display: flex; align-items: center; font-size: 10.5px; color: #5f5f5f; }
+  .footbig { padding: 6px 0 0; }
+  .fname { font-size: 11.5px; color: #e6e6e6; }
+  .fmeta { font-size: 9.5px; color: #7e7e7e; margin-top: 2px; }
+  .fbot { display: flex; align-items: center; margin-top: 6px; }
+  .anchors { display: flex; flex-wrap: wrap; width: 96px; flex: 0 0 auto; }
+  .acell { width: 33.33%; height: 22px; padding: 3px; }
+  .acell i { display: block; width: 100%; height: 100%; border: 1px solid #4a4a4a; border-radius: 2px; }
+  .acell.on i { background: #1473e6; border-color: #1473e6; }
+  .insbtn { flex: 1 1 auto; height: 26px; line-height: 24px; text-align: center; margin-left: 8px;
+            background: #1473e6; border-radius: 3px; color: #fff; font-size: 11.5px; }
+
+  /* 滚动区 */
+  .body { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 6px 9px 0; position: relative; }
+  .body.scrolly:after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 26px;
+                        background: linear-gradient(rgba(50,50,50,0), #323232); }
+  .grid { display: flex; align-items: flex-start; margin: 0 -4px; }
+  .gcol { width: 50%; display: flex; flex-direction: column; }
+  .card { padding: 0 4px 8px; }
+  .cin { border: 1px solid #3f3f3f; border-radius: 3px; background: #2e2e2e; overflow: hidden; }
+  .cth { background: #262626; border-bottom: 1px solid #3f3f3f; }
+  .cbd { padding: 3px 5px 4px; }
+  .cnm { font-size: 10.5px; color: #e6e6e6; display: block; white-space: nowrap;
+         overflow: hidden; text-overflow: ellipsis; }
+  .cmt { font-size: 9px; color: #5f5f5f; display: block; margin-top: 1px; }
+  .g1 { background: linear-gradient(135deg,#2f4a6b,#1d2d42); }
+  .g2 { background: linear-gradient(135deg,#6b4a2f,#42291d); }
+  .g3 { background: linear-gradient(135deg,#2f6b56,#1d4235); }
+  .g4 { background: linear-gradient(135deg,#4a2f6b,#2c1d42); }
+
+  /* 测量标签 */
+  /* 高度标注会压住内容 ⇒ 不画在面板里，数字交给下面的预算条 */
+  .hmark { display: none; }
+
+  /* ================= 高度预算条 ================= */
+  .budget { margin-top: 8px; }
+  .bar { display: flex; height: 16px; border: 1px solid #3f3f3f; border-radius: 2px; overflow: hidden; }
+  .bar > div { height: 100%; }
+  .b-tab { background: #4a4a4a; }
+  .b-meta { background: #5f5f5f; }
+  .b-chip { background: #3d5a80; }
+  .b-crumb { background: #2f6b56; }
+  .b-dir { background: #8a6a2f; }
+  .b-foot { background: #8a4a2f; }
+  .b-grid { background: #3f8a5c; }
+  .lg { display: flex; flex-wrap: wrap; font-size: 9.5px; color: #8f8f8f; margin-top: 4px; }
+  .lg span { margin-right: 9px; }
+  .lg i { display: inline-block; width: 7px; height: 7px; border-radius: 1px; margin-right: 3px; }
+  .num { font-size: 12px; margin-top: 3px; }
+  .num b { font-size: 15px; }
+
+  .note { font-size: 11px; color: #8f8f8f; line-height: 1.6; margin-top: 6px; height: 54px; }
+  .note b { color: #d8d8d8; }
+</style></head><body>
+
+<h1>方案 B 的高度账：目录 + 插入面板到底占多少</h1>
+<p class="sub">
+  面板真实规格 <b>340×580</b>。高度值取自现有 CSS（tabs 34 / meta 27 / 两行 chips 60 / 插入面板 30 或 150 / 九宫格 66）。<br>
+  关键差别只有一处：<b>子目录区是「固定占位」还是「并进滚动区」</b>。
+</p>
+
+<div class="row">
+
+  <!-- ===================== ① 现状 ===================== -->
+  <div class="col">
+    <p class="cap">① 现状 <span class="t2">基准线</span></p>
+    <p class="verdict mid">网格 429px</p>
+    <div class="panel">
+      <div class="blk bt" style="height:30px"><span class="ttl">素材库</span><span class="sp"></span><span class="ic">↻</span></div>
+      <div class="blk tabs" style="height:34px">
+        <div class="ltab">任务库<span class="n">1234</span></div>
+        <div class="ltab on">通用库<span class="n">42</span></div>
+      </div>
+      <div class="blk meta" style="height:27px">契约 vellum-link/1　·　生成 04:15</div>
+      <div class="blk chips" style="height:60px">
+        <div class="crow"><span class="clb">第1级</span><span class="ch on">品牌视觉</span><span class="ch">常用排版</span><span class="ch">我的收藏</span></div>
+        <div class="crow" style="padding-left:10px"><span class="clb">第2级</span><span class="ch on">Logo</span><span class="ch">品牌色</span><span class="ch">字体</span></div>
+      </div>
+      <div class="blk foot" style="height:30px"><div class="footline">点一个素材看详情（落点、尺寸）…</div></div>
+      <div class="body" style="height:429px">
+        <span class="hmark">429px</span>
+        <div class="grid">
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:78px"></div><div class="cbd"><span class="cnm">横版-蓝底</span><span class="cmt">1920×480</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:96px"></div><div class="cbd"><span class="cnm">竖版-标准结构</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:62px"></div><div class="cbd"><span class="cnm">方版-单色</span><span class="cmt">640×640</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:108px"></div><div class="cbd"><span class="cnm">横版-米底</span><span class="cmt">1920×480</span></div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="budget">
+      <div class="bar"><div class="b-tab" style="width:5.9%"></div><div class="b-meta" style="width:4.7%"></div>
+        <div class="b-chip" style="width:10.3%"></div><div class="b-foot" style="width:5.2%"></div>
+        <div class="b-grid" style="width:73.9%"></div></div>
+      <div class="lg"><span><i class="b-tab"></i>tabs 34</span><span><i class="b-meta"></i>meta 27</span>
+        <span><i class="b-chip"></i>chips 60</span><span><i class="b-foot"></i>插入 30</span><span><i class="b-grid"></i>网格</span></div>
+      <div class="num">网格可用 <b>429</b> px</div>
+    </div>
+    <p class="note">两行 chips 占 60px，但只能表达两级；再深一级就表达不了 —— 这正是要换成面包屑的原因。</p>
+  </div>
+
+  <!-- ===================== ② B 天真做法 ===================== -->
+  <div class="col">
+    <p class="cap">② B · 子目录<u>固定占位</u> <span class="t2">你担心的那种</span></p>
+    <p class="verdict bad">网格只剩 348px（3 个子目录）／选中时 <b>228px</b></p>
+    <div class="panel">
+      <div class="blk bt" style="height:30px"><span class="ttl">素材库</span><span class="sp"></span><span class="ic">↻</span></div>
+      <div class="blk tabs" style="height:34px">
+        <div class="ltab">任务库<span class="n">1234</span></div>
+        <div class="ltab on">通用库<span class="n">42</span></div>
+      </div>
+      <div class="blk meta" style="height:27px">契约 vellum-link/1　·　生成 04:15</div>
+      <div class="blk bc" style="height:30px"><span class="seg">通用库</span><span class="sep">›</span><span class="seg">品牌视觉</span><span class="sep">›</span><span class="seg cur">Logo</span><span class="sp"></span><span class="depth">2/3</span></div>
+      <div class="blk foot" style="height:111px;padding-top:6px">
+        <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">基准式样</span><span class="cnt">12 项</span></div>
+        <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">反白版</span><span class="cnt">4 项</span></div>
+        <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">竖版规范</span><span class="cnt">6 项</span></div>
+      </div>
+      <div class="blk foot" style="height:30px"><div class="footline">点一个素材看详情…</div></div>
+      <div class="body" style="height:348px">
+        <span class="hmark">348px</span>
+        <div class="grid">
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:70px"></div><div class="cbd"><span class="cnm">Logo-主标-横版</span><span class="cmt">1920×480</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:88px"></div><div class="cbd"><span class="cnm">Logo-组合规范</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:58px"></div><div class="cbd"><span class="cnm">Logo-单色</span><span class="cmt">640×640</span></div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="budget">
+      <div class="bar"><div class="b-tab" style="width:5.9%"></div><div class="b-meta" style="width:4.7%"></div>
+        <div class="b-crumb" style="width:5.2%"></div><div class="b-dir" style="width:19.1%"></div>
+        <div class="b-foot" style="width:5.2%"></div><div class="b-grid" style="width:60%"></div></div>
+      <div class="lg"><span><i class="b-crumb"></i>面包屑 30</span><span><i class="b-dir"></i>子目录 111</span>
+        <span><i class="b-foot"></i>插入 30</span><span><i class="b-grid"></i>网格</span></div>
+      <div class="num">网格可用 <b>348</b> px　·　<b style="color:#e0a06d">选中 −120 → 228</b></div>
+    </div>
+    <p class="note">子目录一多就明显挤：<b>10 个子目录会吃掉 320px</b>，网格直接消失。
+      而且子目录**数量不可控**（软件侧说了算）⇒ 这条路不能用固定占位。</p>
+  </div>
+
+  <!-- ===================== ③ B 修正做法 ===================== -->
+  <div class="col">
+    <p class="cap">③ B · 子目录<u>并进滚动区</u> <span class="pick" style="display:inline-block;font-size:10px;color:#6fc48c;border:1px solid #3d6b4e;border-radius:3px;padding:0 6px;margin-left:4px">推荐</span></p>
+    <p class="verdict ok">网格 <b>459px</b>（比现状还多 30）／选中时 339px</p>
+    <div class="panel">
+      <div class="blk bt" style="height:30px"><span class="ttl">素材库</span><span class="sp"></span><span class="ic">↻</span></div>
+      <div class="blk tabs" style="height:34px">
+        <div class="ltab">任务库<span class="n">1234</span></div>
+        <div class="ltab on">通用库<span class="n">42</span></div>
+      </div>
+      <div class="blk meta" style="height:27px">契约 vellum-link/1　·　生成 04:15</div>
+      <div class="blk bc" style="height:30px"><span class="seg">通用库</span><span class="sep">›</span><span class="seg">品牌视觉</span><span class="sep">›</span><span class="seg cur">Logo</span><span class="sp"></span><span class="depth">2/3</span></div>
+      <div class="blk foot" style="height:30px"><div class="footline">点一个素材看详情…</div></div>
+      <div class="body scrolly" style="height:459px">
+        <span class="hmark">459px</span>
+        <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">基准式样</span><span class="cnt">12 项</span></div>
+        <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">反白版</span><span class="cnt">4 项</span></div>
+        <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">竖版规范</span><span class="cnt">6 项</span></div>
+        <div class="cmt" style="padding:2px 0 6px;font-size:9.5px">本层文件 4 项</div>
+        <div class="grid">
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:82px"></div><div class="cbd"><span class="cnm">Logo-主标-横版</span><span class="cmt">1920×480</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:104px"></div><div class="cbd"><span class="cnm">Logo-组合规范</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:64px"></div><div class="cbd"><span class="cnm">Logo-单色</span><span class="cmt">640×640</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:116px"></div><div class="cbd"><span class="cnm">Logo-主标-竖版</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="budget">
+      <div class="bar"><div class="b-tab" style="width:5.9%"></div><div class="b-meta" style="width:4.7%"></div>
+        <div class="b-crumb" style="width:5.2%"></div><div class="b-foot" style="width:5.2%"></div>
+        <div class="b-grid" style="width:79%"></div></div>
+      <div class="lg"><span><i class="b-crumb"></i>面包屑 30</span><span><i class="b-foot"></i>插入 30</span>
+        <span><i class="b-grid"></i>网格 459（子目录在它里面）</span></div>
+      <div class="num">网格可用 <b>459</b> px　·　比现状 <b>+30</b></div>
+    </div>
+    <p class="note">撤掉两行 chips（−60）、换成一行面包屑（+30）⇒ <b>净赚 30px</b>。
+      子目录在滚动区里，<b>有几个都不影响网格高度</b>；叶子层没有子目录时，与现在完全一样。</p>
+  </div>
+
+  <!-- ===================== ④ B 修正 + 选中 ===================== -->
+  <div class="col">
+    <p class="cap">④ 同上 · <u>选中一个素材</u> <span class="t2">最坏情况</span></p>
+    <p class="verdict ok">网格 <b>339px</b>（比现状选中时还多 30）</p>
+    <div class="panel">
+      <div class="blk bt" style="height:30px"><span class="ttl">素材库</span><span class="sp"></span><span class="ic">↻</span></div>
+      <div class="blk tabs" style="height:34px">
+        <div class="ltab">任务库<span class="n">1234</span></div>
+        <div class="ltab on">通用库<span class="n">42</span></div>
+      </div>
+      <div class="blk meta" style="height:27px">契约 vellum-link/1　·　生成 04:15</div>
+      <div class="blk bc" style="height:30px"><span class="seg">品牌视觉</span><span class="sep">›</span><span class="seg cur">Logo</span><span class="sep">›</span><span class="seg">基准式样</span><span class="sp"></span><span class="depth">3/3</span></div>
+      <div class="blk foot" style="height:150px;padding-top:2px">
+        <div class="footbig">
+          <span class="fname">Logo-主标-横版.png</span>
+          <div class="fmeta">1920×480 · 248 KB · 角色 素材　·　PNG</div>
+          <div class="fbot">
+            <div class="anchors">
+              <span class="acell"><i></i></span><span class="acell"><i></i></span><span class="acell"><i></i></span>
+              <span class="acell"><i></i></span><span class="acell on"><i></i></span><span class="acell"><i></i></span>
+              <span class="acell"><i></i></span><span class="acell"><i></i></span><span class="acell"><i></i></span>
+            </div>
+            <div class="insbtn">置入到画布</div>
+          </div>
+          <div class="fmeta" style="margin-top:4px">落点 居中 · 画布 1600×1200 · 素材 1920×480</div>
+        </div>
+      </div>
+      <div class="body scrolly" style="height:339px">
+        <span class="hmark">339px</span>
+        <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">基准式样</span><span class="cnt">12 项</span></div>
+        <div class="grid">
+          <div class="gcol">
+            <div class="card"><div class="cin" style="border-color:#1473e6"><div class="cth" style="height:78px"></div><div class="cbd"><span class="cnm">Logo-主标-横版</span><span class="cmt">1920×480</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:92px"></div><div class="cbd"><span class="cnm">Logo-组合规范</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:60px"></div><div class="cbd"><span class="cnm">Logo-单色</span><span class="cmt">640×640</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:100px"></div><div class="cbd"><span class="cnm">Logo-主标-竖版</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="budget">
+      <div class="bar"><div class="b-tab" style="width:5.9%"></div><div class="b-meta" style="width:4.7%"></div>
+        <div class="b-crumb" style="width:5.2%"></div><div class="b-foot" style="width:25.9%"></div>
+        <div class="b-grid" style="width:58.3%"></div></div>
+      <div class="lg"><span><i class="b-crumb"></i>面包屑 30</span><span><i class="b-foot"></i>插入 150（九宫格 66）</span>
+        <span><i class="b-grid"></i>网格 339</span></div>
+      <div class="num">网格可用 <b>339</b> px　·　现状选中时是 309</div>
+    </div>
+    <p class="note">插入面板是既有代价（且你之前要求它放在网格上方）。
+      <b>还能再省 44px</b>：把 3×3 落点九宫格收成一行「落点：居中 ▾」下拉 —— 要不要做，你定。</p>
+  </div>
+
+</div>
+</body></html>

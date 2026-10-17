@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>插入面板瘦身 · 去掉落点</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px 28px 26px; background: #1b1b1b;
+         font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; color: #e6e6e6; }
+  h1 { font-size: 17.5px; margin: 0 0 4px; font-weight: 600; }
+  .sub { font-size: 12.5px; color: #9a9a9a; margin: 0 0 16px; line-height: 1.6; }
+  .sub b { color: #d8d8d8; }
+  .row { display: flex; gap: 22px; align-items: flex-start; }
+  .col { width: 340px; }
+  .cap { font-size: 12.5px; font-weight: 600; margin: 0 0 2px; }
+  .cap .t2 { font-size: 10.5px; font-weight: 400; color: #8f8f8f; margin-left: 5px; }
+  .verdict { font-size: 11.5px; margin: 0 0 7px; height: 15px; color: #8f8f8f; }
+  .verdict b { color: #6fc48c; }
+  .verdict.warn b { color: #e0a06d; }
+
+  .panel { width: 340px; height: 580px; background: #323232; border: 1px solid #1c1c1c;
+           border-radius: 2px; display: flex; flex-direction: column; overflow: hidden; }
+  .fixed { flex: 0 0 auto; }
+  .scroll { flex: 1 1 auto; min-height: 0; overflow: hidden; position: relative;
+            padding: 6px 9px 0; background: #2e2e2e; }
+  .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 20px;
+          background: linear-gradient(rgba(46,46,46,0), #2e2e2e); pointer-events: none; }
+
+  .bt { background: #2b2b2b; border-bottom: 1px solid #1c1c1c; display: flex;
+        align-items: center; padding: 0 9px; height: 30px; }
+  .bt .ttl { font-size: 11.5px; }
+  .bt .sp { flex: 1 1 auto; }
+  .bt .ic { width: 18px; height: 18px; border: 1px solid #4a4a4a; border-radius: 3px;
+            display: flex; align-items: center; justify-content: center; font-size: 9px; color: #a2a2a2; }
+  .tabs { padding: 5px 9px 0; height: 34px; }
+  .ltab { display: inline-block; height: 24px; line-height: 22px; padding: 0 9px; margin: 0 5px 4px 0;
+          border-radius: 3px; border: 1px solid #4a4a4a; background: #2e2e2e; color: #a2a2a2; font-size: 11.5px; }
+  .ltab.on { background: #1473e6; border-color: #1473e6; color: #fff; }
+  .ltab .n { margin-left: 5px; font-size: 10px; opacity: .75; }
+  .meta { padding: 0 9px 6px; font-size: 10px; color: #5f5f5f; height: 27px; }
+
+  .dirbox { border-top: 1px solid #3f3f3f; border-bottom: 1px solid #1c1c1c; background: #2b2b2b; }
+  .bc { display: flex; align-items: center; padding: 0 9px; height: 30px; font-size: 11px;
+        border-bottom: 1px solid #3f3f3f; }
+  .bc .seg { color: #a2a2a2; } .bc .seg.cur { color: #e6e6e6; }
+  .bc .sep { color: #5f5f5f; margin: 0 5px; }
+  .bc .sp { flex: 1 1 auto; } .bc .depth { font-size: 9.5px; color: #5f5f5f; }
+  .dirs { padding: 0 9px; }
+  .fd { display: flex; align-items: center; height: 28px; padding: 0 8px; margin-bottom: 4px;
+        border: 1px solid #3f3f3f; border-radius: 3px; background: #343434; }
+  .fd .tri { width: 0; height: 0; border-top: 4px solid transparent;
+             border-bottom: 4px solid transparent; border-left: 5px solid #8f8f8f; margin-right: 7px; }
+  .fd .fic { width: 14px; height: 11px; border: 1px solid #8f8f8f; border-radius: 2px; margin-right: 7px; }
+  .fd .nm { font-size: 11px; color: #e6e6e6; }
+  .fd .cnt { margin-left: auto; font-size: 10px; color: #7e7e7e; }
+
+  .grid { display: flex; align-items: flex-start; margin: 0 -4px; }
+  .gcol { width: 50%; display: flex; flex-direction: column; }
+  .card { padding: 0 4px 8px; }
+  .cin { border: 1px solid #3f3f3f; border-radius: 3px; background: #343434; overflow: hidden; }
+  .cin.on { border-color: #1473e6; }
+  .cth { background: #2a2a2a; border-bottom: 1px solid #3f3f3f; }
+  .cbd { padding: 3px 5px 4px; }
+  .cnm { font-size: 10.5px; color: #e6e6e6; display: block; white-space: nowrap;
+         overflow: hidden; text-overflow: ellipsis; }
+  .cmt { font-size: 9px; color: #5f5f5f; display: block; margin-top: 1px; }
+
+  /* ============ 旧插入面板（150） ============ */
+  .footold { border-top: 1px solid #1c1c1c; background: #2b2b2b; height: 150px; padding: 6px 9px 7px; }
+  .lf-t { font-size: 11.5px; color: #e6e6e6; display: block; }
+  .lf-s { font-size: 9.5px; color: #7e7e7e; display: block; margin-top: 2px;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lf-sep { height: 1px; background: #3f3f3f; margin: 6px 0; }
+  .lf-act { display: flex; align-items: flex-start; }
+  .lf-act-l { flex: 1 1 auto; min-width: 0; }
+  .oldbtn { display: inline-flex; align-items: center; height: 26px; padding: 0 10px;
+            background: #1473e6; border-radius: 3px; color: #fff; font-size: 11.5px; }
+  .oldbtn i { display: inline-block; width: 10px; height: 10px; border: 1px solid #fff;
+              border-radius: 2px; margin-right: 5px; }
+  .lf-note { display: block; font-size: 9px; color: #7e7e7e; margin-top: 4px; }
+  .anchors { display: flex; flex-wrap: wrap; width: 96px; flex: 0 0 auto; margin-left: 8px; }
+  .acell { width: 33.33%; height: 22px; padding: 3px; }
+  .acell i { display: block; width: 100%; height: 100%; border: 1px solid #4a4a4a; border-radius: 2px; }
+  .acell.on i { background: #1473e6; border-color: #1473e6; }
+  .ahd { font-size: 9px; color: #7e7e7e; }
+
+  /* ============ 新插入面板（50 / 52） ============ */
+  .footnew { border-top: 1px solid #1c1c1c; background: #2b2b2b; height: 50px;
+             display: flex; align-items: center; padding: 0 9px; }
+  .fn-l { flex: 1 1 auto; min-width: 0; }
+  .fn-n { font-size: 11.5px; color: #e6e6e6; display: block; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; }
+  .fn-m { font-size: 9.5px; color: #7e7e7e; display: block; margin-top: 2px; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; }
+  .fn-b { flex: 0 0 auto; height: 24px; line-height: 22px; padding: 0 10px; margin-left: 8px;
+          background: #1473e6; border-radius: 3px; color: #fff; font-size: 11.5px; white-space: nowrap; }
+  .fn-i { flex: 0 0 auto; width: 26px; height: 26px; margin-left: 8px; background: #1473e6;
+          border-radius: 3px; display: flex; align-items: center; justify-content: center;
+          color: #fff; font-size: 15px; line-height: 1; }
+  .footnew.hint { height: 30px; font-size: 10.5px; color: #5f5f5f; }
+
+  .budget { margin-top: 7px; }
+  .bar { display: flex; height: 14px; border: 1px solid #3f3f3f; border-radius: 2px; overflow: hidden; }
+  .b-top { background: #4a4a4a; } .b-meta { background: #5f5f5f; }
+  .b-dir { background: #2f6b56; } .b-foot { background: #8a4a2f; } .b-grid { background: #3f8a5c; }
+  .num { font-size: 11.5px; margin-top: 4px; color: #a2a2a2; }
+  .num b { font-size: 14px; color: #e6e6e6; }
+  .lg { display: flex; flex-wrap: wrap; font-size: 9.5px; color: #8f8f8f; margin-top: 3px; }
+  .lg span { margin-right: 8px; }
+  .lg i { display: inline-block; width: 7px; height: 7px; border-radius: 1px; margin-right: 3px; }
+</style></head><body>
+
+<h1>插入面板瘦身：去掉落点，按钮缩到右侧</h1>
+<p class="sub">
+  关键不是按钮宽度 —— 是<b>九宫格占 66px</b>。去掉落点后，面板从 <b>150 → 50</b>，580 高的面板下网格多出 <b>100px</b>。<br>
+  四屏都是 580 高（默认停靠），选中同一张素材，只换插入面板的形态。
+</p>
+
+<div class="row">
+
+  <!-- ============ ① 现状 150 ============ -->
+  <div class="col">
+    <p class="cap">① 现状 <span class="t2">落点九宫格 + 「置入到画布」</span></p>
+    <p class="verdict warn">插入面板 150　·　网格 <b>213</b></p>
+    <div class="panel">
+      <div class="fixed bt"><span class="ttl">素材库</span><span class="sp"></span><span class="ic">↻</span></div>
+      <div class="fixed tabs"><div class="ltab">任务库<span class="n">1234</span></div><div class="ltab on">通用库<span class="n">42</span></div></div>
+      <div class="fixed meta">契约 vellum-link/1　·　生成 16:35</div>
+      <div class="fixed dirbox">
+        <div class="bc"><span class="seg">通用库</span><span class="sep">›</span><span class="seg">品牌视觉</span><span class="sep">›</span><span class="seg cur">Logo</span><span class="sp"></span><span class="depth">第 2/3 层</span></div>
+        <div class="dirs">
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">基准式样</span><span class="cnt">12 项</span></div>
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">反白版</span><span class="cnt">4 项</span></div>
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">竖版规范</span><span class="cnt">6 项</span></div>
+        </div>
+      </div>
+      <div class="scroll" style="height:213px">
+        <div class="grid">
+          <div class="gcol">
+            <div class="card"><div class="cin on"><div class="cth" style="height:64px"></div><div class="cbd"><span class="cnm">Logo-主标-横版</span><span class="cmt">1920×480</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:70px"></div><div class="cbd"><span class="cnm">Logo-组合规范</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:56px"></div><div class="cbd"><span class="cnm">Logo-单色</span><span class="cmt">640×640</span></div></div></div>
+          </div>
+        </div>
+        <div class="fade"></div>
+      </div>
+      <div class="footold">
+        <span class="lf-t">Logo-主标-横版.png</span>
+        <span class="lf-s">位置：品牌视觉 › Logo › 基准式样</span>
+        <span class="lf-s mono">1920×480 · 248 KB · 素材 · 来源：公司</span>
+        <span class="lf-s">标签：Logo / 横版</span>
+        <div class="lf-sep"></div>
+        <div class="lf-act">
+          <div class="lf-act-l">
+            <div class="oldbtn"><i></i><span>置入到画布</span></div>
+            <span class="lf-note mono">落点 居中 · 画布 1600×1200</span>
+          </div>
+          <div>
+            <div class="ahd">落点</div>
+            <div class="anchors">
+              <span class="acell"><i></i></span><span class="acell"><i></i></span><span class="acell"><i></i></span>
+              <span class="acell"><i></i></span><span class="acell on"><i></i></span><span class="acell"><i></i></span>
+              <span class="acell"><i></i></span><span class="acell"><i></i></span><span class="acell"><i></i></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="budget">
+      <div class="bar"><div class="b-top" style="width:11%"></div><div class="b-meta" style="width:4.7%"></div>
+        <div class="b-dir" style="width:21.7%"></div><div class="b-foot" style="width:25.9%"></div>
+        <div class="b-grid" style="width:36.7%"></div></div>
+      <div class="num">网格 <b>213</b> px（只够 1.5 行）</div>
+      <div class="lg"><span><i class="b-foot"></i>插入 150（其中九宫格 66、路径 14、标签 14）</span></div>
+    </div>
+  </div>
+
+  <!-- ============ ② 新版 A：纯文字「置入」 ============ -->
+  <div class="col">
+    <p class="cap">② 瘦身 A · 文字「置入」 <span class="t2">推荐</span></p>
+    <p class="verdict">插入面板 <b>50</b>　·　网格 <b>313</b>（+100）</p>
+    <div class="panel">
+      <div class="fixed bt"><span class="ttl">素材库</span><span class="sp"></span><span class="ic">↻</span></div>
+      <div class="fixed tabs"><div class="ltab">任务库<span class="n">1234</span></div><div class="ltab on">通用库<span class="n">42</span></div></div>
+      <div class="fixed meta">契约 vellum-link/1　·　生成 16:35</div>
+      <div class="fixed dirbox">
+        <div class="bc"><span class="seg">通用库</span><span class="sep">›</span><span class="seg">品牌视觉</span><span class="sep">›</span><span class="seg cur">Logo</span><span class="sp"></span><span class="depth">第 2/3 层</span></div>
+        <div class="dirs">
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">基准式样</span><span class="cnt">12 项</span></div>
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">反白版</span><span class="cnt">4 项</span></div>
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">竖版规范</span><span class="cnt">6 项</span></div>
+        </div>
+      </div>
+      <div class="scroll" style="height:313px">
+        <div class="grid">
+          <div class="gcol">
+            <div class="card"><div class="cin on"><div class="cth" style="height:78px"></div><div class="cbd"><span class="cnm">Logo-主标-横版</span><span class="cmt">1920×480</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:96px"></div><div class="cbd"><span class="cnm">Logo-组合规范</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:66px"></div><div class="cbd"><span class="cnm">Logo-单色</span><span class="cmt">640×640</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:104px"></div><div class="cbd"><span class="cnm">Logo-主标-竖版</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+        </div>
+        <div class="fade"></div>
+      </div>
+      <div class="footnew">
+        <div class="fn-l">
+          <span class="fn-n">Logo-主标-横版.png</span>
+          <span class="fn-m">1920×480 · 248 KB · 素材 · 品牌视觉 › Logo</span>
+        </div>
+        <div class="fn-b">置入</div>
+      </div>
+    </div>
+    <div class="budget">
+      <div class="bar"><div class="b-top" style="width:11%"></div><div class="b-meta" style="width:4.7%"></div>
+        <div class="b-dir" style="width:21.7%"></div><div class="b-foot" style="width:8.6%"></div>
+        <div class="b-grid" style="width:54%"></div></div>
+      <div class="num">网格 <b>313</b> px（约 2.5 行）</div>
+      <div class="lg"><span><i class="b-foot"></i>插入 50　·　按钮宽 44，名称可用约 270</span></div>
+    </div>
+  </div>
+
+  <!-- ============ ③ 新版 B：icon ============ -->
+  <div class="col">
+    <p class="cap">③ 瘦身 B · 箭头 icon <span class="t2">更省宽度</span></p>
+    <p class="verdict">插入面板 <b>52</b>　·　网格 <b>311</b>（+98）</p>
+    <div class="panel">
+      <div class="fixed bt"><span class="ttl">素材库</span><span class="sp"></span><span class="ic">↻</span></div>
+      <div class="fixed tabs"><div class="ltab">任务库<span class="n">1234</span></div><div class="ltab on">通用库<span class="n">42</span></div></div>
+      <div class="fixed meta">契约 vellum-link/1　·　生成 16:35</div>
+      <div class="fixed dirbox">
+        <div class="bc"><span class="seg">通用库</span><span class="sep">›</span><span class="seg">品牌视觉</span><span class="sep">›</span><span class="seg cur">Logo</span><span class="sp"></span><span class="depth">第 2/3 层</span></div>
+        <div class="dirs">
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">基准式样</span><span class="cnt">12 项</span></div>
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">反白版</span><span class="cnt">4 项</span></div>
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">竖版规范</span><span class="cnt">6 项</span></div>
+        </div>
+      </div>
+      <div class="scroll" style="height:311px">
+        <div class="grid">
+          <div class="gcol">
+            <div class="card"><div class="cin on"><div class="cth" style="height:78px"></div><div class="cbd"><span class="cnm">Logo-主标-横版</span><span class="cmt">1920×480</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:96px"></div><div class="cbd"><span class="cnm">Logo-组合规范</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:66px"></div><div class="cbd"><span class="cnm">Logo-单色</span><span class="cmt">640×640</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:104px"></div><div class="cbd"><span class="cnm">Logo-主标-竖版</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+        </div>
+        <div class="fade"></div>
+      </div>
+      <div class="footnew" style="height:52px">
+        <div class="fn-l">
+          <span class="fn-n">Logo-主标-横版.png</span>
+          <span class="fn-m">1920×480 · 248 KB · 素材 · 品牌视觉 › Logo</span>
+        </div>
+        <div class="fn-i">↑</div>
+      </div>
+    </div>
+    <div class="budget">
+      <div class="bar"><div class="b-top" style="width:11%"></div><div class="b-meta" style="width:4.7%"></div>
+        <div class="b-dir" style="width:21.7%"></div><div class="b-foot" style="width:9%"></div>
+        <div class="b-grid" style="width:53.6%"></div></div>
+      <div class="num">网格 <b>311</b> px　·　比 A 只少 2px</div>
+      <div class="lg"><span><i class="b-foot"></i>插入 52　·　icon 26×26，名称可用约 288</span></div>
+    </div>
+  </div>
+
+  <!-- ============ ④ 文字版 + 超长文件名 ============ -->
+  <div class="col">
+    <p class="cap">④ 文字版 · 超长文件名 <span class="t2">边界测试</span></p>
+    <p class="verdict">按钮不会挤坏 — 名字自己截断</p>
+    <div class="panel">
+      <div class="fixed bt"><span class="ttl">素材库</span><span class="sp"></span><span class="ic">↻</span></div>
+      <div class="fixed tabs"><div class="ltab">任务库<span class="n">1234</span></div><div class="ltab on">通用库<span class="n">42</span></div></div>
+      <div class="fixed meta">契约 vellum-link/1　·　生成 16:35</div>
+      <div class="fixed dirbox">
+        <div class="bc"><span class="seg">通用库</span><span class="sep">›</span><span class="seg">品牌视觉</span><span class="sep">›</span><span class="seg cur">Logo</span><span class="sp"></span><span class="depth">第 2/3 层</span></div>
+        <div class="dirs">
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">基准式样</span><span class="cnt">12 项</span></div>
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">反白版</span><span class="cnt">4 项</span></div>
+          <div class="fd"><span class="tri"></span><span class="fic"></span><span class="nm">竖版规范</span><span class="cnt">6 项</span></div>
+        </div>
+      </div>
+      <div class="scroll" style="height:313px">
+        <div class="grid">
+          <div class="gcol">
+            <div class="card"><div class="cin on"><div class="cth" style="height:78px"></div><div class="cbd"><span class="cnm">2海南代理展架修改后…</span><span class="cmt">4961×10866</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:96px"></div><div class="cbd"><span class="cnm">Logo-组合规范</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+          <div class="gcol">
+            <div class="card"><div class="cin"><div class="cth" style="height:66px"></div><div class="cbd"><span class="cnm">Logo-单色</span><span class="cmt">640×640</span></div></div></div>
+            <div class="card"><div class="cin"><div class="cth" style="height:104px"></div><div class="cbd"><span class="cnm">Logo-主标-竖版</span><span class="cmt">1200×1600</span></div></div></div>
+          </div>
+        </div>
+        <div class="fade"></div>
+      </div>
+      <div class="footnew">
+        <div class="fn-l">
+          <span class="fn-n">2海南代理展架修改后 84×184cm（3mm出血）.png</span>
+          <span class="fn-m">4961×10866 · 5.03 MB · 素材 · 品牌视觉 › Logo</span>
+        </div>
+        <div class="fn-b">置入</div>
+      </div>
+    </div>
+    <div class="budget">
+      <div class="bar"><div class="b-top" style="width:11%"></div><div class="b-meta" style="width:4.7%"></div>
+        <div class="b-dir" style="width:21.7%"></div><div class="b-foot" style="width:8.6%"></div>
+        <div class="b-grid" style="width:54%"></div></div>
+      <div class="num">面板高度不变 <b>50</b>，名称按 <b>省略号</b> 截断</div>
+      <div class="lg"><span>hover 看完整路径 / 标签（放进 title，不再占版面）</span></div>
+    </div>
+  </div>
+
+</div>
+</body></html>

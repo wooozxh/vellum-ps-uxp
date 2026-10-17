@@ -352,6 +352,20 @@ async function run(ctx, deps) {
   };
   const started = Date.now();
 
+  /* ---------- 开场清场：关掉**上一次自检留下的**临时文档（v0.9.5）----------
+     🔴 2026-10-17 真机事故：实测到 3 个自检残留文档堆在用户的 PS 里，
+     而**堆积会把后续自检搞乱**（活动文档不对、建稿尺寸异常 ⇒ 一批假失败）。
+     根因：`closeDocument` 失败时**返回 {ok:false} 而不抛异常**，而调用方（20+ 处）
+     都 `await` 后不检查返回值 ⇒ 关闭失败被无声吞掉。
+     ⇒ 开场先扫一遍，结果如实进报告（见 S69）。**只关名字带我们前缀的，用户稿绝不碰。** */
+  let sweepIn = null;
+  let sweepOut = null;
+  try {
+    sweepIn = await ps.sweepProbeDocs();
+  } catch (eS) {
+    sweepIn = { closed: [], failed: [{ name: "(清场)", err: String((eS && eS.message) || eS) }], kept: [] };
+  }
+
   /* ---------------------------------------------------------------- 素材库自检小工具
      ⚠️ 一律**从 DOM 读**，不碰 tools/library.js 的内部状态 ——
         否则就是"拿被测模块自己的输出验它自己"。 */
@@ -1654,7 +1668,7 @@ async function run(ctx, deps) {
       const okAll =
         !!tabsEl &&
         !!barEl &&
-        tabCount === man.scopes.length &&
+        tabCount === mirror.libraryScopes(man.scopes).length &&
         onChips === 1 &&
         !!grid &&
         cards > 0 &&
@@ -1666,7 +1680,7 @@ async function run(ctx, deps) {
       rec(
         S20,
         okAll,
-        "库 chips=" + tabCount + "/" + man.scopes.length +
+        "库 chips=" + tabCount + "/" + mirror.libraryScopes(man.scopes).length +
         "（激活 1 个？" + (onChips === 1 ? "是" : "否！") + "，当前 " + activeId + "）" +
         "　筛选区行数=" + libRowCount() + "（0 = 不构成筛选，只显示总计数）" +
         "　卡片=" + cards + "（自数期望 " + expect + "）" +
@@ -5791,6 +5805,2802 @@ async function run(ctx, deps) {
     }
   } catch (e) {
     rec("S52 整批撤销：跨模态持有历史状态（主路）+ 负对照 + 备路读数", false, "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S53: 导出审核版 · 主路（v0.8.0 / docs/50 §3.1） ----------
+     ⚠️ 本项验的是**整步改造**：扩画布 → 写参数条 → asCopy 导出 → 一步还原。
+     ⚠️ 判据里**必须有飞行中读回**，否则"命令没报错"会被误当成"功能生效"：
+        · `resizeReadback.h` 必须等于 原高 + 条高 ⇒ 证明画布**真的**变高了
+        · `undoRevert.before` 必须 > 原图层数 ⇒ 证明参数条**真的**建出来了
+        没有这两条，"还原后回到原值"也可能只是**什么都没发生过**。
+     ⚠️ **两个尺寸都跑**（v0.8.0 首轮真机样张暴露过缺陷，所以这里必须两只都盯）：
+        · 窄稿 400×400 @72  —— 8% 只有 32px ⇒ 会走「下限 72px + 缩字号」那条兜底路
+        · 代表稿 1600×1200 **@300dpi** —— 顺带把「字号按 ppi 由像素换点」端到端跑通，
+          并要求**不缩字号、不加高**（证明用户选定的 8% 在正常稿上够用）
+     ⚠️ 目标文件写进**插件自己的 PluginData**（唯一可写的地方；插件写不了自己的目录）。
+     ⚠️ 临时文档跑完全关，绝不动用户的稿。 */
+  try {
+    const S53 = "S53 导出审核版主路：扩画布→写参数条→asCopy 导出→一步还原（两个尺寸 + 飞行中读回）";
+
+    /* 跑一个尺寸：建稿/关稿都在这里面，**绝不碰用户的稿**。
+       ⚠️ 用函数表达式而不是块级 function 声明 —— 块里声明函数在各引擎的严格模式行为不一致。 */
+    const s53RunOne = async function (size, height, res, fname, label, kind) {
+      const sc = await ps.createScratchDoc({
+        size: size, height: height, resolution: res,
+        name: "Vellum 自检临时文档(S53-" + label + ")"
+      });
+      if (!sc || !sc.ok) return { error: "建临时文档失败：" + ((sc && sc.error) || "未知") };
+      try {
+        await ps.activateDocument(sc.id);
+        await ps.makeTextLayer("S53 标题", 18, 30, 30);
+        const geom0 = ps.readDocGeom();
+        const lfs = require("uxp").storage.localFileSystem;
+        const df = await lfs.getDataFolder();
+        const entry = await df.createFile(fname, { overwrite: true });
+        const r = await ps.exportReview({
+          entry: entry, kind: kind || "review",
+          bleed: { state: "has", mm: 3 }, when: new Date()
+        });
+        let magic = "未读到";
+        try {
+          const buf = await entry.read({ format: require("uxp").storage.formats.binary });
+          const u8 = new Uint8Array(buf);
+          magic = (u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4e && u8[3] === 0x47)
+            ? "PNG" : "非PNG(" + u8[0] + "," + u8[1] + ")";
+        } catch (e) {
+          magic = "读失败：" + ((e && e.message) || e);
+        }
+        return {
+          r: r, geom0: geom0, geom1: ps.readDocGeom(), magic: magic,
+          L0: geom0.layers, label: label, file: fname
+        };
+      } finally {
+        await ps.closeDocument(sc.id);
+        await ctx.shell.showHome();
+      }
+    };
+
+    const A = await s53RunOne(400, 400, 72, "selfcheck-review-400.png", "窄稿400");
+    const B = await s53RunOne(1600, 1200, 300, "selfcheck-review-1600.png", "代表稿1600");
+    /* 成品图：**只 asCopy 导出**，画布/图层/背景色一个都不许动。
+       用户拍板本轮要把这个按钮一起做（docs/50 §六 ⑤），所以它也得有真机证据。 */
+    const C = await s53RunOne(800, 600, 300, "selfcheck-final-800.png", "成品图800", "final");
+
+    const ra = A && A.r;
+    const rb = B && B.r;
+    const rc = C && C.r;
+    const mb = rb && rb.metrics;
+    const stepsB = rb ? (rb.steps || []).join(" | ") : "";
+    const stepsC = rc ? (rc.steps || []).join(" | ") : "";
+    const wantHB = mb ? mb.imgH + mb.stripH : null;
+    const rrB = rb ? rb.resizeReadback : null;
+
+    const checks = [
+      ["① 窄稿（400×400@72）导出 ok 且是 PNG", !!(ra && ra.ok) && A.magic === "PNG"],
+      ["② 代表稿（1600×1200@300）导出 ok 且是 PNG", !!(rb && rb.ok) && B.magic === "PNG"],
+      ["③ 两个尺寸都读到非空字节",
+        !!(ra && typeof ra.fileBytes === "number" && ra.fileBytes > 0) &&
+        !!(rb && typeof rb.fileBytes === "number" && rb.fileBytes > 0)],
+      ["④ 参数条正文与角标都建出来了（代表稿）",
+        stepsB.indexOf("text(main) ok") >= 0 && stepsB.indexOf("text(tag) ok") >= 0],
+      ["⑤ ★飞行中读回：画布真的变高了（原高 + 条高）",
+        !!(rrB && wantHB !== null && rrB.h === wantHB)],
+      /* ★ v0.9.2（备路）：飞行读数现在来自**副本**
+         （原稿不再被改过，所以没有“撤回前”这回事）。 */
+      ["⑥ ★飞行中读回：参数条真的加到了**副本**上（副本图层数 > 原稿图层数）",
+        !!(rb && rb.dupHit && typeof rb.dupHit.layers === "number" && rb.dupHit.layers > B.L0)],
+      /* 🔴 v0.9.5：判据**换代** —— 从「底色设置成功」改成「**真实像素命中**」。
+         用户 2026-10-17 报障正是：背景色读回是对的（#111111）、命令全 ok，
+         唯独参数条像素是白的（`resizeCanvas` 扩出来的新区域恒为白）。
+         ⇒ 只验「设置成功」已经不够，必须验**像素**。 */
+      ["⑦ ★参数条底色**像素**命中该主题底色（不是「设置成功」就算）",
+        !!(rb && rb.bgRect && rb.bgRect.ok && rb.bgPixelsHit === true)],
+      ["⑦b 底色矩形的候选写法如实记在读数里（哪条被接受可追溯）",
+        !!(rb && rb.bgRect && Array.isArray(rb.bgRect.attempts) && rb.bgRect.attempts.length > 0)],
+      ["⑧ 原稿**没被动过**：画布/图层数/背景色都还和开工前一样（备路判据）",
+        !!(rb && rb.restored && rb.restored.w && rb.restored.h && rb.restored.layers && rb.restored.bg)],
+      ["⑨ 收工后**独立复读原稿**一致（不信结果里的自述）",
+        !!(B && B.geom0 && B.geom1) && B.geom1.w === B.geom0.w &&
+        B.geom1.h === B.geom0.h && B.geom1.layers === B.geom0.layers],
+      /* v0.9.0：右下「依据」块要占掉约 1/3 宽 ⇒ 代表稿上字号缩了约 0.5%。
+         判据改成"不加高 + 缩幅 ≤ 2%"（仍能证明 8% 基本够用），并如实写进读数。 */
+      ["⑩ 8% 在代表稿上基本够用（不加高；字号缩幅 ≤ 2% —— 右下依据块占宽所致）",
+        (function () {
+          if (!mb || mb.grown) return false;
+          const ideal = (mb.baseStripH * 0.156 * 72) / mb.ppi;
+          return mb.fontPt / ideal > 0.98;
+        })()],
+      ["⑪ ★字号按 ppi 换算：300dpi 下 ≈ 4.79pt（= 19.97px × 72/300）",
+        !!(mb && Math.abs(mb.fontPt - 4.79) < 0.05)],
+      ["⑫ 正文盒子给角标留了宽（第 1 行长文件名也不会压字）",
+        !!(mb && mb.text.right < mb.tag.right)],
+      ["⑬ 角标盒子贴在右端、且与正文之间留了间隙（两盒不重叠）",
+        !!(mb && mb.tag.left > mb.text.right && mb.tag.right > mb.tag.left &&
+           Math.abs(mb.tag.right - (mb.imgW - mb.padXPx)) < 0.01)],
+      /* 🔴 v0.8.0 第二轮才补的判据：第一轮真机样张里三行被拼成了一行（`\\n` 没换行）。
+         判据是**把参数条那层的文字读回来**数段落 —— 而不是"建层命令没报错"。 */
+      ["⑭ ★参数条真有 3 段（读回 textItem.contents，证明换行生效）",
+        (function () {
+          const t = rb ? String(rb.textReadback || "") : "";
+          if (!t) return false;
+          return t.split(/[\r\n]/).filter(function (s) { return s.length > 0; }).length === 3;
+        })()],
+      /* 🔴 v0.8.0 第二轮：第一轮真机样张里**角标整个没出现在导出图上**。
+         判据：读回它的可见性与外框，要求"可见 + 外框在画布内 **且确实在右半边**"。 */
+      ["⑮ ★角标可见、外框在画布内、且确实落在右侧（第一轮它整块跑到画布外）",
+        (function () {
+          const t = rb && rb.tagReadback;
+          if (!t || !t.bounds || !mb) return false;
+          const b = t.bounds;
+          const cw = mb.imgW;
+          const chh = mb.imgH + mb.stripH;
+          return t.visible === true && !!t.contents &&
+            b[0] !== null && b[2] !== null && b[2] > b[0] &&
+            b[0] >= -1 && b[2] <= cw + 1 && b[1] >= -1 && b[3] <= chh + 1 &&
+            b[2] >= cw * 0.8;
+        })()],
+      ["⑯ 成品图导出 ok 且是 PNG", !!(rc && rc.ok) && C.magic === "PNG"],
+      ["⑰ ★成品图**完全不动稿**（尺寸/图层/背景色都没变，且步骤里没有扩画布、没有写文字）",
+        !!(rc && rc.restored && rc.restored.w && rc.restored.h &&
+           rc.restored.layers && rc.restored.bg &&
+           stepsC.indexOf("resizeCanvas") < 0 && stepsC.indexOf("text(") < 0 &&
+           C.geom0 && C.geom1 && C.geom1.h === C.geom0.h && C.geom1.layers === C.geom0.layers)],
+      /* ★ v0.9.2 备路收尾：副本必须**被关掉**（不留残留）、且切回了原稿 */
+      ["⑩ ★备路收尾：副本被关掉了、且切回了原稿（步骤里两条都在）",
+        stepsB.indexOf("close 副本 ok") >= 0 && stepsB.indexOf("切回原稿 ok") >= 0 &&
+        !!(rb && rb.dup && rb.dup.ok === true)]
+    ];
+    const bad = [];
+    for (const c of checks) if (!c[1]) bad.push(c[0]);
+
+    const lineOf = function (tag, X) {
+      if (!X || X.error) return tag + "：建/跑失败（" + ((X && X.error) || "未知") + "）";
+      const m = X.r.metrics;
+      return tag + "：" + X.geom0.w + "×" + X.geom0.h + "@" + X.geom0.ppi + "dpi" +
+        "　条高 " + (m ? m.stripH : "?") + "px" + ((m && m.grown) ? "(已加高)" : "") +
+        "　字号 " + (m ? m.fontPt : "?") + "pt" + ((m && m.fontShrunk) ? "(已缩)" : "") +
+        "　约 " + (m ? m.rows : "?") + " 行" +
+        "　bytes=" + X.r.fileBytes + "　" + X.magic +
+        "　图层 " + X.L0 + "→" + (X.r.dupHit ? X.r.dupHit.layers : "?") +
+        "→" + (X.geom1 ? X.geom1.layers : "?") +
+        "　还原=" + JSON.stringify(X.r.restored || null);
+    };
+
+    rec(
+      S53,
+      bad.length === 0,
+      lineOf("窄稿　", A) + "\n        " + lineOf("代表稿", B) + "\n        " + lineOf("成品图", C) + "\n" +
+        "        代表稿步骤=" + stepsB +
+        "\n        成品图步骤=" + stepsC +
+        "\n        参数条读回（应 3 段）=" + JSON.stringify((rb && rb.textReadback) || null) +
+        "\n        角标读回=" + JSON.stringify((rb && rb.tagReadback) || null) +
+        "\n        层名回报：正文=" + JSON.stringify((rb && rb.mainLayer) || null) +
+        "　角标=" + JSON.stringify((rb && rb.tagLayer) || null) +
+        "\n        角标盒子=" + JSON.stringify(mb ? mb.tag : null) +
+        "　正文盒子=" + JSON.stringify(mb ? mb.text : null) +
+        ((rb && rb.warnings && rb.warnings.length)
+          ? "\n        ⚠ " + rb.warnings.join("　⚠ ") : "") +
+        (bad.length
+          ? "\n        ⚠️ 未成立：" + bad.join(" / ")
+          : "\n        ⇒ 主路成立：改稿→导出→一步还原；8% 在代表稿上够用，窄稿自动兜底")
+    );
+  } catch (e) {
+    rec("S53 导出审核版主路：扩画布→写参数条→asCopy 导出→一步还原（两个尺寸 + 飞行中读回）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S54: 出血三态（纯函数 + 真面板交互）（v0.8.0 / docs/50 §3.4） ----------
+     ⚠️ 两半都要验：① 判定本身（纯函数，含**非法输入必须拒绝**，不许猜一个默认值）
+                   ② 真面板上的三态 chip 与步进器（走 ctx.shell.showTool 这条**真路由**）。 */
+  try {
+    const S54 = "S54 出血三态：纯函数判定 + 面板三态 chip/步进器（真实路由）";
+    const rv54 = require("./review.js");
+
+    const cases = [
+      ["none", "none", "", true, "none", null],
+      ["has/3", "has", "3", true, "has", 3],
+      ["has/0.5", "has", "0.5", true, "has", 0.5],
+      ["has/空", "has", "", false, "has", null],
+      ["has/0", "has", "0", false, "has", null],
+      ["has/abc", "has", "abc", false, "has", null],
+      ["has/500", "has", "500", false, "has", null],
+      ["unknown", "unknown", "", true, "unknown", null],
+      ["乱填的 state", "garbage", "", true, "unknown", null]
+    ];
+    const badCases = [];
+    const caseLines = [];
+    for (const c of cases) {
+      const g = rv54.makeBleed(c[1], c[2]);
+      const ok = g.ok === c[3] && g.state === c[4] && (c[5] === null ? g.mm === null : g.mm === c[5]);
+      if (!ok) badCases.push(c[0] + "（得到 ok=" + g.ok + " state=" + g.state + " mm=" + g.mm + "）");
+      caseLines.push(c[0] + "→" + (g.ok ? g.state + "/" + g.mm : "拒绝"));
+    }
+    const texts = [
+      rv54.bleedText({ state: "none" }), rv54.bleedText({ state: "has", mm: 3 }),
+      rv54.bleedText({ state: "unknown" })
+    ];
+    const textOk =
+      texts[0] === "出血 无" && texts[1] === "出血 含 3 mm" && texts[2] === "出血 无法判断";
+
+    /* ---- 真面板：三态 chip + 步进器 ---- */
+    let uiLine = "";
+    let uiOk = false;
+    try {
+      await ctx.shell.showTool("review", "selfcheck");
+      const mounted = await waitFor(function () {
+        const v = document.getElementById("vt-tool-view");
+        return !!(v && v.querySelector(".rv"));
+      }, 6000);
+      const view = document.getElementById("vt-tool-view");
+      /* ⚠️ 点一下 chip 会触发 render() **按新数据重建整段 DOM** ⇒ 旧节点引用会失效
+         （不是"属性没更新"，是"那个节点已经不在树里了"）。
+         所以每次判读都**重新查一遍**，绝不缓存节点。 */
+      const chipsNow = function () {
+        const v = document.getElementById("vt-tool-view");
+        return v ? v.querySelectorAll(".rv-chip") : [];
+      };
+      const stepNow = function () {
+        const v = document.getElementById("vt-tool-view");
+        const s = v ? v.querySelectorAll(".rv-step") : [];
+        return s[0] || null;
+      };
+      const clsOf = function (n) { return n ? String(n.getAttribute("class")) : ""; };
+
+      /* 点「无出血」（第 1 个 chip）⇒ 该 chip 亮、步进器变灰 */
+      let offWhenNone = null;
+      let onWhenHas = null;
+      if (chipsNow().length >= 3) {
+        syntheticClick(chipsNow()[0], false);
+        await waitFor(function () {
+          return clsOf(chipsNow()[0]).indexOf("is-on") >= 0;
+        }, 3000);
+        offWhenNone = clsOf(stepNow()).indexOf("is-off") >= 0;
+
+        syntheticClick(chipsNow()[1], false);
+        await waitFor(function () {
+          return clsOf(chipsNow()[1]).indexOf("is-on") >= 0;
+        }, 3000);
+        onWhenHas = clsOf(stepNow()).indexOf("is-off") < 0;
+      }
+      const chipsN = chipsNow().length;
+      const hasStep = !!stepNow();
+
+      uiOk = !!mounted && chipsN === 3 && hasStep && offWhenNone === true && onWhenHas === true;
+      uiLine = "挂载=" + !!mounted + "　chip 数=" + chipsN + "（须 3）" +
+        "　选「无出血」时步进器变灰=" + offWhenNone +
+        "　改选「有出血」后步进器可用=" + onWhenHas;
+
+      /* 浮层（先于模态的那一问）应当能开、能关 */
+      const tool54 = require("../tools/review.js");
+      tool54.__diag.openBleedDialog("自检：验浮层", function () { });
+      const mask = view ? view.querySelector(".rv-mask") : null;
+      const dlgRows = view ? view.querySelectorAll(".rv-dlg-row") : [];
+      const dlgHasMm = !!(view && view.querySelector(".rv-dlg-mm"));
+      tool54.__diag.closeDialog();
+      const maskGone = !(view && view.querySelector(".rv-mask"));
+      const dlgOk = !!mask && dlgRows.length === 3 && dlgHasMm && maskGone;
+      uiLine += "\n        浮层：出现=" + !!mask + "、三行=" + dlgRows.length +
+        "、有毫米行=" + dlgHasMm + "、关闭后消失=" + maskGone;
+      uiOk = uiOk && dlgOk;
+    } catch (e) {
+      uiLine = "面板部分抛异常：" + ((e && e.message) || e);
+    }
+    await ctx.shell.showHome();
+
+    const checks = [
+      ["① 九组纯函数判定全对（含非法输入必须拒绝）", badCases.length === 0],
+      ["② 三态文案分别 = 出血 无 / 出血 含 3 mm / 出血 无法判断", textOk],
+      ["③ 面板三态 chip + 步进器 + 浮层（真实路由）", uiOk]
+    ];
+    const bad = [];
+    for (const c of checks) if (!c[1]) bad.push(c[0]);
+
+    rec(
+      S54,
+      bad.length === 0,
+      "判定：" + caseLines.join("　") + "\n" +
+        "        文案：" + JSON.stringify(texts) + "\n" +
+        "        " + uiLine.split("\n")[0] +
+        (uiLine.indexOf("\n") >= 0 ? "\n        " + uiLine.split("\n")[1].trim() : "") +
+        (badCases.length ? "\n        ⚠️ 判定不符：" + badCases.join(" / ") : "") +
+        (bad.length ? "\n        ⚠️ 未成立：" + bad.join(" / ")
+                    : "\n        ⇒ 出血三态：判定严（非法输入拒绝、不猜）、界面可点、浮层先于模态")
+    );
+  } catch (e) {
+    rec("S54 出血三态：纯函数判定 + 面板三态 chip/步进器（真实路由）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S55: 工具页与宫格行序（v0.8.0） ----------
+     ⚠️ 判据是「**注册表**与**真实 DOM** 两边对得上」——单看一边都可能自说自话。 */
+  try {
+    const S55 = "S55 工具接入：注册表 与 首页宫格 逐行对齐（含 ready/灰行）";
+    const rows = (deps.registry && deps.registry.allRows) ? deps.registry.allRows() : [];
+    const tls = (deps.registry && deps.registry.tools) ? deps.registry.tools : [];
+    /* ⚠️ 判据**不能写"tools 末位是 review"** —— 那只在 review 恰好是最后一个工具时成立。
+       v0.9.12 加了「新建稿」之后它就假红了。真判据应该是"**每个**工具都真的能挂载"：
+       新工具上架时这条会自动覆盖到，不用每次回来改期望值。 */
+    const allMountable = tls.length > 0 && tls.every((t) => t && t.ready === true &&
+      typeof t.mount === "function" && typeof t.unmount === "function");
+
+    await ctx.shell.showHome();
+    const home = document.getElementById("vt-home");
+    const navs = home ? home.querySelectorAll(".navitem") : [];
+    let reviewNav = null;
+    let planNav = null;
+    let plannedN = 0;
+    for (let i = 0; i < navs.length; i++) {
+      const id = navs[i].getAttribute ? navs[i].getAttribute("data-tool") : null;
+      if (id === "review") reviewNav = navs[i];
+      if (id === "template") planNav = navs[i];
+      if (String(navs[i].getAttribute("class")).indexOf("is-planned") >= 0) plannedN++;
+    }
+    const planPlanned = planNav
+      ? String(planNav.getAttribute("class")).indexOf("is-planned") >= 0 : true;
+    const reviewPlanned = reviewNav
+      ? String(reviewNav.getAttribute("class")).indexOf("is-planned") >= 0 : true;
+
+    const checks = [
+      ["① 注册表：**每个** tool 都 ready=true 且有 mount/unmount（第 " + tls.length + " 个）",
+        allMountable],
+      ["② 注册表行数 = tools + planned",
+        rows.length === (tls.length + deps.registry.planned.length)],
+      ["③ 首页 .navitem 数 = 注册表行数（" + rows.length + "）", navs.length === rows.length],
+      ["④ 首页里能找到 data-tool=\"review\" 的那一行", !!reviewNav],
+      ["④b 首页里能找到 data-tool=\"template\"（新建稿）的那一行", !!planNav],
+      ["⑤ review / 新建稿 两行**都不是**灰行（已实现）",
+        !!reviewNav && !reviewPlanned && !!planNav && !planPlanned],
+      ["⑥ 灰行数 = planned 数（" + deps.registry.planned.length + "）",
+        plannedN === deps.registry.planned.length]
+    ];
+    const bad = [];
+    for (const c of checks) if (!c[1]) bad.push(c[0]);
+
+    rec(
+      S55,
+      bad.length === 0,
+      "tools=" + tls.map(function (t) { return t.id; }).join(",") +
+        "　planned=" + deps.registry.planned.map(function (t) { return t.id; }).join(",") +
+        "\n        首页行数=" + navs.length + "　灰行=" + plannedN +
+        "　review 行是否灰=" + reviewPlanned + "　新建稿行是否灰=" + planPlanned +
+        (bad.length ? "\n        ⚠️ 未成立：" + bad.join(" / ")
+                    : "\n        ⇒ 注册表与首页逐行对齐 —— 新工具是真的「上架」了，而不是只躺在数组里")
+    );
+  } catch (e) {
+    rec("S55 导出审核版接入：注册表 与 首页宫格 逐行对齐（含 ready/灰行）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S56: 参数条字段与体检对账（v0.8.0 / docs/49 §3.0） ----------
+     ⚠️ 这一项防的是**同一份数据被两边各算一遍**：状态条/体检页说"未转曲 3 个"，
+        参数条却写"2 个"。判据：同一次 docInspect 结果喂给两边，数字**必须相等**；
+        再用"加一个文字层"做**负对照**，证明两个数字真的会跟着变（不是恒等巧合）。 */
+  try {
+    const S56 = "S56 参数条字段与体检对账：未转曲数/缺字体数同源 + 负对照";
+    const rev56 = require("./review.js");
+    const sc56 = await ps.createScratchDoc({ size: 300, name: "Vellum 自检临时文档(S56对账)" });
+    if (!sc56 || !sc56.ok) {
+      rec(S56, false, "建临时文档失败：" + ((sc56 && sc56.error) || "未知"));
+    } else {
+      try {
+        await ps.activateDocument(sc56.id);
+        await ps.makeTextLayer("S56-A", 18, 30, 30);
+
+        const inspA = inspect.docInspect();
+        const stA = rev56.stripLines(inspA, { bleed: { state: "has", mm: 3 }, when: new Date() });
+        const mfA = inspect.missingFonts(inspA.snapshot);
+        const tcA = inspA.snapshot.layers.textCount;
+
+        /* 负对照：再加一个文字层 ⇒ 未转曲数必须 +1，且参数条跟着变 */
+        await ps.makeTextLayer("S56-B", 18, 30, 80);
+        const inspB = inspect.docInspect();
+        const stB = rev56.stripLines(inspB, { bleed: { state: "has", mm: 3 }, when: new Date() });
+        const tcB = inspB.snapshot.layers.textCount;
+
+        const line3A = stA.lines[2] || "";
+        const line3B = stB.lines[2] || "";
+        const sA = "未转曲文字层 " + tcA + " 个";
+        const sB = "未转曲文字层 " + tcB + " 个";
+
+        const checks = [
+          ["① 参数条与快照的未转曲数一致（" + tcA + "）", stA.textCount === tcA],
+          ["② 参数条与 missingFonts 的缺字体数一致（" +
+            (mfA.known ? mfA.missing.length : "清单读不到") + "）",
+            stA.missing === (mfA.known ? mfA.missing.length : null)],
+          ["③ 第 3 行确实印着「未转曲文字层 N 个」", line3A.indexOf(sA) >= 0],
+          ["④ 第 3 行确实印着「缺失字体」", line3A.indexOf("缺失字体") >= 0],
+          /* ⑤ 依据改到**独立的右下块**（v0.9.0）⇒ 判据跟着挪到 `basis`，不再看第 3 行 */
+          ["⑤ 依据块带规范名 + 版本 + 生效日（已从第 3 行摘出，成为独立右对齐块）",
+            String(stA.basis || "").indexOf("依据") === 0 &&
+            String(stA.basis).indexOf("v" + inspA.spec.specVersion) >= 0 &&
+            String(stA.basis).indexOf(inspA.spec.effectiveFrom) >= 0 &&
+            line3A.indexOf("依据") < 0],
+          ["⑥ 负对照：加一个文字层后未转曲数 +1 且两边仍一致",
+            tcB === tcA + 1 && stB.textCount === tcB && line3B.indexOf(sB) >= 0]
+        ];
+        const bad = [];
+        for (const c of checks) if (!c[1]) bad.push(c[0]);
+
+        rec(
+          S56,
+          bad.length === 0,
+          "加层前：" + JSON.stringify(line3A) + "\n" +
+            "        加层后：" + JSON.stringify(line3B) + "\n" +
+            "        未转曲 " + tcA + " → " + tcB + "　缺字体=" +
+            (mfA.known ? mfA.missing.length : "清单读不到") +
+            "　规范 v" + inspA.spec.specVersion + "（生效 " + inspA.spec.effectiveFrom + "）" +
+            (bad.length ? "\n        ⚠️ 未成立：" + bad.join(" / ")
+                        : "\n        ⇒ 参数条与体检页同源同数、且负对照证明数字真的会变")
+        );
+      } finally {
+        await ps.closeDocument(sc56.id);
+        await ctx.shell.showHome();
+      }
+    }
+  } catch (e) {
+    rec("S56 参数条字段与体检对账：未转曲数/缺字体数同源 + 负对照", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S57: 导出落点 · 持久令牌往返（v0.8.0 / docs/50 §六 ③） ----------
+     ⚠️ 「选一次就记住」这条**没法脚本化点系统目录选择器**（本项目早有结论：
+        系统弹窗自动化点不了）。但**令牌机制本身可以验** —— 用插件自己的
+        PluginData 目录当替身（它有 Folder 句柄、而且可写），走一遍
+        createPersistentToken → getEntryForPersistentToken → 在里面建文件 → 读回。
+     ⚠️ 没验到的部分**如实标注**：`getFolder()` 那个系统弹窗只能人点一次。 */
+  try {
+    const S57 = "S57 导出落点：持久令牌往返（换回目录→建文件→读回）+ picker API 存在性";
+    const lfs57 = require("uxp").storage.localFileSystem;
+    const hasPicker = !!(lfs57 && typeof lfs57.getFolder === "function");
+    const hasTok = !!(lfs57 && typeof lfs57.createPersistentToken === "function");
+    const hasBack = !!(lfs57 && typeof lfs57.getEntryForPersistentToken === "function");
+
+    let roundLine = "（没跑）";
+    let roundOk = false;
+    if (hasTok && hasBack) {
+      try {
+        const df = await lfs57.getDataFolder();
+        const tok = await lfs57.createPersistentToken(df);
+        const back = await lfs57.getEntryForPersistentToken(tok);
+        const fmts = require("uxp").storage.formats || {};
+        let wrote = null;
+        let readBack = null;
+        if (back && typeof back.createFile === "function") {
+          const f = await back.createFile("selfcheck-token-probe.txt", { overwrite: true });
+          wrote = String(f.name || "");
+          if (fmts.utf8) {
+            await f.write("vellum-token-ok", { format: fmts.utf8 });
+            readBack = String(await f.read({ format: fmts.utf8 }));
+          }
+        }
+        roundOk = !!(back && wrote && readBack === "vellum-token-ok");
+        roundLine = "目录=" + (df && df.name) + "　令牌=" + (tok ? "拿到" : "null") +
+          "　换回=" + (back ? ("有（" + back.name + "）") : "null") +
+          "　建文件=" + wrote + "　读回=" + JSON.stringify(readBack);
+      } catch (e) {
+        roundLine = "往返抛异常：" + ((e && e.message) || e);
+      }
+    } else {
+      roundLine = "本机 UXP 缺少 token API：createPersistentToken=" + hasTok +
+        "、getEntryForPersistentToken=" + hasBack;
+    }
+
+    /* ---- ④ 工具页全链路：**预置目录**绕开系统弹窗，把面板那条路整条跑通 ----
+       （文件名怎么起、createFile、exportReview、状态条、undo 刷新都在里面）
+       ⇒ 这样「唯一没验的只剩系统目录弹窗本身」这句话才站得住。 */
+    let uiLine57 = "（没跑）";
+    let uiOk57 = false;
+    try {
+      const revTool57 = require("../tools/review.js");
+      const sc57 = await ps.createScratchDoc({
+        size: 900, height: 700, resolution: 300, name: "Vellum 自检临时文档(S57工具链)"
+      });
+      if (!sc57 || !sc57.ok) {
+        uiLine57 = "建临时文档失败：" + ((sc57 && sc57.error) || "未知");
+      } else {
+        try {
+          await ps.activateDocument(sc57.id);
+          const df2 = await lfs57.getDataFolder();
+          await ctx.shell.showTool("review", "selfcheck");
+          await waitFor(function () {
+            const v = document.getElementById("vt-tool-view");
+            return !!(v && v.querySelector(".rv"));
+          }, 6000);
+
+          const D = revTool57.__diag;
+          D.S.folder = df2;                       /* ← 预置目录 = 绕开系统弹窗 */
+          D.S.folderName = df2.name;
+          D.S.folderFrom = "selfcheck";
+          D.S.last = null;
+          D.S.docId = sc57.id;                    /* 已经"问过出血"了 ⇒ 不再弹浮层 */
+          D.S.choice = { state: "has", mm: 3 };
+
+          const before57 = ps.readDocGeom();
+          await D.doExport("review");
+          const got = D.S.last;
+          const after57 = ps.readDocGeom();
+
+          uiOk57 = !!(got && got.ok && typeof got.fileBytes === "number" && got.fileBytes > 0 &&
+            got.restored && got.restored.w && got.restored.h &&
+            got.restored.layers && got.restored.bg &&
+            after57.h === before57.h && after57.layers === before57.layers);
+          uiLine57 = "工具页导出：ok=" + (got && got.ok) +
+            "　文件=" + (got && got.file ? got.file.name : "?") +
+            "　bytes=" + (got && got.fileBytes) +
+            "　还原=" + JSON.stringify((got && got.restored) || null) +
+            "　复读：画布 " + before57.w + "×" + before57.h + "→" + after57.w + "×" + after57.h +
+            "、图层 " + before57.layers + "→" + after57.layers;
+        } finally {
+          await ps.closeDocument(sc57.id);
+          await ctx.shell.showHome();
+        }
+      }
+    } catch (e) {
+      uiLine57 = "工具页全链路抛异常：" + ((e && e.message) || e);
+    }
+
+    const checks57 = [
+      ["① getFolder（系统目录选择器）API 存在", hasPicker],
+      ["② createPersistentToken / getEntryForPersistentToken 都在", hasTok && hasBack],
+      ["③ ★令牌往返可用（换回的目录能建文件、并读回同一内容）", roundOk],
+      ["④ ★工具页面板那条路整条跑通（预置目录 ⇒ 绕开弹窗）+ 导出后稿子还原",
+        uiOk57]
+    ];
+    const bad57 = [];
+    for (const c of checks57) if (!c[1]) bad57.push(c[0]);
+
+    rec(
+      S57,
+      bad57.length === 0,
+      "picker=" + hasPicker + "　token API=" + (hasTok && hasBack) + "\n        " + roundLine +
+        "\n        " + uiLine57 +
+        (bad57.length
+          ? "\n        ⚠️ 未成立：" + bad57.join(" / ")
+          : "\n        ⇒ 「选一次就记住」的机制成立；⚠️ 唯一没验的是那个系统目录弹窗本身" +
+            "（只能人点一次，本项目早认定不可脚本化）")
+    );
+  } catch (e) {
+    rec("S57 导出落点：持久令牌往返（换回目录→建文件→读回）+ picker API 存在性", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S58: 参数条主题判定（v0.9.0 / docs/51 §3.1） ----------
+     ⚠️ **两套主题都要真机跑一遍并留下样张** —— 只跑一套的话，"黑底浅字"那条分支
+        永远没被跑过，等于没验。
+     ⚠️ 判据必须**互相区分**：两张稿的底部一浅一深，判出来的主题也必须**相反**（负对照）。
+     ⚠️ 临时稿跑完全关，绝不动用户的稿。 */
+  let s58Runs = {};
+  try {
+    const S58 = "S58 参数条主题：浅底稿→深条 / 深底稿→浅条（两套都真机导出 + 样张）";
+    const lfs58 = require("uxp").storage.localFileSystem;
+    const df58 = await lfs58.getDataFolder();
+
+    /** 一套流程：建稿（可先整层填色）→ 导出审核版 → 留下读数 */
+    const run58 = async function (label, fillHex, fname) {
+      const sc = await ps.createScratchDoc({
+        size: 1200, height: 900, resolution: 300,
+        name: "Vellum 自检临时文档(S58-" + label + ")"
+      });
+      if (!sc || !sc.ok) return { error: "建临时文档失败：" + ((sc && sc.error) || "未知") };
+      try {
+        await ps.activateDocument(sc.id);
+        if (fillHex) {
+          const fr = await ps.fillLayer(fillHex, { verify: "pixel" });
+          if (!fr || !fr.ok) {
+            return { error: "整层填色失败（" + fillHex + "）：" + ((fr && fr.error) || "未知") };
+          }
+        }
+        /* 上方放一个文字层（让"未转曲"不为 0）；它在 y=40，**不影响底部取样带** */
+        await ps.makeTextLayer("S58 标题", 18, 40, 40);
+
+        const entry = await df58.createFile(fname, { overwrite: true });
+        const r = await ps.exportReview({
+          entry: entry, kind: "review", bleed: { state: "has", mm: 3 }, when: new Date()
+        });
+        let magic = "未读到";
+        try {
+          const buf = await entry.read({ format: require("uxp").storage.formats.binary });
+          const u8 = new Uint8Array(buf);
+          magic = (u8[0] === 0x89 && u8[1] === 0x50) ? "PNG" : "非PNG";
+        } catch (e) {
+          magic = "读失败";
+        }
+        return { r: r, magic: magic, file: fname };
+      } finally {
+        await ps.closeDocument(sc.id);
+        await ctx.shell.showHome();
+      }
+    };
+
+    s58Runs.lightBg = await run58("浅底", null, "selfcheck-strip-lightbg.png");
+    s58Runs.darkBg = await run58("深底", "#1E1E22", "selfcheck-strip-darkbg.png");
+
+    const A = s58Runs.lightBg && s58Runs.lightBg.r;
+    const B = s58Runs.darkBg && s58Runs.darkBg.r;
+    const ta = A && A.theme;
+    const tb = B && B.theme;
+
+    const checks58 = [
+      ["① 浅底稿 ⇒ 判成**深条**（黑底浅字）", !!(ta && ta.theme.id === "dark" && ta.from === "sampled")],
+      ["② 深底稿 ⇒ 判成**浅条**（白底深字）", !!(tb && tb.theme.id === "light" && tb.from === "sampled")],
+      ["③ ★负对照：两套底色判出来的主题**相反**", !!(ta && tb && ta.theme.id !== tb.theme.id)],
+      /* ★ v0.9.5：这两条现在是**像素判据**（原来只验"背景色设置成功"，抓不到底色没填上）。 */
+      ["④ ★深条那次的参数条**像素**命中了深条底色 #111111",
+        !!(A && A.bgRect && A.bgRect.ok && A.bgPixelsHit === true)],
+      ["⑤ ★浅条那次的参数条**像素**命中了浅条底色 #FFFFFF",
+        !!(B && B.bgRect && B.bgRect.ok && B.bgPixelsHit === true)],
+      ["⑥ 两次导出都 ok、都是 PNG、字节 > 0",
+        !!(A && A.ok && A.fileBytes > 0 && s58Runs.lightBg.magic === "PNG") &&
+        !!(B && B.ok && B.fileBytes > 0 && s58Runs.darkBg.magic === "PNG")],
+      ["⑦ 两次都把稿子一步还原了",
+        !!(A && A.restored && A.restored.w && A.restored.h && A.restored.layers && A.restored.bg) &&
+        !!(B && B.restored && B.restored.w && B.restored.h && B.restored.layers && B.restored.bg)]
+    ];
+    const bad58 = [];
+    for (const c of checks58) if (!c[1]) bad58.push(c[0]);
+
+    rec(
+      S58,
+      bad58.length === 0,
+      "浅底稿 → 主题=" + (ta ? ta.theme.id : "?") + "（" + (ta ? ta.note : "无读数") + "）" +
+        "　底色像素=" + ((A && A.bgPixels) ? A.bgPixels.hex : "?") +
+        (A && A.bgPixelsHit ? " ✔" : " ✗") + "\n" +
+        "        深底稿 → 主题=" + (tb ? tb.theme.id : "?") + "（" + (tb ? tb.note : "无读数") + "）" +
+        "　底色像素=" + ((B && B.bgPixels) ? B.bgPixels.hex : "?") +
+        (B && B.bgPixelsHit ? " ✔" : " ✗") + "\n" +
+        "        样张：selfcheck-strip-lightbg.png（" + (A ? A.fileBytes : "?") + " B）／" +
+        "selfcheck-strip-darkbg.png（" + (B ? B.fileBytes : "?") + " B）" +
+        (bad58.length ? "\n        ⚠️ 未成立：" + bad58.join(" / ")
+                      : "\n        ⇒ 主题两套都真机跑通、且负对照成立（底部深浅 → 条的黑白相反）")
+    );
+  } catch (e) {
+    rec("S58 参数条主题：浅底稿→深条 / 深底稿→浅条（两套都真机导出 + 样张）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S59: 右下「依据」块右对齐 + 前置 logo（v0.9.0 / docs/51 §3.3） ----------
+     ⚠️ 右对齐**不许靠段落对齐枚举**（v0.8.0 已实测会被排到画布外）⇒ 本项要验的是
+        "建层 → 读回 bounds → 平移 → 再读回"这条路的**最终外框**真的贴在留白线上。
+     ⚠️ 顺带验顺序：正文盒 < logo < 依据文字，三者**不重叠**。 */
+  try {
+    const S59 = "S59 依据块右对齐 + 前置 logo：读回三个外框，验「贴右留白线 / 不压正文 / 比例对」";
+
+    const one59 = function (r, label) {
+      if (!r || !r.metrics) return { ok: false, why: label + "：没有读数" };
+      const m = r.metrics;
+      const rightLine = m.imgW - m.padXPx;
+      const b = r.basisReadback;
+      const lg = r.logoReadback;
+      if (!b || b.error) return { ok: false, why: label + "：没读到依据块外框（" + JSON.stringify(b) + "）" };
+      if (!lg || lg.error) return { ok: false, why: label + "：没读到 logo 外框（" + JSON.stringify(lg) + "）" };
+
+      const bodyR = m.text.right;
+      const lgW = lg.right - lg.left;
+      const lgH = lg.bottom - lg.top;
+      const okRight = Math.abs(b.right - rightLine) <= 3;
+      const okOrder = lg.left >= bodyR - 1 && lg.right <= b.left + 1;
+      const okAspect = lgH > 0 && Math.abs(lgW / lgH - 256 / 164) < 0.08;
+      const okInside = b.top >= m.strip.top - 1 && b.bottom <= m.strip.bottom + 1 &&
+        lg.top >= m.strip.top - 1 && lg.bottom <= m.strip.bottom + 1;
+
+      /* ★ v0.9.3 两条**新版式不变量**（用户报「文字靠上 / logo 偏了」的直接回归）：
+         ① 正文墨迹在条里**上下留白相等**（容差 2px）；
+         ② logo 右边界 = 依据文字左边界 − gap（容差 2px）—— 不允许「多出一个 logo 宽」。 */
+      const tink = r.textInk ? (r.textInk.after || r.textInk.before) : null;
+      const padTop = tink ? tink.top - m.strip.top : null;
+      const padBot = tink ? m.strip.bottom - tink.bottom : null;
+      const okCenter = padTop !== null && padBot !== null && Math.abs(padTop - padBot) <= 2;
+      const gapWant = m.basis ? m.basis.gap : 0;
+      const gapReal = b.left - lg.right;
+      const okLogoTight = gapReal >= -1 && Math.abs(gapReal - gapWant) <= 2;
+      /* ★ logo 应与依据文字**同中心线**（真机量过：只对齐 x 会偏下 7.5px） */
+      const cyGap = Math.abs((lg.top + lg.bottom) / 2 - (b.top + b.bottom) / 2);
+      const okLogoMid = cyGap <= 2;
+
+      return {
+        ok: okRight && okOrder && okAspect && okInside && okCenter && okLogoTight && okLogoMid,
+        why: label + "：依据右=" + Math.round(b.right) + "（须≈" + Math.round(rightLine) + "）" +
+          "　logo x[" + Math.round(lg.left) + ".." + Math.round(lg.right) + "] y[" +
+          Math.round(lg.top) + ".." + Math.round(lg.bottom) + "]　正文盒右=" + Math.round(bodyR) +
+          "　logo 宽高比=" + (lgH > 0 ? (lgW / lgH).toFixed(3) : "?") +
+          "　logo与依据间隙=" + Math.round(gapReal) + "（须≈" + Math.round(gapWant) + "）" +
+          "　logo与文字同心差=" + Math.round(cyGap) + "px" +
+          "　正文上下留白=" +
+          (padTop === null ? "?" : Math.round(padTop) + "/" + Math.round(padBot)) +
+          (okRight ? "" : "　✗没贴右留白线") +
+          (okOrder ? "" : "　✗顺序不对/压正文") +
+          (okAspect ? "" : "　✗宽高比走形") +
+          (okInside ? "" : "　✗跑出参数条外") +
+          (okCenter ? "" : "　✗正文没垂直居中") +
+          (okLogoTight ? "" : "　✗logo 没贴着依据文字") +
+          (okLogoMid ? "" : "　✗logo 与依据文字不同心（差 " + Math.round(cyGap) + "px）")
+      };
+    };
+
+    const r1 = one59(s58Runs.lightBg && s58Runs.lightBg.r, "深条");
+    const r2 = one59(s58Runs.darkBg && s58Runs.darkBg.r, "浅条");
+
+    rec(
+      S59,
+      r1.ok && r2.ok,
+      r1.why + "\n        " + r2.why +
+        ((r1.ok && r2.ok)
+          ? "\n        ⇒ 依据块右端贴着留白线、logo 紧贴着依据文字、正文在条里**上下居中**、比例保持（两套主题都成立）"
+          : "")
+    );
+  } catch (e) {
+    rec("S59 依据块右对齐 + 前置 logo：读回三个外框，验「贴右留白线 / 不压正文 / 比例对」", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S60: 大稿缩放 —— 先探能力，再验机制（v0.9.0 / docs/51 §四） ----------
+     ⚠️ 官方样例与本仓库都**没有** `imageSize` 描述符，`Document.resizeImage` 在不在
+        也只能实测 ⇒ 本项第一步就是**能力探针**（存在性 + 真缩一个小稿）。
+        **不猜描述符**（项目铁律：ActionDescriptor 不许猜）。
+     ⚠️ 小稿真缩（800×600 → 400×300）只证明"这条路能用"，不证明"超大稿不卡" ——
+        后者本轮**没有结论**，如实标注。 */
+  try {
+    const S60 = "S60 大稿缩放：Document.resizeImage 能力探针 + 小稿真缩验证（不猜描述符）";
+    const sc60 = await ps.createScratchDoc({
+      size: 800, height: 600, resolution: 72, name: "Vellum 自检临时文档(S60缩放)"
+    });
+    if (!sc60 || !sc60.ok) {
+      rec(S60, false, "建临时文档失败：" + ((sc60 && sc60.error) || "未知"));
+    } else {
+      try {
+        await ps.activateDocument(sc60.id);
+        let hasApi = false;
+        try { hasApi = typeof ps.app.activeDocument.resizeImage === "function"; } catch (e) { hasApi = false; }
+
+        let after = null;
+        let err60 = null;
+        if (hasApi) {
+          try {
+            await ps.runModal(async () => {
+              await ps.app.activeDocument.resizeImage(400, 300);
+            }, "Vellum 自检：S60 缩放");
+            const g = ps.readDocGeom();
+            after = { w: g.w, h: g.h };
+          } catch (e) {
+            err60 = (e && e.message) || String(e);
+          }
+        }
+
+        const ok60 = hasApi && after && after.w === 400 && after.h === 300;
+
+        /* ---- 端到端：**超过阈值的稿，导出后真的被缩了**（路线 D 的正面证据）----
+           ⚠️ 用 1200×4200（长边 4200 > 4000）而不是用户举例的 4724×10630 ——
+              后者是 5000 万像素，跑一次要十几秒且很吃内存，不适合放进自检。
+              这里验的是**机制**：超阈值 ⇒ 按计划缩 ⇒ 导出的是缩后的尺寸。 */
+        let e2e = null;
+        const sc60b = await ps.createScratchDoc({
+          size: 1200, height: 4200, resolution: 300,
+          name: "Vellum 自检临时文档(S60超阈值稿)"
+        });
+        if (sc60b && sc60b.ok) {
+          try {
+            await ps.activateDocument(sc60b.id);
+            const lfs60 = require("uxp").storage.localFileSystem;
+            const df60 = await lfs60.getDataFolder();
+            const entryB = await df60.createFile("selfcheck-scaled.png", { overwrite: true });
+            const rB = await ps.exportReview({
+              entry: entryB, kind: "review", bleed: { state: "none" }, when: new Date()
+            });
+            let mW = null, mH = null, mErr = null;
+            try {
+              const buf = await entryB.read({ format: require("uxp").storage.formats.binary });
+              const u8 = new Uint8Array(buf);
+              /* PNG 的 IHDR：宽高各 4 字节大端，从第 16 字节起 */
+              mW = (u8[16] << 24) | (u8[17] << 16) | (u8[18] << 8) | u8[19];
+              mH = (u8[20] << 24) | (u8[21] << 16) | (u8[22] << 8) | u8[23];
+            } catch (e) {
+              mErr = (e && e.message) || String(e);
+            }
+            e2e = {
+              plan: rB.scale, applied: rB.scaleApplied,
+              ok: rB.ok, fileBytes: rB.fileBytes, restored: rB.restored,
+              line3: rB.lines ? rB.lines.lines[2] : "",
+              pngW: mW, pngH: mH, pngErr: mErr
+            };
+          } finally {
+            await ps.closeDocument(sc60b.id);
+            await ctx.shell.showHome();
+          }
+        } else {
+          e2e = { error: "建超阈值稿失败：" + ((sc60b && sc60b.error) || "未知") };
+        }
+
+        const e2eOk = !!(e2e && e2e.applied && e2e.applied.applied === true &&
+          e2e.plan && e2e.plan.applied === true &&
+          Math.abs(e2e.applied.w - 1143) <= 2 && e2e.applied.h === 4000 &&
+          e2e.pngW !== null && Math.abs(e2e.pngW - 1143) <= 2 && e2e.pngH === 4000 &&
+          e2e.restored && e2e.restored.w && e2e.restored.h &&
+          e2e.restored.layers && e2e.restored.bg &&
+          String(e2e.line3).indexOf("已缩至") >= 0);
+
+        rec(
+          S60,
+          ok60 && e2eOk,
+          "① Document.resizeImage 存在=" + hasApi +
+            "　小稿真缩 800×600 → " + (after ? after.w + "×" + after.h : "（没跑）") +
+            (err60 ? "　错误=" + err60 : "") + "\n" +
+            "        ② 端到端（1200×4200 @300）：计划=" + (e2e && e2e.plan ? Math.round(e2e.plan.pct) + "%" : "?") +
+            "　实际缩到 " + (e2e && e2e.applied ? e2e.applied.w + "×" + e2e.applied.h : "?") +
+            "　**PNG 文件头读回的尺寸**=" +
+            (e2e ? (e2e.pngW === null ? "读不到(" + e2e.pngErr + ")" : e2e.pngW + "×" + e2e.pngH) : "?") +
+            "　bytes=" + (e2e ? e2e.fileBytes : "?") +
+            "\n        ③ 参数条第 3 行=" + JSON.stringify(e2e ? e2e.line3 : null) +
+            "\n        ⚠️ 未结论：**超大稿（如 4724×10630 ≈ 5000 万像素）缩起来会不会很慢/很吃内存**，本轮没测" +
+            "\n        ⇒ " + ((ok60 && e2eOk)
+              ? "路线 D 成立：超长边上限 ⇒ 自动等比缩，**且导出文件真的是缩后的尺寸**（PNG 头为准），"
+                + "参数条上也印了实际比例"
+              : "未全部成立，见上面读数")
+        );
+      } finally {
+        await ps.closeDocument(sc60.id);
+        await ctx.shell.showHome();
+      }
+    }
+  } catch (e) {
+    rec("S60 大稿缩放：Document.resizeImage 能力探针 + 小稿真缩验证（不猜描述符）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S61: 导出落点**真相**（v0.9.1，2026-10-17 用户真机报错复现）----------
+     🔴 起因：用户在自己的稿
+        `2海南代理展架修改后84×184cm（3mm出血）.jpg`（4961×10866 @150dpi · **CMYK**）上
+        点「导出审核版」，面板报「导出文件读回是空/读不到（bytes=null）」，
+        而「还原自证」三项全绿。外部取证：**目标目录里连一个字节都没有**
+        （新建文件夹 完全为空、全盘也搜不到那个文件名）⇒ 流程没抛错、却什么都没写出来。
+     ⚠️ **S57 只验了 `getDataFolder()` 那个替身目录**；用户真正用的
+        **选择器返回的目录**从没被验过 —— 这一项就是来补这个洞的。
+     做法：三种组合都打**同一个用户目录**，把变量隔离
+        · 小稿 RGB  → kind=final（纯 saveAs）—— 落点基本盘
+        · 大稿 RGB  → kind=review（完整流程）—— 隔离「尺寸」
+        · 大稿 CMYK → kind=review（完整流程）—— 隔离「色彩模式」（= 用户的真实场景）
+     ⚠️ 探针文件**故意留着不删**，好在外部核对"盘上到底有没有"；前缀统一 `vt-s61-`。 */
+  try {
+    const S61 = "S61 导出落点真相：用户记下来的目录能否真写进去（S57 只验了 PluginData 替身）";
+    const uxp61 = require("uxp");
+    const ls61 = uxp61.storage && uxp61.storage.localFileSystem;
+    const fmts61 = (uxp61.storage && uxp61.storage.formats) || {};
+
+    /* ① 用**用户记下来的令牌**换回那个目录 */
+    let uf = null;
+    let tokLine = "（没跑：UXP 没有令牌 API）";
+    if (ls61 && typeof ls61.getEntryForPersistentToken === "function") {
+      try {
+        const st61 = await store.readJson("review.json", {});
+        const tok61 = (st61 && st61.folderToken) || "";
+        if (!tok61) {
+          tokLine = "review.json 里没有 folderToken（这台机器还没人选过导出目录）";
+        } else {
+          uf = await ls61.getEntryForPersistentToken(tok61);
+          let n61 = "列举失败";
+          try {
+            const es61 = uf.getEntries ? await uf.getEntries() : null;
+            n61 = (es61 ? es61.length : 0) + " 个";
+          } catch (e) { n61 = "列举抛异常：" + ((e && e.message) || e); }
+          tokLine = "目录=「" + (uf && uf.name) + "」　nativePath=" +
+            JSON.stringify(uf ? uf.nativePath : null) + "　里面已有 " + n61;
+        }
+      } catch (e) {
+        tokLine = "令牌解析抛异常：" + ((e && e.message) || e);
+      }
+    }
+
+    /* ② UXP 侧纯写（**不经 PS 的 saveAs**）—— 证明"这个目录本身"写不写得进去 */
+    let uxpLine = "（没跑）";
+    let uxpWriteOk = false;
+    if (uf) {
+      try {
+        const pf61 = await uf.createFile("vt-s61-uxpwrite-" + Date.now() + ".txt", { overwrite: true });
+        await pf61.write("s61-uxp-write-ok", { format: fmts61.utf8 });
+        const back61 = String(await pf61.read({ format: fmts61.utf8 }));
+        uxpWriteOk = back61 === "s61-uxp-write-ok";
+        uxpLine = "建文件=" + (pf61 && pf61.name) + "　读回=" + JSON.stringify(back61) +
+          "　nativePath=" + JSON.stringify(pf61 ? pf61.nativePath : null);
+      } catch (e) {
+        uxpLine = "UXP 写抛异常：" + ((e && e.message) || e);
+      }
+    }
+
+    /* ③④⑤ 三种组合 → 同一个用户目录 */
+    const run61 = async function (label, size, height, res, mode, kind) {
+      const r = { label: label, doc: "?", mp: "?", bytes: null, ok: false, ms: null,
+        steps: "", err: "", path: "", entryPath: "" };
+      let sc61 = null;
+      try {
+        sc61 = await ps.createScratchDoc({
+          size: size, height: height, resolution: res, mode: mode,
+          name: "Vellum 自检临时文档(S61-" + label + ")"
+        });
+        if (!sc61 || !sc61.ok) { r.err = "建稿失败：" + ((sc61 && sc61.error) || "未知"); return r; }
+        await ps.activateDocument(sc61.id);
+        const g61 = ps.readDocGeom();
+        r.doc = g61.w + "×" + g61.h + " @" + g61.ppi + "dpi · " + mode + " · " + g61.layers + " 层";
+        r.mp = (g61.w * g61.h / 1e6).toFixed(1) + "M 像素";
+
+        const fname61 = "vt-s61-" + label + "-" + Date.now() + ".png";
+        const entry61 = await uf.createFile(fname61, { overwrite: true });
+        /* ★ 关键读数：`createFile` 出来的 Entry **有没有 nativePath**。
+           没有的话，PS 的 saveAs 拿不到真实落点 —— 那就会"不报错、也不写"。 */
+        r.entryPath = String((entry61 && entry61.nativePath) || "");
+
+        const t61 = Date.now();
+        const got61 = await ps.exportReview({
+          entry: entry61, folder: uf, kind: kind, bleed: { state: "has", mm: 3 }
+        });
+        r.ms = Date.now() - t61;
+        r.bytes = got61.fileBytes;
+        r.ok = !!(got61.ok && typeof got61.fileBytes === "number" && got61.fileBytes > 0);
+        r.steps = (got61.steps || []).join(" | ");
+        r.err = got61.error || "";
+        r.path = (got61.file && got61.file.path) || "";
+      } catch (e) {
+        r.err = "抛异常：" + ((e && e.message) || e);
+      } finally {
+        if (sc61 && sc61.ok) { try { await ps.closeDocument(sc61.id); } catch (e) { /* 忽略 */ } }
+      }
+      return r;
+    };
+
+    let rS = null;
+    let rBigRGB = null;
+    let rBigCMYK = null;
+    if (uf) {
+      try {
+        rS = await run61("小稿RGB", 800, 600, 300, "RGB", "final");
+        rBigRGB = await run61("大稿RGB", 4961, 10866, 150, "RGB", "review");
+        rBigCMYK = await run61("大稿CMYK", 4961, 10866, 150, "CMYK", "review");
+      } catch (e) {
+        /* 单个组合抛异常不该带走整项 */
+      }
+    }
+
+    const line61 = function (r) {
+      if (!r) return "（没跑）";
+      return "· " + r.label + "｜" + r.doc + "｜" + r.mp + "｜" +
+        "entry.nativePath=" + JSON.stringify(r.entryPath) + "｜" +
+        (r.bytes === null ? "bytes=null" : "bytes=" + r.bytes) + "｜耗 " + r.ms + "ms｜" +
+        (r.ok ? "✅ 写出来了" : "❌ " + (r.err || "没写出来")) +
+        (r.steps ? "\n            步骤=" + r.steps : "");
+    };
+
+    const checks61 = [
+      ["① ★用用户记下来的令牌换回了那个目录（且能列举内容）", !!uf],
+      ["② ★UXP 侧纯写成功（这个目录本身可写）", uxpWriteOk],
+      ["③ ★小稿走 saveAs 打这个目录 → 真写出字节", !!(rS && rS.ok)],
+      ["④ 大稿 RGB 完整流程（隔离「尺寸」）", !!(rBigRGB && rBigRGB.ok)],
+      /* ★ v0.9.2（备路）：CMYK **现在也能导出了** —— 副本上先 `changeMode(RGB)`。
+         判据 = "真的写出来了" **且** "步骤里确实转过模式"（否则又是在骗我们）。 */
+      ["⑤ ★大稿 CMYK：**也能导出**（副本上先 changeMode(RGB)，PNG 才存得出来）",
+        !!(rBigCMYK && rBigCMYK.ok && rBigCMYK.bytes > 0 &&
+           String(rBigCMYK.steps || "").indexOf("changeMode → RGB") >= 0)]
+    ];
+    const bad61 = [];
+    for (const c of checks61) if (!c[1]) bad61.push(c[0]);
+
+    rec(
+      S61,
+      bad61.length === 0,
+      "① " + tokLine +
+        "\n        ② " + uxpLine +
+        "\n        ③ " + line61(rS) +
+        "\n        ④ " + line61(rBigRGB) +
+        "\n        ⑤ " + line61(rBigCMYK) +
+        "\n        ⚠️ 探针文件**没删**（前缀 vt-s61-），好让外部核对盘上到底有没有" +
+        (bad61.length ? "\n        ⚠️ 未成立：" + bad61.join(" / ") : "")
+    );
+  } catch (e) {
+    rec("S61 导出落点真相：用户记下来的目录能否真写进去（S57 只验了 PluginData 替身）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S62: 文件名之谜（v0.9.1，紧接着 S61 查）----------
+     S61 已经把「目录可写 / CMYK / 5400 万像素 / 完整流程」**全部证成立**
+     （三组都真写出了 PNG，外部核对文件头也是真 PNG），
+     而用户那次真实导出**一个字节都没落盘**。剩下两个变量：
+       ① **文件名**：用户那张稿的名字带 `×`(U+00D7) 与全角括号 `（）`；
+          而 S61 三次用的都是纯 ASCII 名 —— 这一项先打 ①。
+       ② 稿子本身：用户是**从磁盘打开的 JPEG**，不是自建库稿（若 ① 不成立再打它）。
+     做法：同一张库稿、同一个目录，**只换文件名**，逐字拆开对比。 */
+  try {
+    const S62 = "S62 文件名之谜：同一张库稿 + 同一目录，只换文件名（拆 × / 全角括号 / 长度）";
+    const uxp62 = require("uxp");
+    const ls62 = uxp62.storage && uxp62.storage.localFileSystem;
+
+    let uf62 = null;
+    try {
+      const st62 = await store.readJson("review.json", {});
+      const tok62 = (st62 && st62.folderToken) || "";
+      if (tok62 && ls62 && typeof ls62.getEntryForPersistentToken === "function") {
+        uf62 = await ls62.getEntryForPersistentToken(tok62);
+      }
+    } catch (e) { /* 忽略：下面会记成"没跑" */ }
+
+    let lines62 = "（没跑：没有可用的用户目录）";
+    let ok62 = false;
+    if (uf62) {
+      let sc62 = null;
+      try {
+        sc62 = await ps.createScratchDoc({
+          size: 4961, height: 10866, resolution: 150, mode: "RGB",
+          name: "Vellum 自检临时文档(S62文件名)"
+        });
+        if (!sc62 || !sc62.ok) {
+          lines62 = "建稿失败：" + ((sc62 && sc62.error) || "未知");
+        } else {
+          await ps.activateDocument(sc62.id);
+          const ts62 = Date.now();
+          const cases62 = [
+            ["① 用户原样（带 × 与全角括号）",
+              "2海南代理展架修改后84×184cm（3mm出血）-审核版-20261017-" + ts62 + ".png"],
+            ["② 只把 × 换成 x",
+              "2海南代理展架修改后84x184cm（3mm出血）-审核版-20261017-" + ts62 + ".png"],
+            ["③ 只把全角括号换成半角",
+              "2海南代理展架修改后84×184cm(3mm出血)-审核版-20261017-" + ts62 + ".png"],
+            ["④ 纯 ASCII 短名（对照）",
+              "vt-s62-control-" + ts62 + ".png"]
+          ];
+          const out62 = [];
+          let bad62 = 0;
+          for (const c62 of cases62) {
+            const row = { label: c62[0], name: c62[1], bytes: null, ok: false,
+              nap: "", createErr: "", err: "", steps: "" };
+            try {
+              const et62 = await uf62.createFile(c62[1], { overwrite: true });
+              row.nap = String((et62 && et62.nativePath) || "");
+              try {
+                const g62 = await ps.exportReview({
+                  entry: et62, folder: uf62, kind: "review", bleed: { state: "unknown", mm: null }
+                });
+                row.bytes = g62.fileBytes;
+                row.ok = typeof g62.fileBytes === "number" && g62.fileBytes > 0;
+                row.steps = (g62.steps || []).join(" | ");
+                row.err = g62.error || "";
+              } catch (e2) {
+                row.err = "导出抛异常：" + ((e2 && e2.message) || e2);
+              }
+            } catch (e1) {
+              row.createErr = "createFile 抛异常：" + ((e1 && e1.message) || e1);
+            }
+            if (!row.ok) bad62 += 1;
+            out62.push(row);
+          }
+          lines62 = out62.map(function (r) {
+            return "· " + r.label +
+              (r.createErr ? "　⇒ " + r.createErr : "") +
+              "\n            name=" + JSON.stringify(r.name) +
+              "\n            nativePath=" + JSON.stringify(r.nap) +
+              "　" + (r.bytes === null ? "bytes=null" : "bytes=" + r.bytes) +
+              "　" + (r.ok ? "✅ 写出来了" : "❌ " + (r.err || "没写出来"));
+          }).join("\n        ");
+          /* 判据：**只要"纯 ASCII 对照"能写、而带特殊字符的写不出** ⇒ 文件名就是根因 */
+          ok62 = (bad62 === 0);
+        }
+      } catch (e) {
+        lines62 = "抛异常：" + ((e && e.message) || e);
+      } finally {
+        if (sc62 && sc62.ok) { try { await ps.closeDocument(sc62.id); } catch (e) { /* 忽略 */ } }
+      }
+    }
+
+    rec(
+      S62,
+      ok62,
+      lines62 +
+        "\n        ⚠️ 探针文件**没删**（前缀 vt-s62- / 用户风格名），好让外部核对盘上到底有没有"
+    );
+  } catch (e) {
+    rec("S62 文件名之谜：同一张库稿 + 同一目录，只换文件名（拆 × / 全角括号 / 长度）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S63: 稿子之谜（v0.9.1，接着 S61/S62 查）----------
+     S61 证「目录可写 + CMYK + 5400 万像素 + 完整流程」全部成立；
+     S62 证「用户那个文件名原样能写进去」（69983 B）。
+     ⇒ 只剩**稿子本身**没被复现。用 MCP 读到的用户稿真实属性是：
+        4961×10866 @150 · CMYK · 8 位 · **1 层「背景」(isBackground=true)** ·
+        **从磁盘打开的 JPEG（有 path）** · saved=false（有未保存改动）。
+     这一项就把「**文件背书**（存到磁盘上、因此带 PS 的「背景」层）」这个形态造出来：
+        自建 CMYK 稿 → `saveAs.jpg(asCopy=false)` ⇒ 它**变成磁盘上的 JPEG** → 再导出审核版。
+     ⚠️ 若不成立 ⇒ 说明是"用户那张稿的某种状态"，需要把**面板那条路**的日志补全再请用户重试。 */
+  try {
+    const S63 = "S63 稿子之谜：**文件背书**的 CMYK JPEG（带「背景」层）能不能导出审核版";
+    const uxp63 = require("uxp");
+    const ls63 = uxp63.storage && uxp63.storage.localFileSystem;
+    const ph63 = require("photoshop");
+
+    let uf63 = null;
+    let df63 = null;
+    try {
+      const st63 = await store.readJson("review.json", {});
+      const tk63 = (st63 && st63.folderToken) || "";
+      if (tk63) uf63 = await ls63.getEntryForPersistentToken(tk63);
+      df63 = await ls63.getDataFolder();
+    } catch (e) { /* 忽略 */ }
+
+    let detail63 = "（没跑：拿不到目录）";
+    let ok63 = false;
+    let backing = [];
+    if (uf63 && df63) {
+      let sc63 = null;
+      try {
+        sc63 = await ps.createScratchDoc({
+          size: 4961, height: 10866, resolution: 150, mode: "RGB",
+          name: "Vellum 自检临时文档(S63文件背书)"
+        });
+        if (!sc63 || !sc63.ok) {
+          detail63 = "建稿失败：" + ((sc63 && sc63.error) || "未知");
+        } else {
+          await ps.activateDocument(sc63.id);
+
+          /* ① 存成磁盘上的 JPEG（asCopy=false ⇒ 这张稿**变成文件背书的**，
+                并出现 PS 的「背景」层 —— 正是用户那张稿的形态） */
+          let save63 = "（没跑）";
+          try {
+            const eJpg = await df63.createFile("vt-s63-" + Date.now() + ".jpg", { overwrite: true });
+            backing.push(eJpg);
+            await ps.runModal(async () => {
+              await ph63.app.activeDocument.saveAs.jpg(eJpg, {}, false);
+            }, "Vellum 自检：把自建稿存成 JPEG");
+            save63 = "jpg ok";
+          } catch (e) {
+            save63 = "jpg 失败（" + ((e && e.message) || e) + "）";
+            try {
+              const ePsd = await df63.createFile("vt-s63-" + Date.now() + ".psd", { overwrite: true });
+              backing.push(ePsd);
+              await ps.runModal(async () => {
+                await ph63.app.activeDocument.saveAs.psd(ePsd, {}, false);
+              }, "Vellum 自检：把自建稿存成 PSD");
+              save63 += " ⇒ 退用 psd 成功";
+            } catch (e2) {
+              save63 += " ⇒ psd 也失败（" + ((e2 && e2.message) || e2) + "）";
+            }
+          }
+
+          /* ② 读回这时的真实形态（要与 MCP 读到的用户稿对照） */
+          const g63 = ps.readDocGeom();
+          let form63 = "?";
+          try {
+            const d = ph63.app.activeDocument;
+            let lay = "?";
+            try { lay = (d.layers || []).map(function (l) { return l.name; }).join("/"); } catch (e) { /* 忽略 */ }
+            form63 = "name=" + JSON.stringify(String(d.name || "")) +
+              "　path=" + JSON.stringify(String(d.path || "")) +
+              "　saved=" + String(d.saved) +
+              "　层=[" + lay + "]" +
+              "　" + g63.w + "×" + g63.h + " @" + g63.ppi + "dpi";
+          } catch (e) { form63 = "读形态失败：" + ((e && e.message) || e); }
+
+          /* ③ 用**与用户完全一致**的文件名与出血状态导出 */
+          const pname63 = "2海南代理展架修改后84×184cm（3mm出血）-审核版-20261017-" + Date.now() + ".png";
+          let res63 = null;
+          let err63 = "";
+          try {
+            const ePng = await uf63.createFile(pname63, { overwrite: true });
+            res63 = await ps.exportReview({
+              entry: ePng, folder: uf63, kind: "review", bleed: { state: "unknown", mm: null }
+            });
+          } catch (e) {
+            err63 = "导出抛异常：" + ((e && e.message) || e);
+          }
+
+          const bytes63 = res63 ? res63.fileBytes : null;
+          ok63 = !!((res63 && bytes63 !== null && bytes63 > 0) && !err63);
+
+          detail63 =
+            "存盘=" + save63 +
+            "\n        ★这时的稿子=" + form63 +
+            "\n        导出：bytes=" + bytes63 +
+            "　" + (res63 && res63.error ? "error=" + res63.error : "无错") +
+            (err63 ? "　" + err63 : "") +
+            "\n        步骤=" + (res63 ? (res63.steps || []).join(" | ") : "（没跑）") +
+            "\n        告警=" + JSON.stringify(res63 ? (res63.warnings || []) : []) +
+            "\n        ⇒ " + (ok63
+              ? "文件背书的稿子**也能导出** ⇒ 不是「文件背书」这一个因素；需要补全日志再请用户复现"
+              : "★ **复现了**：文件背书的稿子导不出 ⇒ 根因在这个形态上");
+        }
+      } catch (e) {
+        detail63 = "抛异常：" + ((e && e.message) || e);
+      } finally {
+        if (sc63 && sc63.ok) { try { await ps.closeDocument(sc63.id); } catch (e) { /* 忽略 */ } }
+        for (const b of backing) { try { await b.delete(); } catch (e) { /* 忽略 */ } }
+      }
+    }
+
+    rec(
+      S63,
+      ok63,
+      detail63 +
+        "\n        ⚠️ 用来造「文件背书」的临时 jpg/psd **已删**（在 PluginData 里）"
+    );
+  } catch (e) {
+    rec("S63 稿子之谜：**文件背书**的 CMYK JPEG（带「背景」层）能不能导出审核版", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S64: 独立复核 + （可选）在**用户真稿**上复现（v0.9.1）----------
+     🔴 2026-10-17 真机事故：用户在 4961×10866 CMYK 的 JPEG 上导出审核版，
+        面板报 `bytes=null`，而 `saveAs` **没抛错**；事后查盘**目标目录里一个字节都没有**。
+        S61/S62/S63 把 12 项受控变量（目录 / 文件名 / 色彩模式 / 尺寸 / 文件背书 /
+        出血三态 / 完整流程…）**全部证成立** ⇒ 用自建稿**复现不出来**。
+     ⇒ 这一项做两件事：
+        (a) 验新加的「问目录」独立复核（`ps.fileInFolder`）**正负对照都对**
+            —— 它是这次事故"分不清写失败还是读失败"的解药；
+        (b) **只在 `userdoc.flag` 存在时**，在**用户当前那张真稿**上真跑一次导出
+            —— 这是唯一还剩的复现路径（会读一次几何、跑完核对还原自证）。
+            ⚠️ 默认**不跑**（没有 flag 就跳过），绝不擅动用户的稿。 */
+  try {
+    const S64 = "S64 独立复核（问目录）+（可选 userdoc.flag）在用户真稿上复现";
+    const uxp64 = require("uxp");
+    const ls64 = uxp64.storage && uxp64.storage.localFileSystem;
+    const ph64 = require("photoshop");
+
+    /* (a) 复核助手的正负对照 */
+    let posLine = "（没跑）";
+    let negLine = "（没跑）";
+    let helperOk = false;
+    try {
+      const df64 = await ls64.getDataFolder();
+      const nm64 = "vt-s64-check-" + Date.now() + ".txt";
+      const f64 = await df64.createFile(nm64, { overwrite: true });
+      await f64.write("s64-ok", { format: uxp64.storage.formats.utf8 });
+      const pos = await ps.fileInFolder(df64, nm64);
+      const neg = await ps.fileInFolder(df64, "vt-s64-nonexistent-" + Date.now() + ".txt");
+      posLine = "存在的文件 ⇒ found=" + pos.found + "　size=" + pos.size +
+        "（须 found=true 且 size>0）";
+      negLine = "不存在的名字 ⇒ found=" + neg.found + "（须 false）";
+      helperOk = !!(pos.found && typeof pos.size === "number" && pos.size > 0 && !neg.found);
+      try { await f64.delete(); } catch (e) { /* 忽略 */ }
+    } catch (e) {
+      posLine = "抛异常：" + ((e && e.message) || e);
+    }
+
+    /* (b) 可选：在用户真稿上跑（默认跳过） */
+    let userLine = "（跳过：没有 userdoc.flag）";
+    let userOk = true;
+    let wantUser = false;
+    try { wantUser = await data.pluginFlag("userdoc.flag"); } catch (e) { wantUser = false; }
+    if (wantUser) {
+      userOk = false;
+      let handle = null;
+      try {
+        const docs64 = ph64.app.documents;
+        const cands64 = [];
+        for (let i = 0; i < docs64.length; i++) {
+          const nm = String(docs64[i].name || "");
+          if (nm.indexOf("Vellum 自检临时文档") === 0) continue;
+          if (nm === "HelloWorld.psd") continue;
+          cands64.push(docs64[i]);
+        }
+        if (cands64.length === 1) {
+          handle = cands64[0];
+        } else {
+          const names = [];
+          for (let j = 0; j < cands64.length; j++) names.push(String(cands64[j].name || "?"));
+          userLine = "候选稿 " + cands64.length + " 个（须恰好 1 个）：" + names.join(" / ");
+        }
+      } catch (e) {
+        userLine = "列举文档失败：" + ((e && e.message) || e);
+      }
+
+      if (handle) {
+        let uf64 = null;
+        try {
+          const st64 = await store.readJson("review.json", {});
+          const tk64 = (st64 && st64.folderToken) || "";
+          if (tk64) uf64 = await ls64.getEntryForPersistentToken(tk64);
+        } catch (e) { /* 忽略 */ }
+        if (!uf64) {
+          userLine = "拿不到用户记下的导出目录（review.json 没令牌）";
+        } else {
+          try {
+            const rev64 = require("../lib/review.js");
+            await ps.activateDocument(handle.id);
+            const g0 = ps.readDocGeom();
+            const nmU = rev64.exportFileName(g0.name || "doc", "review", new Date());
+            const entU = await uf64.createFile(nmU, { overwrite: true });
+            const gotU = await ps.exportReview({
+              entry: entU, folder: uf64, kind: "review",
+              bleed: { state: "unknown", mm: null }
+            });
+            userOk = !!(gotU && gotU.ok && typeof gotU.fileBytes === "number" && gotU.fileBytes > 0);
+            userLine = "稿=" + (g0.name || "?") + "（" + g0.w + "×" + g0.h + " @" + g0.ppi + "）" +
+              "\n            文件名=" + JSON.stringify(nmU) +
+              "\n            ok=" + (gotU && gotU.ok) +
+              "　bytes=" + (gotU && gotU.fileBytes) +
+              "　fileCheck=" + JSON.stringify((gotU && gotU.fileCheck) || null) +
+              "　savedDoc=" + JSON.stringify((gotU && gotU.savedDoc) || null) +
+              "　err=" + ((gotU && gotU.error) || "-") +
+              "\n            还原自证=" + JSON.stringify((gotU && gotU.restored) || null) +
+              "\n            步骤=" + ((gotU && gotU.steps) || []).join(" | ") +
+              "\n            ⇒ " + (userOk
+                ? "备路在**真稿**上成立：CMYK 也导得出（副本上 `changeMode(RGB)`），且原稿三项自证全 true"
+                : "★ **在真稿上仍然失败** ⇒ 看上面的 steps / fileCheck / savedDoc");
+          } catch (e) {
+            userLine = "在真稿上跑抛异常：" + ((e && e.message) || e);
+          }
+        }
+      }
+    }
+
+    rec(
+      S64,
+      helperOk && userOk,
+      "(a) 独立复核助手：" +
+        "\n        · " + posLine +
+        "\n        · " + negLine +
+        "\n        (b) 用户真稿：" + userLine +
+        (wantUser ? "" : "\n        ⚠️ (b) 默认不跑：要跑就在插件目录下放一个 `userdoc.flag`")
+    );
+  } catch (e) {
+    rec("S64 独立复核（问目录）+（可选 userdoc.flag）在用户真稿上复现", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S65: 在用户真稿上**纯 saveAs 二分**（v0.9.1）----------
+     S64 已在这张稿上复现：`saveAs(asCopy)` 报成功、盘上**一个字节都没写**。
+     这一项只做**纯 saveAs**（不动画布、不写参数条、不缩放），把变量一个个拆开：
+       ① 原稿 → 用户目录 · PNG（**全新名字** ⇒ 目标一定不存在）
+       ② 原稿 → 插件自己的目录 · PNG（隔离"目标目录"）
+       ③ 原稿 → 用户目录 · JPG（隔离"PNG 这种格式"）
+     ⇒ ① 若**写得出** ⇒ 触发点在前面那几步（扩画布 / 文字层 / **resizeImage**）；
+        ① 若**写不出** ⇒ 触发点在这张稿本身（或它所在的那个目录）。
+     ⚠️ 同样只在 `userdoc.flag` 存在时跑；`asCopy=true` ⇒ **不改这张稿**。 */
+  try {
+    const S65 = "S65 在用户真稿上纯 saveAs 二分（新名字 / 两个目录 / 两种格式）";
+    let want65 = false;
+    try { want65 = await data.pluginFlag("userdoc.flag"); } catch (e) { want65 = false; }
+    let lines65 = "（跳过：没有 userdoc.flag）";
+    let ok65 = true;
+    if (want65) {
+      ok65 = false;
+      try {
+        const ph65 = require("photoshop");
+        const uxp65 = require("uxp");
+        const ls65 = uxp65.storage && uxp65.storage.localFileSystem;
+        const df65 = await ls65.getDataFolder();
+        let uf65 = null;
+        try {
+          const st65 = await store.readJson("review.json", {});
+          if (st65 && st65.folderToken) {
+            uf65 = await ls65.getEntryForPersistentToken(st65.folderToken);
+          }
+        } catch (e) { /* 忽略 */ }
+
+        let tgt65 = null;
+        const docs65 = ph65.app.documents;
+        for (let i = 0; i < docs65.length; i++) {
+          const nm = String(docs65[i].name || "");
+          if (nm.indexOf("Vellum 自检临时文档") === 0) continue;
+          if (nm === "HelloWorld.psd") continue;
+          if (!tgt65) tgt65 = docs65[i];
+        }
+        if (!tgt65) {
+          lines65 = "找不到用户稿（候选 0 个）";
+        } else {
+          await ps.activateDocument(tgt65.id);
+          const ts65 = Date.now();
+          const runs65 = [
+            ["① 原稿 → 用户目录 · PNG", uf65, "png", "vt-s65-a-" + ts65 + ".png"],
+            ["② 原稿 → 插件目录 · PNG", df65, "png", "vt-s65-b-" + ts65 + ".png"],
+            ["③ 原稿 → 用户目录 · JPG", uf65, "jpg", "vt-s65-c-" + ts65 + ".jpg"]
+          ];
+          const out65 = [];
+          for (const r65 of runs65) {
+            const row = { label: r65[0], size: null, nap: "", err: "" };
+            try {
+              if (!r65[1]) { row.err = "拿不到目录"; out65.push(row); continue; }
+              const e65 = await r65[1].createFile(r65[3], { overwrite: true });
+              row.nap = String(e65.nativePath || "");
+              const saver = ph65.app.activeDocument.saveAs;
+              await ps.runModal(async () => {
+                await saver[r65[2]](e65, {}, true);
+              }, "Vellum 自检：纯 saveAs 二分");
+              const chk65 = await ps.fileInFolder(r65[1], r65[3]);
+              row.size = chk65.size;
+              row.err = chk65.error || "";
+            } catch (e) {
+              row.err = "抛异常：" + ((e && e.message) || e);
+            }
+            out65.push(row);
+          }
+          lines65 = "稿=" + String(tgt65.name || "?") +
+            "\n        " + out65.map(function (x) {
+              return x.label + " ⇒ " +
+                (x.size === null ? "size=null" : "size=" + x.size) +
+                (x.size > 0 ? " ✅" : " ❌") +
+                (x.err ? "（" + x.err + "）" : "");
+            }).join("\n        ") +
+            "\n        ⇒ " + ((out65[0] && out65[0].size > 0)
+              ? "纯 saveAs **能写** ⇒ 触发点在前面那几步（扩画布/文字层/**resizeImage**）"
+              : "纯 saveAs **写不出**（这张稿是 **CMYK**，而 PS 的 PNG 不支持 CMYK）⇒ 所以 exportReview 必须走**备路**（见 S67）");
+          /* ★ 判据 = "这个已知限制真的存在"：**纯 PNG 失败、JPG 成功**。
+             它是一条**诊断**（记录 PS 的限制），不是产品功能判据 ——
+             产品层面的结论看 **S67**（备路已绕过它）。 */
+          ok65 = !!(out65[0] && out65[0].size === null && out65[2] && out65[2].size > 0);
+        }
+      } catch (e) {
+        lines65 = "抛异常：" + ((e && e.message) || e);
+      }
+    }
+    rec(S65, ok65, lines65);
+  } catch (e) {
+    rec("S65 在用户真稿上纯 saveAs 二分（新名字 / 两个目录 / 两种格式）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S66: CMYK × PNG —— 把根因钉死（v0.9.1）----------
+     S65 在用户那张稿上把"格式"变量拆开了：**PNG 失败、JPG 成功**（且换目录照样失败）。
+     用 ExtendScript 直连同一台 PS 逼出的**真实报错**是：
+        `发生了常规 Photoshop 错误… 命令「存储」的参数当前是无效的。 #-25923`
+     —— 而且**新建的 400×400 CMYK 稿也一样失败**，RGB 稿正常。
+     ⇒ 高度怀疑：**PNG 根本存不了 CMYK 稿**（UXP 的 `saveAs.png` 把这个错**吞掉了**，
+        所以表现为"报成功、盘上什么都没有"）。
+     这一项在**插件自己的通道**里钉死它，并顺手查两件修 bug 要用的事：
+        · `createScratchDoc({mode})` 到底建出什么模式（之前那几组"CMYK"探针没验过这点）
+        · 把 CMYK 稿 `changeMode(RGB)` 之后，UXP 的 `saveAs.png` 是不是就好了（= 候选修法）
+        · `Document` 上有没有 `duplicate`（= 另一条候选修法：复制一张、在原稿之外转换） */
+  try {
+    const S66 = "S66 CMYK × PNG：PNG 存不了 CMYK 稿（UXP 会静默吞掉）";
+    const ph66 = require("photoshop");
+    const uxp66 = require("uxp");
+    const df66 = await uxp66.storage.localFileSystem.getDataFolder();
+
+    const png66 = async function (doc, tag) {
+      const nm = "vt-s66-" + tag + "-" + Date.now() + ".png";
+      const r = { tag: tag, size: null, err: "" };
+      try {
+        const e = await df66.createFile(nm, { overwrite: true });
+        await ps.runModal(async () => {
+          await ph66.app.activeDocument.saveAs.png(e, {}, true);
+        }, "Vellum 自检：S66 PNG 存盘");
+        const chk = await ps.fileInFolder(df66, nm);
+        r.size = chk.size;
+        r.err = chk.error || "";
+      } catch (e2) {
+        r.err = "抛异常：" + ((e2 && e2.message) || e2);
+      }
+      return r;
+    };
+    const modeOf66 = function () {
+      try { return String(ph66.app.activeDocument.mode); } catch (e) { return "读不到"; }
+    };
+
+    /* (a) 自建"CMYK"稿：先看它**真实**是什么模式、再试 PNG */
+    let sc66 = await ps.createScratchDoc({
+      size: 400, height: 400, resolution: 72, mode: "CMYK", name: "Vellum 自检临时文档(S66-CMYK)"
+    });
+    let modeAsk = "?";
+    let modeReal = "?";
+    let rCmyk = { tag: "cmyk", size: null, err: "（没跑）" };
+    let rAfter = { tag: "cmyk→RGB", size: null, err: "（没跑）" };
+    let changeLine = "（没跑）";
+    if (sc66 && sc66.ok) {
+      await ps.activateDocument(sc66.id);
+      modeAsk = "CMYK";
+      modeReal = modeOf66();
+      rCmyk = await png66(sc66, "cmyk");
+      /* (b) 把这张稿改成 RGB，再试一次 —— 如果就好了，那"改模式"就是候选修法 */
+      try {
+        const CN = (require("photoshop").constants || {}).DocumentMode || {};
+        const target = CN.RGB || "RGBColorMode";
+        changeLine = "changeMode(" + JSON.stringify(String(target)) + ") ";
+        await ps.runModal(async () => {
+          await ph66.app.activeDocument.changeMode(target);
+        }, "Vellum 自检：S66 改模式");
+        changeLine += "ok ⇒ 现在 " + modeOf66();
+        rAfter = await png66(sc66, "cmyk2rgb");
+      } catch (e) {
+        changeLine += "抛异常：" + ((e && e.message) || e);
+      }
+      try { await ps.closeDocument(sc66.id); } catch (e) { /* 忽略 */ }
+    } else {
+      rCmyk.err = "建稿失败：" + ((sc66 && sc66.error) || "未知");
+    }
+
+    /* (c) 自建 RGB 稿作对照 */
+    let rRgb = { tag: "rgb", size: null, err: "（没跑）" };
+    let sc66b = await ps.createScratchDoc({
+      size: 400, height: 400, resolution: 72, mode: "RGB", name: "Vellum 自检临时文档(S66-RGB)"
+    });
+    if (sc66b && sc66b.ok) {
+      await ps.activateDocument(sc66b.id);
+      rRgb.tag = "rgb(" + modeOf66() + ")";
+      rRgb = await png66(sc66b, "rgb");
+      try { await ps.closeDocument(sc66b.id); } catch (e) { /* 忽略 */ }
+    }
+
+    /* (d) 两条候选修法要用的 API 在不在 */
+    let apiLine = "（没查）";
+    try {
+      const d0 = ph66.app.activeDocument;
+      apiLine = "duplicate=" + (typeof (d0 && d0.duplicate)) +
+        "　changeMode=" + typeof (ph66.app.activeDocument && ph66.app.activeDocument.changeMode);
+    } catch (e) { apiLine = "查不到：" + ((e && e.message) || e); }
+
+    const fmt66 = function (r) {
+      return r.tag + " ⇒ " + (r.size === null ? "size=null" : "size=" + r.size) +
+        (r.size > 0 ? " ✅" : " ❌") + (r.err ? "（" + r.err + "）" : "");
+    };
+    const cmykBroken = !(rCmyk.size > 0);
+    const rgbOk = rRgb.size > 0;
+    rec(
+      S66,
+      /* 这一项是**诊断**：判据 = "CMYK 坏 + RGB 好"这个模式被确认了 */
+      cmykBroken && rgbOk,
+      "模式实测：请求「" + modeAsk + "」→ 真机是「" + modeReal + "」（" +
+        ((modeReal === "DocumentMode.CMYK" || modeReal === "CMYKColorMode") ? "一致" : "★不一致！mode 参数没生效") +
+        "）\n        " + fmt66(rCmyk) +
+        "\n        " + changeLine + " ⇒ " + fmt66(rAfter) +
+        "\n        " + fmt66(rRgb) +
+        "\n        API：" + apiLine +
+        "\n        ⇒ " + (cmykBroken && rgbOk
+          ? "★ **根因确认：PNG 存不了 CMYK 稿**（RGB 正常）。UXP 的 `saveAs.png` 会把 PS 的" +
+            "#-25923「存储的参数当前是无效的」**吞掉** ⇒ 表现为「报成功、盘上 0 字节」。" +
+            "用户那张 84×184cm 展架稿正是 CMYK ⇒ 必然失败。" +
+            " ⇒ **exportReview 已改走备路绕过它**（副本上转 RGB，见 S67）。"
+          : "未复现「CMYK 存不了」这个模式，需要重看读数")
+    );
+  } catch (e) {
+    rec("S66 CMYK × PNG：PNG 存不了 CMYK 稿（UXP 会静默吞掉）", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S67: CMYK 端到端（v0.9.2 备路的**产品级**回归）----------
+     docs/52 的根因 = 「PS 的 PNG 存储不支持 CMYK」。修法 = 备路：
+     复制一张副本 → 副本上 `changeMode(RGB)` → 画参数条 → 存 PNG → 关副本，
+     **原稿全程只被读过**。这一项验的正是"修好了"这件事（不是诊断）：
+       ① 真 CMYK 稿能导出（bytes > 0）
+       ② 步骤里确实有 `changeMode → RGB`
+       ③ **导出之后原稿仍是 CMYK**、且尺寸/图层数都没变（备路的硬承诺）
+       ④ RGB 稿走同一条路照样 ok（不许为了 CMYK 把 RGB 弄坏） */
+  try {
+    const S67 = "S67 CMYK 端到端：真 CMYK 稿也导得出，且原稿仍是 CMYK、没被动过";
+    const uxp67b = require("uxp");
+    const df67b = await uxp67b.storage.localFileSystem.getDataFolder();
+
+    const run67 = async function (mode) {
+      const o = { mode: mode, made: "?", bytes: null, ok: false, steps: "", origMode: "", geom: null, err: "" };
+      let sc = null;
+      try {
+        sc = await ps.createScratchDoc({
+          size: 900, height: 700, resolution: 150, mode: mode,
+          name: "Vellum 自检临时文档(S67-" + mode + ")"
+        });
+        if (!sc || !sc.ok) { o.err = "建稿失败：" + ((sc && sc.error) || "?"); return o; }
+        await ps.activateDocument(sc.id);
+        o.made = sc.modeReal || sc.mode || "?";
+        const g0 = ps.readDocGeom();
+        const e = await df67b.createFile("vt-s67-" + mode + "-" + Date.now() + ".png", { overwrite: true });
+        const r = await ps.exportReview({
+          entry: e, folder: df67b, kind: "review", bleed: { state: "has", mm: 3 }
+        });
+        o.bytes = r.fileBytes;
+        o.ok = !!r.ok;
+        o.steps = (r.steps || []).join(" | ");
+        o.err = r.error || "";
+        /* ★ 导出之后的**原稿自证**：模式与几何三项都得没变 */
+        await ps.activateDocument(sc.id);
+        o.origMode = String(require("photoshop").app.activeDocument.mode);
+        const g1 = ps.readDocGeom();
+        o.geom = {
+          sameW: g1.w === g0.w, sameH: g1.h === g0.h, sameLayers: g1.layers === g0.layers,
+          w: g1.w, h: g1.h, layers: g1.layers
+        };
+      } catch (e) {
+        o.err += " 抛异常：" + ((e && e.message) || e);
+      } finally {
+        if (sc && sc.ok) { try { await ps.closeDocument(sc.id); } catch (e) { /* 忽略 */ } }
+      }
+      return o;
+    };
+
+    const c67 = await run67("CMYK");
+    const r67 = await run67("RGB");
+    const fmt67 = function (x) {
+      return x.mode + "（建出来是 " + (x.made || "?") + "）⇒ bytes=" + x.bytes +
+        "　ok=" + x.ok +
+        "　导出后原稿模式=" + (x.origMode || "?") +
+        "　原稿几何=" + JSON.stringify(x.geom || null) +
+        "　" + (String(x.steps).indexOf("changeMode → RGB") >= 0 ? "有 changeMode" : "没转模式") +
+        (x.err ? "　err=" + x.err : "");
+    };
+    const ck67 = [
+      ["① ★真 CMYK 稿能导出（bytes > 0）", !!(c67.bytes > 0 && c67.ok)],
+      ["② ★步骤里确实转过 RGB（不是靠运气）",
+        String(c67.steps).indexOf("changeMode → RGB") >= 0],
+      ["③ ★导出后**原稿仍是 CMYK**（备路的硬承诺：原稿只被读过）",
+        c67.origMode === "CMYKColorMode"],
+      ["④ ★原稿几何三项都没变",
+        !!(c67.geom && c67.geom.sameW && c67.geom.sameH && c67.geom.sameLayers)],
+      ["⑤ RGB 稿走同一条路照样 ok（没为 CMYK 把 RGB 弄坏）",
+        !!(r67.bytes > 0 && r67.ok)]
+    ];
+    const bad67 = [];
+    for (const c of ck67) if (!c[1]) bad67.push(c[0]);
+    rec(
+      S67,
+      bad67.length === 0,
+      fmt67(c67) + "\n        " + fmt67(r67) +
+      (bad67.length
+        ? "\n        ⚠️ 未成立：" + bad67.join(" / ")
+        : "\n        ⇒ 备路成立：CMYK 也导得出，而且原稿全程**只被读过**（模式/尺寸/层数都没变）")
+    );
+  } catch (e) {
+    rec("S67 CMYK 端到端：真 CMYK 稿也导得出，且原稿仍是 CMYK、没被动过", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- S68: 「新建稿 / PSD 模板」可行性探针（v0.9.4）----------
+     用户 2026-10-17 的两块设想全压在这几条上，而它们**一条都没在本机验过**：
+       ① `presetJSON` 建稿时**携带 guides** —— template-probe 验过「传 4 回读 4」，
+          但**产品代码从未用过**（`lib/ps.js` 里根本没有 presetJSON 的调用）。
+       ② 建完**存成 PSD**、再**重新打开**，参考线还在不在
+          —— 用户要的正是「打好参考线、直接调用」，这条决定产品路成不成立。
+       ③ `app.open(entry)` 能否打开 PluginData 里的文件（官方样例用过，本机未验）。
+       ④ 打开后的**文档名**能不能改（PSD 走 handoff 会叫 `incoming.psd`，名字难看）。
+       ⑤ `app.displayDialogs` 能不能设成不弹框（自动化打开文件时的卡死防护）。
+       ⑥ `Entry.delete()` 存在吗 —— 契约 §九「插件能否删自己的文件」**一直未验**。
+     判据一律「读回」，不靠「命令没报错」。
+     ⚠️ 全程只碰自建临时文档与 `PluginData` 里的 `vt-s68-*` 文件；收尾切回用户原文档。 */
+  try {
+    const S68 = "S68 新建稿/PSD模板可行性：presetJSON 带参考线 → 存 PSD → 重开 → 参考线还在吗";
+    const uxp8 = require("uxp");
+    const psApi = require("photoshop");
+    const app8 = psApi.app;
+    const df68 = await uxp8.storage.localFileSystem.getDataFolder();
+
+    const S = [];                       // 步骤流水
+    const R = {
+      dispDialogs: "", mkVia: "", mkErr: "", guidesMade: null, sizeMade: "",
+      psdName: "", saveBytes: null, saveFound: null, saveErr: "", modeMade: "",
+      openVia: "", openErr: "", nameAfterOpen: "", guidesAfterOpen: null,
+      sizeAfterOpen: "", modeAfterOpen: "",
+      renameOk: null, renameErr: "", nameAfterRename: "",
+      delApi: "", delOk: null, delErr: "", goneAfterDel: null,
+      closed: false,
+    };
+    const prevId = (app8.documents && app8.documents.length) ? app8.documents[0].id : null;
+    let docId = null;
+    let psdEntry = null;
+    let reId = null;
+
+    /* ⓪ 先试着关掉原生对话框（打开 PSD 时可能弹「色彩配置不匹配」，会卡死模态） */
+    try {
+      app8.displayDialogs = "dontDisplay";
+      R.dispDialogs = String(app8.displayDialogs);
+    } catch (eD) {
+      R.dispDialogs = "设置失败：" + ((eD && eD.message) || eD);
+    }
+    S.push("displayDialogs→" + R.dispDialogs);
+
+    /* ① presetJSON 建稿（带 4 条参考线）—— 先不包模态，失败再包模态重试 */
+    /* ★ 字段集**照抄 template-probe 当年验通过的那份**（C1/C2）——
+       第一轮我漏了 `scale` / `profile` / `artboards`，结果 presetJSON **整份被忽略**
+       （读回 1946×172 @72、guides=0）。
+       ⇒ **不许自己编字段集，要把已验证的那份原样抄过来。** */
+    const preset68 = {
+      name: "TP-S68",                         /* 已知被忽略，但验过的那份也带着它 */
+      width: 600, height: 400, units: "pixelsUnit",
+      resolution: 300, resolutionUnits: "inchesUnit",
+      depth: 8, scale: 1,
+      mode: "RGB", fill: "white",
+      profile: "sRGB IEC61966-2.1",
+      guides: [
+        { direction: "v", coordinate: 20 },
+        { direction: "v", coordinate: 580 },
+        { direction: "h", coordinate: 20 },
+        { direction: "h", coordinate: 380 }
+      ],
+      artboards: []
+    };
+    const mk68 = async function (useModal) {
+      let made = null;
+      try {
+        if (useModal) {
+          await psApi.core.executeAsModal(async function () {
+            made = await app8.createDocument({ presetJSON: JSON.stringify(preset68),
+              name: "Vellum 自检临时文档(S68-presetJSON)" });
+          }, { commandName: "Vellum 探针：presetJSON 建稿" });
+        } else {
+          made = await app8.createDocument({ presetJSON: JSON.stringify(preset68),
+            name: "Vellum 自检临时文档(S68-presetJSON)" });
+        }
+      } catch (e) {
+        return { ok: false, err: ((e && e.message) || String(e)), via: useModal ? "modal" : "direct" };
+      }
+      if (made && made.id !== null && made.id !== undefined) {
+        return { ok: true, doc: made, via: useModal ? "modal" : "direct" };
+      }
+      return { ok: false, err: "createDocument 没返回文档", via: useModal ? "modal" : "direct" };
+    };
+    let c68 = await mk68(false);
+    if (!c68.ok) {
+      R.mkErr = "直接调用失败（" + c68.err + "）";
+      c68 = await mk68(true);
+    }
+    R.mkVia = c68.via;
+    if (c68.ok) {
+      docId = c68.doc.id;
+      R.guidesMade = (c68.doc.guides && c68.doc.guides.length) || 0;
+      R.sizeMade = c68.doc.width + "×" + c68.doc.height + " @" + c68.doc.resolution;
+      /* ★ 读回色彩模式 —— `presetJSON` 的 `mode` 字段**到底生不生效**，
+         以前没记录 ⇒ 又是"传了参数没读回"（本项目的老坑）。 */
+      try { R.modeMade = String(c68.doc.mode || ""); } catch (eM) { R.modeMade = "读不到"; }
+      S.push("createDocument(" + c68.via + ") ok　尺寸 " + R.sizeMade +
+        "　模式=" + R.modeMade + "　guides=" + R.guidesMade);
+    } else {
+      S.push("createDocument ✗（direct: " + R.mkErr + " / modal: " + c68.err + "）");
+    }
+
+    /* ② 存成 PSD（**asCopy**） */
+    if (docId !== null) {
+      try {
+        psdEntry = await df68.createFile("vt-s68-tpl-" + Date.now() + ".psd", { overwrite: true });
+        R.psdName = psdEntry.name;
+        /* 🔴 关键一步（**第三个同源坑**，2026-10-17 查出）：
+           `createFile` 会**真的建出一个 0 字节文件** ⇒ PS 认为「目标已存在」⇒
+           `saveAs` **静默不写**（不抛错、返回成功）。v0.9.5 的「导出审核版」踩过同一个坑，
+           当时修法就是"保存前先清掉同名文件"；本探针**没照抄那一步**，所以 S68 一直时通时不通。
+           ⇒ 正解：先 `delete()` 掉这个预建文件，让 PS 一定是"新建"。 */
+        try {
+          if (typeof psdEntry.delete === "function") {
+            await psdEntry.delete();
+            S.push("clearTarget 已删预建文件");
+          } else {
+            S.push("clearTarget 跳过（Entry 无 delete）");
+          }
+        } catch (eD68) {
+          S.push("clearTarget 失败 " + ((eD68 && eD68.message) || eD68));
+        }
+        await psApi.core.executeAsModal(async function () {
+          await app8.activeDocument.saveAs.psd(psdEntry, {}, true);
+        }, { commandName: "Vellum 探针：存 PSD" });
+        /* ★ 判据用**问目录**（不看 entryBytes）：
+           `entryBytes` 的"读失败"与"文件不存在"读数**完全一样**（都 null）—— 这是老教训。 */
+        const chk68 = await ps.fileInFolder(df68, psdEntry.name);
+        R.saveBytes = chk68 && chk68.found ? chk68.size : null;
+        R.saveFound = !!(chk68 && chk68.found);
+        S.push("saveAs.psd " + (R.saveBytes > 0 ? "ok " + R.saveBytes + "B" : "无字节") +
+          "　问目录:found=" + R.saveFound + " size=" + R.saveBytes);
+      } catch (e2) {
+        R.saveErr = ((e2 && e2.message) || String(e2));
+        S.push("saveAs.psd THREW " + R.saveErr);
+      }
+      /* ③ 关掉它，再重新打开 —— 这才是「模板」的真实用法 */
+      try {
+        await ps.closeDocument(docId);
+        R.closed = true;
+        docId = null;
+        S.push("close ok");
+      } catch (e3) {
+        S.push("close THREW " + ((e3 && e3.message) || e3));
+      }
+    }
+
+    /* ④ app.open(entry) —— 官方样例用过，本机未验 */
+    if (psdEntry && R.saveBytes > 0) {
+      const open68 = async function (useModal) {
+        let got = null;
+        try {
+          if (useModal) {
+            await psApi.core.executeAsModal(async function () {
+              got = await app8.open(psdEntry);
+            }, { commandName: "Vellum 探针：打开 PSD" });
+          } else {
+            got = await app8.open(psdEntry);
+          }
+        } catch (e) {
+          return { ok: false, err: ((e && e.message) || String(e)), via: useModal ? "modal" : "direct" };
+        }
+        const d = Array.isArray(got) ? got[0] : got;
+        if (d && d.id !== null && d.id !== undefined) {
+          return { ok: true, doc: d, via: useModal ? "modal" : "direct" };
+        }
+        return { ok: false, err: "open 没返回文档（拿到 " + (got === null ? "null" : typeof got) + "）", via: useModal ? "modal" : "direct" };
+      };
+      let o68 = await open68(false);
+      if (!o68.ok) o68 = await open68(true);
+      R.openVia = o68.via;
+      if (o68.ok) {
+        const d = o68.doc;
+        reId = d.id;
+        R.nameAfterOpen = String(d.name);
+        R.guidesAfterOpen = (d.guides && d.guides.length) || 0;
+        R.sizeAfterOpen = d.width + "×" + d.height + " @" + d.resolution;
+        R.modeAfterOpen = String(d.mode);
+        S.push("app.open(" + o68.via + ") ok　名=" + R.nameAfterOpen +
+          "　" + R.sizeAfterOpen + "　**guides=" + R.guidesAfterOpen + "**");
+
+        /* ⑤ 文档名可改吗 —— PSD 走 handoff 会叫 incoming.psd，名字难看 */
+        try {
+          d.name = "易拉宝模板 80x180";
+          R.nameAfterRename = String(d.name);
+          R.renameOk = (R.nameAfterRename === "易拉宝模板 80x180");
+          S.push("改名 → " + R.nameAfterRename + (R.renameOk ? "（生效）" : "（**没生效**）"));
+        } catch (e5) {
+          R.renameOk = false;
+          R.renameErr = ((e5 && e5.message) || String(e5));
+          S.push("改名 THREW " + R.renameErr);
+        }
+      } else {
+        R.openErr = o68.err;
+        S.push("app.open ✗ " + o68.err);
+      }
+    } else {
+      S.push("跳过打开（PSD 没存成功）");
+    }
+
+    /* 收尾：关掉重开的那份 + 切回用户原文档 */
+    if (reId !== null) { try { await ps.closeDocument(reId); } catch (e) { /* 忽略 */ } }
+    if (docId !== null) { try { await ps.closeDocument(docId); } catch (e) { /* 忽略 */ } }
+    if (prevId !== null) { try { await ps.activateDocument(prevId); } catch (e) { /* 忽略 */ } }
+
+    /* ⑥ Entry.delete() 存在吗（契约 §九 一直未验）—— 删不掉就留给外部清理 */
+    if (psdEntry) {
+      R.delApi = (typeof psdEntry.delete === "function") ? "function" : String(typeof psdEntry.delete);
+      if (R.delApi === "function") {
+        try {
+          await psdEntry.delete();
+          R.delOk = true;
+        } catch (e6) {
+          R.delOk = false;
+          R.delErr = ((e6 && e6.message) || String(e6));
+        }
+      }
+      try {
+        await df68.getEntry(psdEntry.name);
+        R.goneAfterDel = false;
+      } catch (e7) {
+        R.goneAfterDel = true;
+      }
+      S.push("entry.delete=" + R.delApi + (R.delOk === null ? "" : "　删成功=" + R.delOk +
+        "　文件真没了=" + R.goneAfterDel));
+    }
+
+    const ck68 = [
+      ["① presetJSON 建稿成功（并读出尺寸）", R.guidesMade !== null],
+      ["② ★建稿时**携带的参考线真的写进去了**（读回 " + R.guidesMade + " 条）", R.guidesMade === 4],
+      ["③ 能另存为 PSD（有字节）", !!(R.saveBytes > 0)],
+      ["④ ★能 app.open 重新打开那份 PSD", !!R.nameAfterOpen],
+      ["⑤ ★★★重开后**参考线还在**（用户要的「打好参考线直接调用」靠它）", R.guidesAfterOpen === 4]
+    ];
+    const bad68 = [];
+    for (const c of ck68) if (!c[1]) bad68.push(c[0]);
+    rec(
+      S68,
+      bad68.length === 0,
+      "⓪ " + (R.mkErr ? "direct 失败：" + R.mkErr + "　" : "") + S.join("\n         ")
+      + "\n        读回：名=" + R.nameAfterOpen + "　" + R.sizeAfterOpen + "　模式=" + R.modeAfterOpen
+      + "　guides=" + R.guidesAfterOpen
+      + "\n        改名：" + (R.renameOk === null ? "（没测）"
+          : (R.renameOk ? "可改 ✔" : "**不可改**" + (R.renameErr ? "（" + R.renameErr + "）" : "（赋值后没变）")))
+      + "\n        displayDialogs=" + R.dispDialogs
+      + "\n        entry.delete=" + R.delApi
+      + (bad68.length
+        ? "\n        ⚠️ 未成立：" + bad68.join(" / ")
+        : "\n        ⇒ 「PSD 模板」这条路**技术成立**：参考线能随 PSD 存下来、也能重新打开后读回")
+    );
+  } catch (e) {
+    rec("S68 新建稿/PSD模板可行性：presetJSON 带参考线 → 存 PSD → 重开 → 参考线还在吗", false,
+      "抛异常：" + ((e && e.message) || e));
+  }
+
+  /* ---------- 收尾前：清掉本轮诊断探针留下的文件（v0.9.1）----------
+     S61–S66 会往"用户记下来的导出目录"和插件目录写 `vt-s6*` 探针文件。
+     ⚠️ 只有 `verify.flag` 存在时才会发生（**同事永远不会**），但跑一次留一堆也不像话。
+     ⇒ 这里按前缀清掉**只属于我们自己**的文件；**绝不碰**用户自己的任何文件。 */
+  try {
+    const uxp67 = require("uxp");
+    const ls67 = uxp67.storage && uxp67.storage.localFileSystem;
+    let removed67 = 0;
+    const sweep67 = async function (folder) {
+      if (!folder || typeof folder.getEntries !== "function") return;
+      try {
+        const es = await folder.getEntries();
+        for (const e of (es || [])) {
+          const nm = String((e && e.name) || "");
+          /* 两种探针命名：`vt-s6*` 与带**13 位纪元时间戳**的名字
+             （面板真导出的尾巴是 4 位 HHMM，不会被误删）。 */
+          if (nm.indexOf("vt-s6") === 0 || /-2026\d{4}-\d{13}\.(png|jpg)$/.test(nm)) {
+            try { await e.delete(); removed67 += 1; } catch (e2) { /* 忽略 */ }
+          }
+        }
+      } catch (e) { /* 忽略 */ }
+    };
+    let uf67 = null;
+    try {
+      const st67 = await store.readJson("review.json", {});
+      if (st67 && st67.folderToken) uf67 = await ls67.getEntryForPersistentToken(st67.folderToken);
+    } catch (e) { /* 忽略 */ }
+    await sweep67(uf67);
+    try { await sweep67(await ls67.getDataFolder()); } catch (e) { /* 忽略 */ }
+    try { await log.appendLog("selfcheck probe cleanup removed=" + removed67); } catch (e) { /* 忽略 */ }
+  } catch (e) { /* 清理失败不影响自检结论 */ }
+
+  /* ---------- S69: 自检卫生 —— 开场清场 + 收尾复查（v0.9.5）----------
+     它守的是"自检自己不留垃圾"，这是 2026-10-17 那次事故的直接教训：
+     `closeDocument` 失败不抛异常、调用方不看返回值 ⇒ 临时文档在用户 PS 里堆积。 */
+  try {
+    try {
+      sweepOut = await ps.sweepProbeDocs();
+    } catch (eS2) {
+      sweepOut = { closed: [], failed: [{ name: "(复查)", err: String((eS2 && eS2.message) || eS2) }], kept: [] };
+    }
+    const inFailed = (sweepIn && sweepIn.failed) ? sweepIn.failed : [];
+    const outClosed = (sweepOut && sweepOut.closed) ? sweepOut.closed : [];
+    const outFailed = (sweepOut && sweepOut.failed) ? sweepOut.failed : [];
+    /* ★ v0.9.6：**读不到名字**也算不合格。
+       以前它静默把这种文档当「别人的」保留 ⇒ sweep 明明认不出自己的临时文档，
+       却报"漏关 0 个"（2026-10-17 真机读数：收尾时 3 个文档名字全是空串）。
+       「没报错 ≠ 生效」在这里的具体形态：**看不见 ≠ 没有**。 */
+    const outUnknown = (sweepOut && typeof sweepOut.unknown === "number") ? sweepOut.unknown : 0;
+    const ok69 = inFailed.length === 0 && outClosed.length === 0 &&
+      outFailed.length === 0 && outUnknown === 0;
+    rec(
+      "S69 自检卫生：开场清掉上次残留、收尾**不留新残留**",
+      ok69,
+      "开场清场：" + (sweepIn ? (sweepIn.closed.length + " 个") +
+          (sweepIn.closed.length ? "（" + sweepIn.closed.join("、") + "）" : "") : "没跑") +
+        (inFailed.length ? "\n        ⚠️ 清场失败：" + JSON.stringify(inFailed) : "") +
+        "\n        收尾复查：本轮漏关 " + outClosed.length + " 个" +
+        (outClosed.length ? "（" + outClosed.join("、") + "）" : "") +
+        (outFailed.length ? "\n        ⚠️ 复查时也关不掉：" + JSON.stringify(outFailed) : "") +
+        "\n        当前开着的其它文档：" + JSON.stringify(sweepOut ? sweepOut.kept : null) +
+        "\n        名字读不到的文档数：" + outUnknown + "（须 0；读不到就无法按名字识别，等于瞎扫）" +
+        "\n        ⚠️ 只关名字以「Vellum 自检临时文档 / Vellum 探针 / TP-」开头的 —— **用户的稿绝不碰**"
+    );
+  } catch (e69) {
+    rec("S69 自检卫生：开场清掉上次残留、收尾**不留新残留**", false,
+      "抛异常：" + ((e69 && e69.message) || e69));
+  }
+
+  /* ---------- S70: 分组层数放宽（2 → 5）—— **数据层**回归（v0.9.6）----------
+     背景（2026-10-17）：两侧共识「模板库 + 通用素材库都做多层目录」，契约 §5.3 放宽到 ≤5 层。
+     本项验的是 `lib/mirror.js` 的展平逻辑，**纯函数**（喂假数据，不读真镜像、不碰用户的稿）：
+       ① 三层能展开成三级（而不是被拍平成顶层）
+       ② 两层数据的 group / sub / 顺序 **与放宽前一致**（旧 UI 一行不用改）
+       ③ 成环**不爆栈、不重复吐**，素材不丢
+       ④ 超上限（6 层）第 6 层降级，但**素材一条不丢**
+     为什么放进真机自检：这几个分支平时不会被真实镜像触发（软件侧现在只产两层），
+     但**一旦有人改 flattenBrand 就可能悄悄坏掉** —— 坏掉的表现是"素材少了"，最难发现。 */
+  try {
+    const S70 = "S70 分组层数 2→5：三层正常展开 / 两层零变化 / 成环不爆栈 / 超限不丢素材";
+    const MIR = require("./mirror.js");
+    const G = (id, name, pid) => ({
+      id: id, name: name, parentId: pid,
+      assets: [{ id: id * 10, name: "g" + id + ".png" }]
+    });
+
+    /* ① 三层 */
+    const r3 = MIR.flattenBrand({ groups: [G(1, "L1"), G(2, "L2", 1), G(3, "L3", 2)] });
+    const p3 = r3.map(function (r) { return (r.groupPath || []).join(">") + "@" + r.depth; }).join(" | ");
+    const ok3 = r3.length === 3 &&
+      r3[2] && r3[2].depth === 3 && (r3[2].groupPath || []).length === 3 &&
+      r3[2].group === "L1" && r3[2].sub === "L2";
+
+    /* ② 两层等价（顺序 + group/sub 逐项写死） */
+    const r2 = MIR.flattenBrand({
+      groups: [G(1, "A"), G(2, "B"), G(11, "A1", 1), G(12, "A2", 1)]
+    });
+    const seq2 = r2.map(function (r) { return r.group + "/" + r.sub; }).join(",");
+    const ok2 = r2.length === 4 && seq2 === "A/,A/A1,A/A2,B/";
+
+    /* ③ 成环 */
+    const rc = MIR.flattenBrand({ groups: [G(1, "C1", 2), G(2, "C2", 1)] });
+    const okC = rc.length === 2;
+
+    /* ④ 超上限（6 层）*/
+    const chain = [G(1, "D1")];
+    for (let i = 2; i <= 6; i++) chain.push(G(i, "D" + i, i - 1));
+    const rd = MIR.flattenBrand({ groups: chain });
+    /* ⚠️ 按 asset.id 认，别按名字拼 —— 第一版写成 "g50.png" 而 G() 造的是 "g5.png"，
+       结果 ④ 恒 false（**是断言自己写错了，不是代码错**）。按 id 认不会有这种歧义。 */
+    const d6 = rd.filter(function (r) { return r.asset.id === 60; })[0];
+    const d5 = rd.filter(function (r) { return r.asset.id === 50; })[0];
+    const okD = rd.length === 6 && MIR.MAX_DEPTH === 5 &&
+      !!(d5 && d5.depth === 5) && !!(d6 && d6.depth === 1 && d6.group === "D6");
+
+    const bad70 = [];
+    if (!ok3) bad70.push("① 三层没展开成三级");
+    if (!ok2) bad70.push("② 两层输出变了（会影响现有 UI）");
+    if (!okC) bad70.push("③ 成环吐的条数不对");
+    if (!okD) bad70.push("④ 超上限没有按预期降级 / 丢素材");
+
+    rec(
+      S70,
+      bad70.length === 0,
+      "MAX_DEPTH=" + MIR.MAX_DEPTH + "（须 5）\n" +
+        "        ① 三层：" + p3 + "\n" +
+        "        ② 两层顺序：" + seq2 + "（须 A/,A/A1,A/A2,B/）\n" +
+        "        ③ 成环：" + rc.length + " 条（须 2，且不爆栈）\n" +
+        "        ④ 六层：g50@depth" + (d5 ? d5.depth : "?") + "　g60@depth" + (d6 ? d6.depth : "?") +
+        "（须 5 / 1，共 6 条）\n" +
+        "        ⚠️ 本项是**纯函数**回归（喂假数据），不读真镜像、不碰用户的稿；" +
+        "只读镜像的那部分由 S19 / S20c 负责\n" +
+        (bad70.length
+          ? "        ⚠️ 未成立：" + bad70.join(" / ")
+          : "        ⇒ 数据层已能读任意层（≤5），且**两层数据的输出一个字没变** ⇒ 旧 UI 无需改动")
+    );
+  } catch (e70) {
+    rec("S70 分组层数 2→5：三层正常展开 / 两层零变化 / 成环不爆栈 / 超限不丢素材", false,
+      "抛异常：" + ((e70 && e70.message) || e70));
+  }
+
+  /* ---------- S71: 插入面板瘦身（v0.9.7，用户 2026-10-17 拍板）----------
+     用户要求：去掉落点九宫格（同事反馈没人用）、把「置入」两字按钮放到素材名右侧。
+     判据是**真机量出来的高度**（不是"看着变矮了"）：
+       ① 落点**彻底不在**（`#vt-lib-anchors` 与 `.anchor-cell` 都查不到 —— 删 UI 要删净）
+       ② 未选中时面板 ≤ 36px
+       ③ 选中素材后面板 ≤ 56px（目标是 50，改前是 150）
+       ④ 按钮文案就是「置入」两字
+     为什么量高度而不只量样式：样式写得再对，只要有人往回加一行（比如把"位置"又放回来），
+     面板就会胖回去 —— **高度是唯一能反映"用户到底能多看到多少素材"的指标**。 */
+  try {
+    const S71 = "S71 插入面板瘦身：落点已移除 / 「置入」在右侧 / 选中时 ≤ 56px / 不贴边框";
+    await ctx.shell.showTool("assets", "selfcheck");
+    const gotFoot = await waitFor(function () {
+      return !!document.getElementById("vt-lib-foot");
+    }, 8000);
+
+    const foot = document.getElementById("vt-lib-foot");
+    if (!gotFoot || !foot) {
+      rec(S71, true, "【不适用】素材库页没挂载起来（拿不到 #vt-lib-foot）—— 本条不判失败");
+    } else {
+      const anchorsDom = !!document.getElementById("vt-lib-anchors");
+      const cellN = (foot.querySelectorAll) ? foot.querySelectorAll(".anchor-cell").length : 0;
+      const hIdle = foot.offsetHeight || 0;
+
+      const grid = document.getElementById("vt-lib-grid");
+      const card = (grid && grid.querySelector) ? grid.querySelector(".card") : null;
+      let hSel = null;
+      if (card) {
+        syntheticClick(card, false);
+        /* ⚠️ 这里必须等「**高度真的变了**」，不能只等"按钮出现"。
+           第一版等的是 `#vt-lib-insert` 存在，结果量到 **34px**
+           （= 未选中时那一行提示的高度）—— 按钮已经建出来了，但**布局还没重排**，
+           `offsetHeight` 还是旧值。（项目里 S27 探针踩过同一个坑："时机太早量到旧值"。）
+           ⇒ 判据改成等"高度 > 未选中高度"，最多 3 秒；超时也照样量一次，让读数暴露真相。 */
+        await waitFor(function () {
+          const f2 = document.getElementById("vt-lib-foot");
+          return !!document.getElementById("vt-lib-insert") &&
+            !!f2 && (f2.offsetHeight || 0) > hIdle;
+        }, 3000);
+        hSel = foot.offsetHeight || 0;
+      }
+      const btn = document.getElementById("vt-lib-insert");
+      const btnTxt = btn ? String(btn.textContent || "").trim() : "";
+
+      /* ★ 左右留白（v0.9.8 新增，用户 2026-10-17 截图报障驱动）：
+         这个块有 border + background，是张"卡片"。水平内边距写成 0 时，
+         文字贴左边框、按钮贴右边框，**看起来就是溢出**。
+         ⚠️ 只量高度抓不到这个问题（高度一点没变）—— 必须量几何。
+         用「内容块的左沿 − 卡片的左沿」判，不解析 CSS 字符串：
+         样式怎么写都无所谓，**看得见的留白**才是判据。 */
+      let padL = null;
+      let padR = null;
+      const mainRow = (foot.querySelector) ? foot.querySelector(".lf-main") : null;
+      if (foot.getBoundingClientRect && mainRow && mainRow.getBoundingClientRect) {
+        const fr = foot.getBoundingClientRect();
+        const mr = mainRow.getBoundingClientRect();
+        padL = Math.round(mr.left - fr.left);
+        padR = Math.round(fr.right - mr.right);
+      }
+
+      const ck = [
+        ["\u2460 落点 DOM 已移除（#vt-lib-anchors 不在）", !anchorsDom],
+        ["\u2460b 详情区里没有 .anchor-cell", cellN === 0],
+        ["\u2461 未选中时面板 \u2264 36px", hIdle > 0 && hIdle <= 36],
+        /* 双向判据：既不能胖（>56），也不能"根本没渲染成选中态"（<=未选中高度）。
+           第一版只写了 <= 56，结果 34px 也 PASS —— **单边判据把 bug 放过去了**。 */
+        ["\u2462 选中时面板 40\u201356px（既不变胖、也确实渲染了选中态）",
+          hSel === null ? true : (hSel >= 40 && hSel <= 56)],
+        ["\u2463 按钮文案就是「置入」", btnTxt === "置入"],
+        /* 左右留白 ≥ 8（含 1px 边框）⇒ 内容不贴边框 */
+        ["\u2464 左右留白 \u2265 8px（内容不贴边框）",
+          padL === null ? true : (padL >= 8 && padR >= 8)]
+      ];
+      const bad = [];
+      for (const c2 of ck) if (!c2[1]) bad.push(c2[0]);
+
+      rec(
+        S71,
+        bad.length === 0,
+        "未选中高=" + hIdle + "px\u3000选中高=" +
+          (hSel === null ? "（无卡片可点，跳过）" : hSel + "px") +
+          "\u3000按钮文案=" + JSON.stringify(btnTxt) + "\n" +
+          "        落点 DOM=" + (anchorsDom ? "**还在**" : "已移除") +
+          "\u3000.anchor-cell 数=" + cellN + "\n" +
+          "        左右留白：左 " + (padL === null ? "量不到" : padL + "px") +
+          " / 右 " + (padR === null ? "量不到" : padR + "px") + "（须 \u2265 8，含 1px 边框）\n" +
+          "        目标：未选中约 30 / 选中约 50（改前 150）——" +
+          "省下的主力是**九宫格 66px**，不是按钮宽度\n" +
+          (bad.length
+            ? "        \u26a0\ufe0f 未成立：" + bad.join(" / ")
+            : "        \u21d2 面板瘦身生效，580 高的面板下网格实际多出约 100px")
+      );
+    }
+  } catch (e71) {
+    rec("S71 插入面板瘦身：落点已移除 / 「置入」在右侧 / 选中时 \u2264 56px / 不贴边框", false,
+      "抛异常：" + ((e71 && e71.message) || e71));
+  }
+
+  /* ---------- S72: 面包屑下钻（v0.9.9，用户拍板的"方向 B"）----------
+     验的是**真机真 DOM**上的行为链：
+       ① 根层**不画**面包屑（只显示一个「全部」是噪音）；
+       ② 点第一个子目录 chip → 面包屑出现，段数 = 2（全部 + 该目录），末段 `is-on`；
+       ③ 点面包屑第 0 段（「全部」）→ 回到根，面包屑**从 DOM 上消失**；
+       ④ 目录区（`.lib-bar`）总高 ≤ 96px —— 这是高度预算的**真机锚**：
+          面包屑 26 + 一行子目录 22 + 间距；超了说明有人往里加行，会把网格挤没。
+     ⚠️ 判"消失"必须问**当前 DOM**（`document.getElementById`），UXP 这边是正常的；
+        离线 mock 的 `byId` 只增不减，那边要用 `attached()`（断言 40 里踩过）。 */
+  try {
+    const S72 = "S72 面包屑下钻：根层不画 / 点进去段数与当前层正确 / 能回根 / 目录区不超预算";
+    await ctx.shell.showTool("assets", "selfcheck");
+    const gotBar = await waitFor(function () {
+      return !!document.getElementById("vt-lib-bar");
+    }, 8000);
+
+    /* ★ 必须先切到**通用库**：任务库的根层没有子目录（项目筛选在顶部下拉里），
+       在任务库上跑这条会"空过"——第一版就是这样：读数说"根层没有可点的目录"，
+       判据却 PASS 了（因为 ②③ 在"没有目录可点"时被放宽成 true）。
+       **放宽成 true 的分支 = 一条永远绿的死判据**，这里改成：切不到通用库就明确说"不适用"。 */
+    const brandTab = document.getElementById("vt-lib-tab-brand");
+    if (brandTab) {
+      syntheticClick(brandTab, false);
+      await waitFor(function () {
+        const t = document.getElementById("vt-lib-tab-brand");
+        return !!t && String(t.getAttribute("class") || "").indexOf("is-on") >= 0;
+      }, 5000);
+      await waitFor(function () {
+        return !!document.querySelector("#vt-lib-bar .fchip");
+      }, 5000);
+    }
+
+    const barEl = document.getElementById("vt-lib-bar");
+    if (!gotBar || !barEl || !brandTab) {
+      rec(S72, true, "【不适用】素材库页没挂载，或镜像里没有通用库（拿不到 #vt-lib-bar / tab-brand）—— 本条不判失败");
+    } else {
+      const bcAtRoot = !!document.getElementById("vt-lib-bc");
+
+      /* 找第一行"真的目录"。v0.9.10 起子目录是**整行** `.dir`（不是 chips）；
+         `.dir.more`（「还有 N 个」/「收起」）没有 `data-key`，会被下面的判据过滤掉。 */
+      let firstDir = null;
+      const chips = (barEl.querySelectorAll) ? barEl.querySelectorAll(".dir") : [];
+      for (let i = 0; i < chips.length; i++) {
+        const k = String(chips[i].getAttribute("data-key") || "");
+        if (k) {
+          firstDir = chips[i];
+          break;
+        }
+      }
+      const dirName = firstDir ? String(firstDir.getAttribute("data-key") || "") : "";
+
+      let hRoot = barEl.offsetHeight || 0;
+      let bcOk = null;
+      let segN = 0;
+      let onOk = false;
+      let hDeeper = 0;
+      let backOk = null;
+      if (firstDir) {
+        syntheticClick(firstDir, false);
+        await waitFor(function () {
+          return !!document.getElementById("vt-lib-bc");
+        }, 3000);
+        const bc = document.getElementById("vt-lib-bc");
+        const segs = (bc && bc.querySelectorAll) ? bc.querySelectorAll(".bc-s") : [];
+        segN = segs.length;
+        for (let i = 0; i < segs.length; i++) {
+          const cl = String(segs[i].getAttribute("class") || "");
+          if (cl.indexOf("is-on") >= 0 && i === segs.length - 1) onOk = true;
+        }
+        bcOk = !!bc && segN === 2 && onOk;
+
+        /* ⚠️ 量高度前**要等布局落定**（这个坑踩过两次）：第一版在"面包屑出现"后立刻量，
+           读到和根层一模一样的值。现在只等"面包屑在了"再多等一拍，避免量到旧值。
+           ⚠️ 不再断言"深层一定比根层高" —— 子目录是整行列表后，**行数会变**
+              （根层 2 行、下钻后可能只剩 1 行 + 面包屑），"变高"不是不变量。
+              真正的不变量是**绝对预算 ≤ 96px**。 */
+        await sleep(120);
+        const bar2 = document.getElementById("vt-lib-bar");
+        hDeeper = bar2 ? (bar2.offsetHeight || 0) : 0;
+
+        /* 点「全部」回根 */
+        const root0 = (bc && bc.querySelectorAll) ? bc.querySelectorAll(".bc-s") : [];
+        let seg0 = null;
+        for (let i = 0; i < root0.length; i++) {
+          if (String(root0[i].getAttribute("data-crumb")) === "0") seg0 = root0[i];
+        }
+        if (seg0) {
+          syntheticClick(seg0, false);
+          await waitFor(function () {
+            return !document.getElementById("vt-lib-bc");
+          }, 3000);
+          backOk = !document.getElementById("vt-lib-bc");
+        }
+      }
+
+      const budgetOk = hRoot > 0 && hRoot <= 96 && (hDeeper === 0 || hDeeper <= 96);
+      const ck72 = [
+        ["\u2460 根层不画面包屑", !bcAtRoot],
+        /* ⚠️ 不能用 `firstDir ? ... : true` 放宽 —— 那样"根本没点进去"也会绿。
+           通用库里至少有一个目录可点（公司素材 / 个人收藏…），拿不到就是有问题。 */
+        ["\u2461 点进目录后：段数=2 且末段 is-on", !!firstDir && bcOk === true],
+        ["\u2462 点「全部」能回根", !!firstDir && backOk === true],
+        ["\u2463 目录区 \u2264 96px（根层与深层都不许超）", !!firstDir && budgetOk]
+      ];
+      const bad72 = [];
+      for (const c of ck72) if (!c[1]) bad72.push(c[0]);
+
+      rec(
+        S72,
+        bad72.length === 0,
+        "根层有无面包屑=" + (bcAtRoot ? "**有**（不该有）" : "无（对）") +
+          "\u3000点进的目录=" + (dirName ? "「" + dirName + "」" : "（根层没有可点的目录）") + "\n" +
+          "        点进去：段数=" + segN + "（须 2 = 全部+目录）·末段加粗=" + onOk +
+          "\u3000能回根=" + (backOk === null ? "（未测）" : backOk) + "\n" +
+          "        目录区高度：根层 " + hRoot + "px / 深层 " + hDeeper + "px" +
+          "（须 \u2264 96；行数会随层级变，所以只判**绝对预算**）\n" +
+          (bad72.length
+            ? "        \u26a0\ufe0f 未成立：" + bad72.join(" / ")
+            : "        \u21d2 面包屑下钻生效：根层不画面包屑，下钻后只多一片 26px 的面包屑；子目录是整行（📁 + 名字 + N 项）")
+      );
+    }
+  } catch (e72) {
+    rec("S72 面包屑下钻（自身抛异常）", false, "抛异常：" + ((e72 && e72.message) || e72));
+  }
+
+  /* ---------- S73: 模板库数据层（tpl.json，契约 §5.7）—— Step 1 只做数据，不碰 UI ----------
+     验的是"读得进来、不走错分支、条数对得上"：
+       ① `scopeKind(tpl.json)` 必须是 `tpl`（它也带 `groups[]`，只按结构判会被认成通用库）；
+       ② `flatten("tpl", …)` 的条数 === `items[]` 条数（一条不丢）；
+       ③ 与 `manifest.scopes[tpl].count` 对得上；
+       ④ 抽一个条目的 `groupPath` 打在读数里 —— 三层路径对不对，人要能一眼看出来。
+     ⚠️ **0 条模板是正常状态**（软件侧分区刚启用），所以"空"判 PASS 而不是 FAIL；
+        只有"解析不了 / 条数对不上 / kind 认错"才判红。 */
+  try {
+    const S73 = "S73 模板库数据层：tpl.json 能解析 / scopeKind=tpl / 条数与 manifest 一致";
+    let tplRaw = "";
+    try {
+      tplRaw = await data.readTextIn(["library"], "tpl.json", "");
+    } catch (eRead) {
+      tplRaw = "";
+    }
+
+    if (!tplRaw) {
+      rec(S73, true,
+        "【不适用】镜像里没有 tpl.json（软件侧的模板分区还没写出来）—— 本条不判失败");
+    } else {
+      let d = null;
+      let parseErr = "";
+      try {
+        d = JSON.parse(tplRaw);
+      } catch (eParse) {
+        parseErr = (eParse && eParse.message) || String(eParse);
+      }
+
+      if (!d) {
+        rec(S73, false, "tpl.json JSON 解析失败：" + parseErr);
+      } else {
+        const kind = mirror.scopeKind(d);
+        const items = Array.isArray(d.items) ? d.items : [];
+        const rows = (() => {
+          try {
+            return mirror.flatten("tpl", d);
+          } catch (eFlat) {
+            return { error: (eFlat && eFlat.message) || String(eFlat) };
+          }
+        })();
+        const flatErr = rows && rows.error ? String(rows.error) : "";
+        const list = Array.isArray(rows) ? rows : [];
+
+        /* manifest 里登记的条数（读不到就不比，不要把"没读到"当成"对不上"） */
+        let wantCount = null;
+        try {
+          const manRaw = await data.readTextIn(["library"], "manifest.json", "");
+          if (manRaw) {
+            const man = JSON.parse(manRaw);
+            for (const sc of (man.scopes || [])) {
+              if (sc && sc.id === "tpl" && typeof sc.count === "number") wantCount = sc.count;
+            }
+          }
+        } catch (eMan) {
+          wantCount = null;
+        }
+
+        const sample = list[0];
+        const samplePath = sample ? sample.groupPath.join(" \u203a ") : "（无模板，路径不适用）";
+        const groupsN = Array.isArray(d.groups) ? d.groups.length : 0;
+
+        const okAll =
+          !flatErr &&
+          kind === "tpl" &&
+          list.length === items.length &&
+          (wantCount === null || wantCount === list.length);
+
+        rec(
+          S73,
+          okAll,
+          "scopeKind=" + kind + "（须 tpl —— 它也有 groups[]，只按结构判会被当成通用库）\n" +
+          "        groups=" + groupsN + " 个　items=" + items.length + " 条　flatten 后=" + list.length +
+          " 条（须 === items，一条不丢）　manifest.count=" +
+          (wantCount === null ? "（没读到，不比）" : wantCount) + "\n" +
+          "        首条路径=" + samplePath + "（示例：" + (sample ? sample.asset.name : "无") + "）" +
+          (flatErr ? "\n        \u26a0\ufe0f flatten 抛异常：" + flatErr : "") +
+          (items.length === 0
+            ? "\n        \u21d2 分区已就位但还没有模板（正常状态）；数据层已能读，软件侧一收录就能显示"
+            : "\n        \u21d2 模板库数据层就绪")
+        );
+      }
+    }
+  } catch (e73) {
+    rec("S73 模板库数据层（自身抛异常）", false, "抛异常：" + ((e73 && e73.message) || e73));
+  }
+
+  /* ---------- S74: 新建稿页（模板库入口，v0.9.12）----------
+     验的是"这一页真的能挂载、而且空的时候不像坏了"：
+       ① 三段结构都在（`.nd-bar` / `.nd-body` / `.nd-foot`）；
+       ② **底栏不在滚动区里**（与素材库同一条纪律：底栏必须固定）；
+       ③ 有模板 ⇒ 出网格；没模板 ⇒ **正文里有引导文案**（不是一片空白）；
+       ④ 底栏未选中时给"选一个模板"的提示。
+     ⚠️ 本探针**不点打开**：打开要真 PS 文档 + handoff，那是 S68 那条路单独验的。 */
+  try {
+    const S74 = "S74 新建稿页（模板库入口）：三段结构在 / 底栏不在滚动区 / 空态有引导 / 卡片真的看得见";
+    await ctx.shell.showTool("template", "selfcheck");
+    const gotNd = await waitFor(function () {
+      return !!document.getElementById("vt-nd-body");
+    }, 8000);
+
+    const bar = document.getElementById("vt-nd-bar");
+    const body = document.getElementById("vt-nd-body");
+    const foot = document.getElementById("vt-nd-foot");
+    if (!gotNd || !body || !foot) {
+      rec(S74, false,
+        "页面没挂载起来：#vt-nd-bar=" + !!bar + " #vt-nd-body=" + !!body +
+        " #vt-nd-foot=" + !!foot + "（新建稿页在 tools 里注册了吗？）");
+    } else {
+      await sleep(200);
+      const grid = document.getElementById("vt-nd-grid");
+      const cards = (grid && grid.querySelectorAll) ? grid.querySelectorAll(".nd-card").length : 0;
+      const bodyTxt = String(body.textContent || "");
+      const footTxt = String(foot.textContent || "");
+      /* 底栏必须**不在**滚动容器里：掉进去就会跟着网格滚走 */
+      const footOut = foot.parentNode !== body &&
+        !(body.contains && body.contains(foot));
+      /* 有模板 ⇒ 网格有卡片；没模板 ⇒ 正文要给出"去软件里启用/收录"的引导 */
+      const emptyOk = bodyTxt.indexOf("模板") >= 0 &&
+        (bodyTxt.indexOf("VellumDesk") >= 0 || bodyTxt.indexOf("PSD") >= 0);
+      const hintOk = footTxt.indexOf("选一个模板") >= 0 || cards > 0;
+
+      /* 🔴 **"建出来了 ≠ 看得见"**（2026-10-17 真机踩到）：`display:grid` 在 UXP 不生效
+         ⇒ 卡片全被算成 0 高、页面一片空白、**不报错**。数据 3 / 建卡 3 全对，只有高度是 0。
+         ⇒ 这条判据专门量**第一张卡的高度**：它有内容（缩略图 92 + 两行文字）就必然 > 40px。
+         ⚠️ 必须**等布局落定**再量（刚 append 完读到 0 是正常的），最多等 1.5s。 */
+      let cardH = null;
+      let thW = null;
+      let thH = null;
+      let twoUp = null;
+      if (cards > 0) {
+        /* 缩略图盒子要等**校准**跑完（newdoc 在 400ms 后重试式校准，最长 ~2.5s）
+           ⇒ 这里等到"盒子接近正方形"再量，最多 3s。
+           ⚠️ 不能只等"宽度 > 0" —— 那时校准可能还没跑，会量到 CSS 的旧高度
+              （v0.9.26 就是这么读成 168×174 的：宽度有了、高度还是 174）。
+           超时后照样读实际值并**如实判失败**（不掩盖）。 */
+        await waitFor(function () {
+          const g = document.getElementById("vt-nd-grid");
+          const c = (g && g.querySelectorAll) ? g.querySelectorAll(".nd-card")[0] : null;
+          const t = c && c.querySelectorAll ? c.querySelectorAll(".nd-th")[0] : null;
+          if (!c || !t) return false;
+          const w = t.offsetWidth || 0;
+          const h = t.offsetHeight || 0;
+          return (c.offsetHeight || 0) > 0 && w > 0 && Math.abs(w - h) <= 6;
+        }, 3000);
+        const g2 = document.getElementById("vt-nd-grid");
+        const c2 = (g2 && g2.querySelectorAll) ? g2.querySelectorAll(".nd-card")[0] : null;
+        const t2 = c2 && c2.querySelectorAll ? c2.querySelectorAll(".nd-th")[0] : null;
+        cardH = c2 ? (c2.offsetHeight || 0) : 0;
+        thW = t2 ? (t2.offsetWidth || 0) : 0;
+        thH = t2 ? (t2.offsetHeight || 0) : 0;
+        /* ★ **卡片必须并排两列**（2026-10-17 漏掉的判据）：
+           卡宽 193 时 193×2=386 > 「内容宽 394 − 滚动条 ≈15 = 379」⇒ flex-wrap 把第二张
+           挤到下一行，页面看起来只有一列，而"卡片有高度""正方形"两条判据**全是绿的**。
+           ⇒ 用前两张卡的 `top` 是否相同判断（同一行 = 并排）。 */
+        try {
+          const allCards = (g2 && g2.querySelectorAll) ? g2.querySelectorAll(".nd-card") : [];
+          if (allCards.length >= 2) {
+            const r0 = allCards[0].getBoundingClientRect();
+            const r1 = allCards[1].getBoundingClientRect();
+            twoUp = Math.abs((r0.top || 0) - (r1.top || 0)) <= 2;
+          } else {
+            twoUp = true; // 只有 1 张卡，谈不上并排
+          }
+        } catch {
+          twoUp = null; // 读不到就不判
+        }
+      }
+
+      const cardVisible = cards === 0 ? true : (cardH !== null && cardH > 40);
+      /* ★ 缩略图盒子必须是**正方形**（v0.9.26 用户拍板按 512 信息卡整版显示）：
+         宽高偏差 > 6px 就说明校准没生效（或 CSS 被人改回了固定高度）。
+         ⚠️ 这条只能量"盒子"，量不出"图在盒子里清不清楚" —— 那是分辨率的问题，不是布局的。 */
+      const thSquare = cards === 0 ? true : (thW > 0 && Math.abs(thW - thH) <= 6);
+      /* 两列并排：读不到（null）不判死，读到 false 才判失败 */
+      const colsOk = twoUp === null ? true : twoUp;
+      const okAll = !!bar && footOut && (cards > 0 || emptyOk) && hintOk &&
+        cardVisible && thSquare && colsOk;
+      rec(
+        S74,
+        okAll,
+        "结构：目录区=" + !!bar + "　网格区=" + !!body +
+        "　底栏=" + !!foot + "（不在滚动区里=" + footOut + "）\n" +
+        "        模板卡片=" + cards + "　" +
+        (cards > 0 ? "（有模板，未选中）" : "（0 条）正文引导=" + emptyOk) +
+        "　首卡高度=" + (cardH === null ? "（无卡片）" : cardH + "px，须 > 40 —— 0 就是"
+          + "\"建了但看不见\"（UXP 不支持 CSS Grid）") + "\n" +
+        "        缩略图盒子=" + (thW === null ? "（无卡片）" : thW + "×" + thH + "px，须接近正方形（偏差 \u2264 6）") +
+        "　两列并排=" + (twoUp === null ? "（读不到）" : twoUp) +
+        "\n" +
+        "        底栏文案=" + JSON.stringify(footTxt.slice(0, 40)) +
+        (okAll ? "\n        \u21d2 模板入口已上线：这一段就是「从模板建稿」的入口" : "")
+      );
+    }
+  } catch (e74) {
+    rec("S74 新建稿页（自身抛异常）", false, "抛异常：" + ((e74 && e74.message) || e74));
+  }
+
+  /* ---------- S75: 按规范建稿端到端（v0.9.14 / Step 4）----------
+     这条是**真建稿**的：用 `lib/specs.js` 算出的 preset（不是手写字段）去 `createDocument`，
+     再**读回** 尺寸 / 分辨率 / 色彩模式 / **参考线条数**，最后关掉文档、切回用户原稿。
+       ① 画布尺寸必须等于"成品 + 两侧出血"换算出来的像素（差一个像素都算没做成）；
+       ② **参考线必须真的写进来**（读回 ≥ 4 条）—— 参考线是这个功能的唯一价值；
+       ③ **CMYK 要单独试一次**：规范表里五个规格全是 CMYK，而 CMYK 用 `Japan Color 2001 Coated`
+          这个印刷 profile。**本机装没装这个 profile 决定用户点「新建」能不能成** ——
+          不试一次就是在赌。
+     ⚠️ 用 20×20mm @72 的小稿（画布 74×74px）：验的是**参数传递**，不是像素渲染，
+        建一张 4760×10665 的 CMYK 大稿要几百 MB 内存，自检里不该干这事。
+     🔴 建完**必须关掉且不保存**，再 `activateDocument` 切回原来那张 —— 绝不留在用户面前。 */
+  try {
+    const S75 = "S75 按规范建稿：preset 建稿 → 读回尺寸/参考线（RGB + CMYK 各一次）→ 关掉";
+    const specLib = require("./specs.js");
+    const psApi75 = require("photoshop");
+    const app75 = psApi75.app;
+
+    const tiny = { id: "probe", name: "S75 探针规格", w: 20, h: 20, dpi: 72 };
+
+    const prevDoc75 = (app75.documents && app75.documents.length)
+      ? app75.documents[0] : null;
+    const prevId75 = prevDoc75 ? prevDoc75.id : null;
+
+    const rows75 = [];
+    const made75 = [];
+
+    /* 这里不走 `ps.createFromSpec`，而是把同一套动作（modal + createDocument + 读回）写在这里：
+       探针要能**逐项**看读数、还要自己收尾关文档，用产品函数会把这两件事糊在一起。
+       但 preset 本身**必须由 lib/specs.js 生成** —— 那才是要验的东西。 */
+    const create = async function (preset) {
+      let doc = null;
+      let err = "";
+      try {
+        await psApi75.core.executeAsModal(async function () {
+          doc = await app75.createDocument({
+            presetJSON: JSON.stringify(preset),
+            name: preset.name,
+          });
+        }, { commandName: "Vellum 探针：按规范建稿" });
+      } catch (e) {
+        err = (e && e.message) || String(e);
+      }
+      if (!doc) return { ok: false, error: err || "createDocument 未返回文档" };
+      made75.push(doc); // 存**文档对象**而不是 id：UXP 的 documents 是类数组，不保证有 find()
+      let w = null; let h = null; let res = null; let mode = ""; let guides = null;
+      try {
+        const n = (v) => {
+          if (v === null || v === undefined) return null;
+          let x = v;
+          if (typeof x === "object" && "_value" in x) x = x._value;
+          const k = Number(x);
+          return isFinite(k) ? k : null;
+        };
+        w = n(doc.width);
+        h = n(doc.height);
+        res = n(doc.resolution);
+        mode = doc.mode ? String(doc.mode) : "";
+        guides = (doc.guides && typeof doc.guides.length === "number") ? doc.guides.length : null;
+      } catch {
+        /* 读不到留 null */
+      }
+      return { ok: true, id: doc.id, width: w, height: h, resolution: res, mode: mode, guides: guides };
+    };
+
+    /* ① RGB（已知可用的对照） */
+    const cRgb = specLib.toCanvas({ w: tiny.w, h: tiny.h, dpi: tiny.dpi, mode: "RGB" });
+    const r1 = await create(specLib.toPresetJson(cRgb, tiny));
+
+    /* ② CMYK —— 规范表里五个规格**全是 CMYK**，profile 用印刷常用的 Japan Color 2001 Coated。
+       本机装没装这个 profile 决定用户点「新建」能不能成 ⇒ 必须真试一次。 */
+    const cCmyk = specLib.toCanvas({ w: tiny.w, h: tiny.h, dpi: tiny.dpi, mode: "CMYK" });
+    const r2 = await create(specLib.toPresetJson(cCmyk, tiny));
+
+    const expW = specLib.toCanvas({ w: tiny.w, h: tiny.h, dpi: tiny.dpi, mode: "RGB" }).width;
+
+    const sizeOk1 = r1.ok && r1.width === expW && r1.height === expW;
+    const guideOk1 = r1.ok && r1.guides !== null && r1.guides >= 4;
+    const modeOk1 = r1.ok && String(r1.mode).toUpperCase().indexOf("RGB") >= 0;
+    const sizeOk2 = r2.ok && r2.width === expW && r2.height === expW;
+    const guideOk2 = r2.ok && r2.guides !== null && r2.guides >= 4;
+    const modeOk2 = r2.ok && String(r2.mode).toUpperCase().indexOf("CMYK") >= 0;
+
+    /* 收尾：关掉自建文档（不保存），切回原稿 */
+    let closed = 0;
+    let closeErr = "";
+    for (const d of made75) {
+      try {
+        await psApi75.core.executeAsModal(async function () {
+          await d.close();
+        }, { commandName: "Vellum 探针：关闭临时文档" });
+        closed++;
+      } catch (e) {
+        closeErr += ((e && e.message) || String(e)) + "; ";
+      }
+    }
+    let backOk = null;
+    if (prevDoc75 && prevId75 !== null) {
+      try {
+        await psApi75.core.executeAsModal(async function () {
+          app75.activeDocument = prevDoc75;
+        }, { commandName: "Vellum 探针：切回原文档" });
+        backOk = !!(app75.activeDocument && app75.activeDocument.id === prevId75);
+      } catch (e) {
+        backOk = "切回失败：" + ((e && e.message) || String(e));
+      }
+    }
+
+    const okAll = sizeOk1 && guideOk1 && modeOk1 && sizeOk2 && guideOk2 &&
+      closed === made75.length && made75.length === 2 && backOk !== false;
+
+    rec(
+      S75,
+      okAll,
+      "期望画布=" + expW + "×" + expW + "px（20mm 成品 + 3mm 出血 @72dpi）\n" +
+      "        RGB：ok=" + r1.ok + "　实际=" + (r1.width || "?") + "×" + (r1.height || "?") +
+      " @" + (r1.resolution || "?") + "　模式=" + (r1.mode || "?") +
+      "　参考线=" + (r1.guides === null ? "null" : r1.guides) +
+      (r1.error ? "　err=" + r1.error : "") + "\n" +
+      "        CMYK：ok=" + r2.ok + "　实际=" + (r2.width || "?") + "×" + (r2.height || "?") +
+      " @" + (r2.resolution || "?") + "　模式=" + (r2.mode || "?") +
+      "　参考线=" + (r2.guides === null ? "null" : r2.guides) +
+      (r2.error ? "　err=" + r2.error : "") + "\n" +
+      "        尺寸对=" + sizeOk1 + "/" + sizeOk2 + "　模式对=" + modeOk1 + "/" + modeOk2 +
+      "　参考线≥4=" + guideOk1 + "/" + guideOk2 + "\n" +
+      "        收尾：关掉 " + closed + "/" + made75.length + "　切回原稿=" + backOk +
+      (closeErr ? "　关文档报错：" + closeErr : "") + "\n" +
+      (okAll
+        ? "        \u21d2 按规范建稿成立：尺寸/模式/参考线都由 presetJSON 一次写成"
+        : "        \u26a0\ufe0f 有一条没成立 —— 看上面每一项")
+    );
+  } catch (e75) {
+    rec("S75 按规范建稿（自身抛异常）", false, "抛异常：" + ((e75 && e75.message) || e75));
+  }
+
+  /* ---------- S76: 从模板打开成新稿（端到端，v0.9.14）----------
+     这是模板库**唯一真正有价值的一条链路**：读数走 `scope="tpl"` → 等软件把 PSD 拷进 handoff
+     → `app.open` 打开 → **参考线还在吗**（模板的全部价值就在这）。
+     🔴 判据分两类，**别混**：
+       · 插件侧的（打开成功、尺寸对、参考线在）—— 不成立就是**失败**；
+       · 软件侧的（handoff 有没有应答）—— 不应答**不算插件失败**，报"不适用"并给出读数
+         （VellumDesk 没开 / 还没支持 tpl 反查，都不该由插件背）。
+     ⚠️ 收尾必须关掉打开的文档且**不保存**，并切回用户原稿 —— 绝不留在面前。 */
+  try {
+    const S76 = "S76 从模板打开新稿：handoff(scope=tpl) → app.open → 尺寸与参考线还在";
+    const handoff = require("./handoff.js");
+    /* 读 tpl.json，挑第一条模板 */
+    let d76 = null;
+    try {
+      const raw76 = await data.readTextIn(["library"], "tpl.json", "");
+      if (raw76) d76 = JSON.parse(raw76);
+    } catch {
+      d76 = null;
+    }
+    const items76 = (d76 && Array.isArray(d76.items)) ? d76.items : [];
+
+    if (!items76.length) {
+      rec(S76, true,
+        "【不适用】模板库里没有模板（软件侧的「模板」分区还没收录）—— 本条不判失败");
+    } else {
+      const a76 = items76[0];
+      const p76 = require("./ps.js");
+      const psApi76 = require("photoshop");
+      const app76 = psApi76.app;
+      let opened = null;
+      let openedId = null;
+      const prevDoc76 = (app76.documents && app76.documents.length) ? app76.documents[0] : null;
+      const prevId76 = prevDoc76 ? prevDoc76.id : null;
+
+      const steps = [];
+      const req76 = await handoff.request(a76, "tpl");
+      steps.push("req ok=" + req76.ok + (req76.error ? " err=" + req76.error : ""));
+
+      let res76 = { ok: false, error: "未发请求" };
+      let inc76 = { ok: false, error: "未取文件" };
+      if (req76.ok) {
+        res76 = await handoff.waitForRes(req76.reqId, handoff.DEFAULT_TIMEOUT_MS);
+        steps.push("res ok=" + res76.ok + (res76.timedOut ? " timedOut" : "") +
+          (res76.error ? " err=" + res76.error : ""));
+        if (res76.ok) {
+          inc76 = await handoff.fetchIncoming(res76);
+          steps.push("file ok=" + inc76.ok + " name=" + (inc76.name || "-") +
+            " bytes=" + (inc76.byteLength === undefined ? "?" : inc76.byteLength));
+        }
+      }
+
+      /* 软件侧没应答 ⇒ 不适用（不是插件的错） */
+      if (!req76.ok || !res76.ok || !inc76.ok) {
+        rec(
+          S76,
+          true,
+          "【不适用】handoff 没走通（软件侧没应答 / 还没支持 tpl 反查）—— 本条不判失败\n" +
+          "        请求：scope=tpl · id=" + a76.id + "　" + steps.join("　|　") +
+          "\n        ⇒ 插件侧链路已就绪，等 VellumDesk 能按 scope=tpl 拷出 PSD 再复验"
+        );
+      } else {
+        let op76 = { ok: false, error: "未打开" };
+        try {
+          op76 = await p76.openFile(inc76.entry, { commandName: "Vellum 探针：从模板打开" });
+        } catch (e) {
+          op76 = { ok: false, error: (e && e.message) || String(e) };
+        }
+        if (op76.ok) {
+          opened = op76.doc;
+          openedId = op76.doc ? op76.doc.id : null;
+        }
+        steps.push("open ok=" + op76.ok + (op76.error ? " err=" + op76.error : ""));
+
+        /* 与镜像里登记的尺寸对比 —— 镜像说多大，打开就该多大 */
+        const sizeOk = op76.ok && op76.width === a76.width && op76.height === a76.height;
+        const guidesOk = op76.ok && op76.guides !== null &&
+          (typeof a76.guides !== "number" || op76.guides >= a76.guides);
+
+        /* 收尾：关掉（不保存）→ 切回原稿 */
+        let closed76 = false;
+        let closeErr76 = "";
+        if (opened) {
+          try {
+            await psApi76.core.executeAsModal(async function () {
+              await opened.close();
+            }, { commandName: "Vellum 探针：关闭模板新稿" });
+            closed76 = true;
+          } catch (e) {
+            closeErr76 = (e && e.message) || String(e);
+          }
+        }
+        let backOk76 = null;
+        if (prevDoc76) {
+          try {
+            await psApi76.core.executeAsModal(async function () {
+              app76.activeDocument = prevDoc76;
+            }, { commandName: "Vellum 探针：切回原文档" });
+            backOk76 = !!(app76.activeDocument && app76.activeDocument.id === prevId76);
+          } catch (e) {
+            backOk76 = "切回失败：" + ((e && e.message) || String(e));
+          }
+        }
+
+        const okAll = op76.ok && sizeOk && guidesOk && closed76 && backOk76 !== false;
+        rec(
+          S76,
+          okAll,
+          "模板：" + a76.name + "（镜像登记 " + a76.width + "×" + a76.height +
+          " · 参考线 " + (typeof a76.guides === "number" ? a76.guides : "未登记") + "）\n" +
+          "        " + steps.join("　|　") + "\n" +
+          "        打开后：尺寸=" + (op76.width || "?") + "×" + (op76.height || "?") +
+          "（与镜像一致=" + sizeOk + "）　模式=" + (op76.mode || "?") +
+          "　参考线=" + (op76.guides === null ? "null" : op76.guides) + "（够=" + guidesOk + "）\n" +
+          "        收尾：关掉=" + closed76 + "　切回原稿=" + backOk76 +
+          (closeErr76 ? "　关闭报错：" + closeErr76 : "") + "\n" +
+          (okAll
+            ? "        \u21d2 从模板建稿端到端成立：原件不动、新稿打开、参考线保留"
+            : "        \u26a0\ufe0f 有一条没成立 —— 看上面每项")
+        );
+      }
+    }
+  } catch (e76) {
+    rec("S76 从模板打开新稿（自身抛异常）", false, "抛异常：" + ((e76 && e76.message) || e76));
+  }
+
+  /* ---------- S77: 参考线必须是「百分比」，且落在成品边（v0.9.35）----------
+     🔴 起因（2026-10-17 用户截图报障）：A3 建出来**只有 2 条参考线**，位置也离边缘很远。
+     根因：`lib/specs.js` 给的 `coordinate` 是**像素**（35 / 3543 …），
+     而 PS 的 presetJSON **按百分比解释** ⇒ 3543% 落到画布外 ⇒ 只剩左、上两条可见。
+
+     🔴 **为什么之前一直没抓到**：S68/S75 只数 `document.guides.length` ——
+     即使 2 条在画布外，它照样回 **4**。**条数对 ≠ 参考线对。**
+     而 `Document.guides[i]` 只回 `{_id,_docId}`，**读不到坐标**（已知限制），
+     `get` `guides` property 报 -25920、读整份 document 描述符只回 `true`。
+     ⇒ **真机上没有可用的坐标判据**，所以这一条把重心放在**纯函数**上：
+        ① 用 `toCanvas` 算 A3，断言 4 条全在 0–100、左右和=100、回算 px = 出血量；
+        ② 真机只验"百分比格式被 PS 接受"（建 400×400 小稿、回读 4 条）。
+     真机的位置正确性**最终由人眼确认**（用户看参考线贴不贴边）。 */
+  try {
+    const S77 = "S77 参考线：百分比格式（0–100）+ 落在成品边（纯函数判死）+ 真机接受";
+    const specLib77 = require("./specs.js");
+    const ph77 = require("photoshop");
+    const app77 = ph77.app;
+
+    /* ① 纯函数：A3 海报（300dpi，3mm 出血） */
+    const cA3 = specLib77.toCanvas({ w: 297, h: 420, dpi: 300, mode: "CMYK" });
+    const gs = cA3.guides || [];
+    const vs = gs.filter((g) => g.direction === "v").map((g) => g.coordinate);
+    const hs = gs.filter((g) => g.direction === "h").map((g) => g.coordinate);
+    const pctOk = gs.length === 4 &&
+      gs.every((g) => typeof g.coordinate === "number" && g.coordinate > 0 && g.coordinate < 100);
+    const sumOk = vs.length === 2 && hs.length === 2 &&
+      Math.abs(vs[0] + vs[1] - 100) < 0.01 && Math.abs(hs[0] + hs[1] - 100) < 0.01;
+    const backX = Math.round((vs[0] / 100) * cA3.width);
+    const backY = Math.round((hs[0] / 100) * cA3.height);
+    const backOk = Math.abs(backX - cA3.bleedPx) <= 1 && Math.abs(backY - cA3.bleedPx) <= 1;
+
+    /* ② 真机：百分比格式被 PS 接受（400×400 上 2.5% = 10px、97.5% = 390px） */
+    const preset77 = {
+      name: "vt-s77",
+      width: 400,
+      height: 400,
+      units: "pixelsUnit",
+      resolution: 72,
+      resolutionUnits: "inchesUnit",
+      depth: 8,
+      scale: 1,
+      mode: "RGB",
+      fill: "white",
+      profile: "sRGB IEC61966-2.1",
+      guides: [
+        { direction: "v", coordinate: 2.5 },
+        { direction: "v", coordinate: 97.5 },
+        { direction: "h", coordinate: 2.5 },
+        { direction: "h", coordinate: 97.5 },
+      ],
+      artboards: [],
+    };
+
+    let doc77 = null;
+    let err77 = "";
+    try {
+      await ph77.core.executeAsModal(async function () {
+        doc77 = await app77.createDocument({ presetJSON: JSON.stringify(preset77) });
+      }, { commandName: "Vellum 探针：guides 百分比" });
+    } catch (e) {
+      err77 = (e && e.message) || String(e);
+    }
+
+    let n77 = null;
+    if (doc77) {
+      try {
+        n77 = (doc77.guides && typeof doc77.guides.length === "number") ? doc77.guides.length : null;
+      } catch { /* 忽略 */ }
+      try {
+        await ph77.core.executeAsModal(async function () {
+          await doc77.close();
+        }, { commandName: "Vellum 探针：关闭" });
+      } catch { /* 忽略 */ }
+    }
+
+    const liveOk = !!doc77 && n77 === 4;
+    rec(
+      S77,
+      pctOk && sumOk && backOk && liveOk,
+      "A3（303×426mm @300dpi ⇒ " + cA3.width + "×" + cA3.height + "px，出血 " + cA3.bleedPx + "px）\n" +
+      "        参考线=" + gs.map((g) => g.direction + g.coordinate).join(",") + "\n" +
+      "        全在 0–100=" + pctOk + "　左右和/上下和=100：" + sumOk +
+      "　回算 " + backX + "px / " + backY + "px（须 ≈" + cA3.bleedPx + "）=" + backOk + "\n" +
+      "        真机：建 400×400（百分比 2.5/97.5）→ 回读 " +
+      (n77 === null ? "读不到" : n77 + " 条") + "（须 4）" + (err77 ? "　错误：" + err77 : "") +
+      (liveOk ? "" : "\n        ⚠️ 真机那一半没成 —— 但**报错时用户能马上看到**，别只看纯函数绿")
+    );
+  } catch (e77) {
+    rec("S77 参考线百分比（自身抛异常）", false,
+      "抛异常：" + ((e77 && e77.message) || e77));
   }
 
   /* ---------- 收尾：写报告 ---------- */

@@ -534,6 +534,370 @@
         color: var(--vt-tx3);
       }
 
+      /* --------------------------------------------------- 导出审核版（M5 第 4 步）
+         ⚠️ 一律**不赌未验证控件**：真机自检 S23 读数显示 sp-textfield / sp-picker /
+            sp-button **全部「未注册」**（基准对照逐项相同 ⇒ 读数可信），`<input>` 本
+            项目也从没验过 ⇒ 所以这里是「div role=button + 自绘步进器」，与 table.js
+            当时的处理一致。
+         ⚠️ 按钮一律 <div role="button">，理由是 `<button>` 在真机不吃 display:flex
+            且强制文字居中（本文件头部纪律 ②）。 */
+      .rv {
+        display: block;
+        position: relative;
+      }
+
+      .rv-sum {
+        padding: 10px 12px;
+        background: var(--vt-sink);
+        border-bottom: 1px solid var(--vt-line2);
+      }
+
+      .rv-doc {
+        font-size: 13px;
+        color: var(--vt-tx);
+        word-break: break-word;
+      }
+
+      .rv-basis {
+        margin-top: 4px;
+        font-size: 11px;
+        color: var(--vt-tx3);
+        line-height: 1.5;
+      }
+
+      .rv-sec {
+        padding: 10px 12px 12px;
+        border-bottom: 1px solid var(--vt-hair);
+      }
+
+      .rv-h {
+        font-size: 11px;
+        color: var(--vt-tx3);
+        margin-bottom: 7px;
+      }
+
+      .rv-chips {
+        display: flex;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+
+      .rv-chip {
+        display: flex;
+        align-items: center;
+        height: 24px;
+        padding: 0 10px;
+        margin: 0 6px 6px 0;
+        font-size: 12px;
+        color: var(--vt-tx2);
+        background: var(--vt-surf);
+        border: 1px solid var(--vt-line);
+        border-radius: 3px;
+        cursor: pointer;
+      }
+
+      .rv-chip:hover {
+        border-color: var(--vt-ac);
+        color: var(--vt-tx);
+      }
+
+      .rv-chip.is-on {
+        color: #ffffff;
+        background: var(--vt-ac);
+        border-color: var(--vt-ac);
+      }
+
+      .rv-step {
+        display: flex;
+        align-items: center;
+      }
+
+      .rv-step.is-off {
+        opacity: 0.45;
+      }
+
+      .rv-sbtn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 24px;
+        font-size: 14px;
+        color: var(--vt-tx);
+        background: var(--vt-raised);
+        border: 1px solid var(--vt-line);
+        border-radius: 3px;
+        cursor: pointer;
+      }
+
+      .rv-sbtn:hover {
+        border-color: var(--vt-ac);
+        color: var(--vt-ac-hi);
+      }
+
+      .rv-sval {
+        min-width: 62px;
+        height: 24px;
+        margin: 0 6px;
+        padding: 0 6px;
+        font-family: var(--vt-mono);
+        font-size: 12px;
+        line-height: 24px;
+        text-align: center;
+        color: var(--vt-tx);
+        background: var(--vt-sink);
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+      }
+
+      .rv-prev {
+        padding: 8px 10px;
+        background: var(--vt-sink);
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+      }
+
+      .rv-pline {
+        font-family: var(--vt-mono);
+        font-size: 11px;
+        line-height: 1.65;
+        color: var(--vt-tx);
+        word-break: break-word;
+      }
+
+      .rv-ptag {
+        margin-top: 2px;
+        font-family: var(--vt-mono);
+        font-size: 11px;
+        text-align: right;
+        color: var(--vt-err);
+      }
+
+      /* 迷你参数条：用**导出时的真实配色**画一条，让黑白主题一眼可见 */
+      .rv-fake {
+        margin-top: 8px;
+        padding: 8px 10px;
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+      }
+
+      .rv-fake .rv-pline {
+        color: inherit;
+      }
+
+      .rv-frow {
+        display: flex;
+        align-items: center;
+        margin-top: 4px;
+      }
+
+      .rv-fbasis {
+        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        font-size: 11px;
+        color: inherit;
+        word-break: break-word;
+      }
+
+      .rv-flogo {
+        width: 20px;
+        height: 13px;
+        margin-right: 4px;
+      }
+
+      .rv-ftag {
+        flex: 0 0 auto;
+        font-size: 11px;
+        margin-left: 8px;
+      }
+
+      .rv-meta {
+        font-size: 11px;
+        line-height: 1.6;
+        color: var(--vt-tx2);
+        word-break: break-word;
+      }
+
+      .rv-note {
+        margin-top: 4px;
+        font-size: 11px;
+        line-height: 1.55;
+        color: var(--vt-tx3);
+        word-break: break-word;
+      }
+
+      .rv-hint {
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--vt-tx3);
+      }
+
+      .rv-out {
+        display: flex;
+        align-items: center;
+      }
+
+      .rv-outname {
+        flex: 1 1 auto;
+        min-width: 0;
+        font-size: 12px;
+        color: var(--vt-tx);
+        word-break: break-word;
+        margin-right: 8px;
+      }
+
+      .rv-foot {
+        display: flex;
+        align-items: center;
+        padding: 10px 12px;
+        border-top: 1px solid var(--vt-line2);
+        background: var(--vt-bar);
+      }
+
+      .rv-btn {
+        display: flex;
+        align-items: center;
+        height: 24px;
+        padding: 0 12px;
+        margin-right: 8px;
+        font-size: 12px;
+        color: var(--vt-tx);
+        background: var(--vt-raised);
+        border: 1px solid var(--vt-line);
+        border-radius: 3px;
+        cursor: pointer;
+      }
+
+      .rv-btn:hover {
+        border-color: var(--vt-ac);
+        color: var(--vt-ac-hi);
+      }
+
+      .rv-btn.is-primary {
+        color: #ffffff;
+        background: var(--vt-ac);
+        border-color: var(--vt-ac);
+      }
+
+      .rv-btn.is-primary:hover {
+        background: var(--vt-ac-hi);
+        color: #ffffff;
+      }
+
+      .rv-btn.is-busy {
+        opacity: 0.6;
+      }
+
+      .rv-ressum {
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--vt-tx);
+        word-break: break-word;
+      }
+
+      .rv-ressum.is-ok {
+        color: var(--vt-ok);
+      }
+
+      .rv-ressum.is-bad {
+        color: var(--vt-err);
+      }
+
+      /* 出血三态浮层：**先于任何模态**出现；铺满整个面板，点按钮才继续 */
+      .rv-mask {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 50;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        background: rgba(0, 0, 0, 0.55);
+      }
+
+      .rv-dlg {
+        width: 88%;
+        max-width: 340px;
+        padding: 14px 16px 12px;
+        background: var(--vt-surf);
+        border: 1px solid var(--vt-line);
+        border-radius: 4px;
+      }
+
+      .rv-dlg-t {
+        font-size: 13px;
+        color: var(--vt-tx);
+        margin-bottom: 6px;
+      }
+
+      .rv-dlg-sub {
+        font-size: 11px;
+        line-height: 1.55;
+        color: var(--vt-tx3);
+        margin-bottom: 10px;
+      }
+
+      .rv-dlg-row {
+        display: flex;
+        align-items: center;
+        height: 26px;
+        padding: 0 8px;
+        margin-bottom: 4px;
+        font-size: 12px;
+        color: var(--vt-tx);
+        background: var(--vt-sink);
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+        cursor: pointer;
+      }
+
+      .rv-dlg-row:hover {
+        border-color: var(--vt-ac);
+      }
+
+      .rv-dlg-row.is-on {
+        border-color: var(--vt-ac);
+        background: var(--vt-raised);
+      }
+
+      .rv-dlg-radio {
+        width: 16px;
+        font-size: 12px;
+        color: var(--vt-ac-hi);
+      }
+
+      .rv-dlg-lb {
+        font-size: 12px;
+      }
+
+      .rv-dlg-mm {
+        display: flex;
+        align-items: center;
+        margin: 8px 0 2px;
+      }
+
+      .rv-dlg-mm.is-off {
+        opacity: 0.45;
+      }
+
+      .rv-dlg-note {
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--vt-tx3);
+        margin-top: 8px;
+      }
+
+      .rv-dlg-foot {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 12px;
+      }
+
       /* ------------------------------------------------------- 首页 · 功能选择 */
       .hero {
         display: block;
@@ -1039,6 +1403,188 @@
         padding: 12px 14px 0;
       }
 
+      /* ── 新建稿页（模板库入口，v0.9.12）──────────────────────────────────
+         三段式与素材库**同一套**：顶部目录固定 / 中间网格滚动 / 底部详情固定。
+         🔴 模板属于「新建稿」页、不属于素材库（契约 §5.7），所以这里是**独立页面**，
+            不复用 `.s-lib` 的类名 —— 免得以后改素材库顺手把模板页带坏。 */
+      .s-nd {
+        position: absolute;
+        left: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        padding: 12px 14px 0;
+      }
+
+      .nd-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex: 0 0 auto;
+        margin-bottom: 8px;
+      }
+
+      .nd-ttl {
+        font-size: 12px;
+        color: var(--vt-tx3);
+      }
+
+      /* 两个模式（从模板 / 按规范）：等宽两格，样式跟随旧 chips 的观感 */
+      .nd-tabs {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+
+      .nd-tab {
+        flex: 1 1 0;
+        height: 24px;
+        line-height: 22px;
+        text-align: center;
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+        font-size: 11px;
+        color: var(--vt-tx3);
+        cursor: pointer;
+      }
+
+      .nd-tab:hover {
+        border-color: var(--vt-tx4);
+        color: var(--vt-tx);
+      }
+
+      .nd-tab.is-on {
+        background: var(--vt-surf2);
+        border-color: var(--vt-line);
+        color: var(--vt-tx);
+        font-weight: 600;
+      }
+
+      .nd-bar {
+        flex: 0 0 auto;
+        padding-bottom: 8px;
+        margin-bottom: 8px;
+        border-bottom: 1px solid var(--vt-line2);
+      }
+
+      /* 中间**唯一滚动区** */
+      .nd-body {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-bottom: 8px;
+      }
+
+      /* 🔴 **UXP 不支持 CSS Grid**（2026-10-17 真机踩到）：
+         `display:grid` 下容器与子项的高度全算成 **0** —— 数据有 3 条、卡片也建好了，
+         屏幕上却一片空白，而且 **不报错**（`offsetHeight` 全是 0，是唯一的线索）。
+         ⇒ 一律用 flex + 百分比宽度做两列（素材库的瀑布流也是 flex，没有用 grid）。 */
+      /* 🔴 **用固定卡宽，不用百分比**（v0.9.31 定案）。
+         为什么：缩略图要正方形 ⇒ 高度必须等于"卡内可用宽"。
+         · 用 `48.5%` 的话，卡宽随面板变 ⇒ 只能靠 JS 量了再改高度，
+           而**"在 UXP 里量尺寸"这件事本身就不可靠**（布局落定时机难判，
+           本轮为此连错三版：168×174 / inline height 为空）。
+         · 改成固定 186px ⇒ 卡内可用宽 = 186 − padding 12 − border 2 = **172**，
+           缩略图固定 172 高 ⇒ **必然正方形，零测量、零时机依赖**。
+         ⚠️ **宽度是 186 不是 193**：面板内容宽 394 看着够放 2×193，但
+           **出现滚动条时要再扣掉约 15px**（实测只剩 379）⇒ 193×2=386 **放不下，卡片会掉成一列**。
+           186×2 = 372 < 379 ⇒ 两列稳。改这个数**必须同时改缩略图高度**（差 = 14）。
+         面板更宽时两列左右分开（space-between），卡片仍是正方形。 */
+      .nd-grid {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+      }
+
+      .nd-card {
+        display: block;
+        width: 186px;
+        margin: 0 0 8px;
+        padding: 6px;
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+        background: var(--vt-surf2);
+        cursor: pointer;
+        box-sizing: border-box;
+      }
+
+      .nd-card:hover {
+        border-color: var(--vt-tx4);
+      }
+
+      .nd-card.is-on {
+        border-color: var(--vt-ac);
+      }
+
+      /* 缩略图盒子：**正方形**（v0.9.26 用户拍板，按 512 信息卡整版显示）。
+         ── 背景：软件侧 2026-10-17 把缩略图从「PSD 预览」换成「512×512 信息卡」，
+            上面画了品类 / 成品尺寸 / 出血 / 色彩模式。缩到 120 高时那几行小字只剩 ≈5px，
+            **出血和色彩模式基本是糊的** ⇒ 用户选「按正方形铺满列宽」，牺牲一屏行数换可读性。
+         · 图是**不透明浅色**（#fbfaf7）⇒ 盒子底色必须跟它一致，否则留白会露成深色条。
+         · `object-fit: contain` ⇒ **不裁切、不拉伸**，512 方图 / 72×160 竖图 / 160 方图
+           都能正常显示（我们从来没有假设过缩略图的尺寸或比例）。
+         · 高度 172 = 卡宽 186 − padding 12 − border 2 ⇒ **正方形是算出来的，不是量出来的**。 */
+      .nd-th {
+        position: relative;
+        /* 172 = 卡宽 186 − 左右 padding 12 − 左右边框 2（**border-box**，边框也算在 186 里）
+           ⇒ 盒子宽高相等 = 正方形。**改卡宽/内边距时必须同步改这个数**（差 = 14）。 */
+        height: 172px;
+        border-radius: 2px;
+        background: #fbfaf7;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .nd-ph {
+        font-size: 10px;
+        color: var(--vt-tx4);
+        letter-spacing: 1px;
+      }
+
+      .nd-img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      .nd-nm {
+        display: block;
+        margin-top: 5px;
+        font-size: 11px;
+        color: var(--vt-tx);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .nd-mt {
+        display: block;
+        margin-top: 2px;
+        font-size: 10px;
+        color: var(--vt-tx4);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* 底部固定详情（复用 `.lf-*` 的排版，视觉与素材库那一条一致） */
+      .nd-foot {
+        flex: 0 0 auto;
+        margin: 10px 0;
+        padding: 8px 10px;
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+        background: var(--vt-surf2);
+      }
+
       /* 固定区：不参与伸缩，永远可见（`.lib-body` 才是唯一的滚动区） */
       .lib-top,
       .lib-meta,
@@ -1327,59 +1873,6 @@
         opacity: 0.65;
       }
 
-      /* ── 落点：九宫格（v0.3.0；v0.3.1 起「落点」二字移到九宫格**上方**）
-         3×3 用 flex-wrap + 百分比（不用 Grid、不用 gap） */
-      .anchor-wrap {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        flex: 0 0 auto;
-        margin-left: 14px;
-      }
-
-      .anchor-hd {
-        margin-bottom: 4px;
-        font-size: 11px;
-        color: var(--vt-tx4);
-      }
-
-      .anchors {
-        display: flex;
-        flex-wrap: wrap;
-        width: 96px;
-      }
-
-      .anchor-cell {
-        width: 33.3333%;
-        height: 22px;
-        padding: 3px;
-        cursor: pointer;
-      }
-
-      .anchor-dot {
-        display: block;
-        width: 100%;
-        height: 100%;
-        border-radius: 2px;
-        border: 1px solid var(--vt-line2);
-        background: transparent;
-      }
-
-      .anchor-cell:hover .anchor-dot {
-        border-color: var(--vt-tx4);
-      }
-
-      .anchor-cell.is-on .anchor-dot {
-        background: var(--vt-ac);
-        border-color: var(--vt-ac);
-      }
-
-      /* ⚠️ 已废弃：v0.3.1 起「落点」二字改用 `.anchor-hd`（在九宫格上方），
-         说明文字挪到置入按钮下方。留这条只是防止老标记写法意外错位。 */
-      .anchor-wrap .lf-note {
-        margin-left: 0;
-      }
-
       /* 顶部行里的「项目」下拉（仅任务库）：紧挨刷新按钮左侧 */
       .lib-proj {
         flex: 0 0 auto;
@@ -1403,6 +1896,124 @@
         opacity: 0.7;
       }
 
+      /* ── 目录面包屑（v0.9.9，用户拍板的"方向 B：面包屑下钻"）──────────────
+         只在下钻后出现（根层只显示一个「全部」是噪音）。
+         🔴 它固定在这一块的最上面、**不能随网格滚走** —— 否则用户在深目录里会迷路。
+         高度 ≈ 20 + 6 = 26px，从"两行 chips 60px"里省的（见 docs/55 §九 高度预算）。 */
+      .bc {
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
+        min-height: 20px;
+        margin: 0 0 6px;
+        font-size: 11px;
+        overflow: hidden;
+      }
+
+      /* 每一段都可以很长 ⇒ 必须 min-width:0 + 省略号，否则整行被一段文件名撑爆 */
+      .bc-s {
+        flex: 0 1 auto;
+        min-width: 0;
+        max-width: 104px;
+        padding: 1px 4px;
+        border-radius: 3px;
+        color: var(--vt-tx3);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+      }
+
+      .bc-s:hover {
+        color: var(--vt-tx);
+        background: var(--vt-surf2);
+      }
+
+      /* 当前层：加粗、**不可点**（点了还是原地，纯属骗人） */
+      .bc-s.is-on {
+        color: var(--vt-tx);
+        font-weight: 600;
+        cursor: default;
+        background: transparent;
+      }
+
+      .bc-sep {
+        flex: 0 0 auto;
+        margin: 0 1px;
+        color: var(--vt-tx4);
+      }
+
+      /* 「共 N 张」靠右，不参与压缩 */
+      .bc-n {
+        flex: 0 0 auto;
+        margin-left: auto;
+        padding-left: 8px;
+        font-size: 10px;
+        color: var(--vt-tx4);
+        white-space: nowrap;
+      }
+
+      /* ── 子目录列表（v0.9.10：**整行**，以 mock 为准）──────────────────
+         用户对过 mock 后指出"新 UI 不是这个吗"—— 设计稿是行、不是 chips。
+         行的好处：目录名常常很长（chips 会被挤成省略号）、点按目标 26px 比 22px 好点。
+         一行 26 + 3 间距 = 29px；**超过 3 行就折叠**（子目录数量由软件侧决定）。 */
+      .dirs {
+        display: block;
+        margin: 0 0 4px;
+      }
+
+      .dir {
+        display: flex;
+        align-items: center;
+        height: 26px;
+        padding: 0 8px;
+        margin: 0 0 3px;
+        border: 1px solid var(--vt-line2);
+        border-radius: 3px;
+        color: var(--vt-tx3);
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .dir:hover {
+        border-color: var(--vt-tx4);
+        color: var(--vt-tx);
+      }
+
+      .dir .i {
+        margin-right: 7px;
+        opacity: 0.85;
+      }
+
+      /* 名字占满剩余宽度，超长省略 —— 行高不因名字变长而变（这是高度预算的前提） */
+      .dir .dn {
+        flex: 1 1 auto;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .dir .dc {
+        flex: 0 0 auto;
+        margin-left: 8px;
+        font-size: 10px;
+        color: var(--vt-tx4);
+      }
+
+      /* 折叠开关（「还有 N 个」/「收起」）：虚线边框 + 居中，与真实目录区分开 */
+      .dir.more {
+        border-style: dashed;
+        justify-content: center;
+        color: var(--vt-tx4);
+      }
+
+      /* 目录行的选中态（规范列表用它表示"当前选的规格"） */
+      .dir.is-on {
+        border-color: var(--vt-ac);
+        color: var(--vt-tx);
+      }
+
       .lib-count {
         font-size: 11px;
         color: var(--vt-tx4);
@@ -1416,7 +2027,9 @@
         min-height: 0;
         overflow-y: auto;
         overflow-x: hidden;
-        padding-bottom: 22px;
+        /* v0.9.8：插入面板已移到**下方固定**，它自己的 margin-top 提供了间距，
+           这里不用再留 22px（否则滚动区底部白一截，最后一行看起来"没到头"）。 */
+        padding-bottom: 8px;
       }
 
       /* 瀑布流（v0.3.4，用户要求"缩略图容器与缩略图比例一致"）
@@ -1550,13 +2163,30 @@
         text-overflow: ellipsis;
       }
 
-      /* 选中详情 + 置入（v0.3.2 起**挪到网格上方** —— 素材多时不必滚到底部去按置入） */
+      /* 选中详情 + 置入（v0.9.8 起**固定在面板底部** —— 用户拍板的三段式：
+         目录固定上 / 插入固定下 / 中间只有网格滚动。它 `flex: 0 0 auto` ⇒ 不随网格滚走，
+         所以 v0.3.2 那个"选完素材要滚到最底下按置入"的痛点不会回来。 */
       .lib-foot {
-        margin: 0 0 10px;
+        margin: 10px 0 10px;
         padding: 9px 10px;
         border: 1px solid var(--vt-line2);
         border-radius: 3px;
         background: var(--vt-surf2);
+      }
+
+      /* ── 插入面板（v0.9.7 重新设计；用户 2026-10-17 拍板）─────────────
+         形态：左＝素材名 + 一行元信息，右＝「置入」两字按钮。
+         🔴 硬指标：**选中时总高 ≤ 50px**。省空间的主力是**去掉落点九宫格（66px）**，
+            不是按钮宽度 —— 所以别为了"信息更全"往回加行。
+         ⚠️ 位置 / 标签 / 原图路径**不在版面上**，全部进 `title`（hover 看）：
+            平时不看，排障时要能拿到。 */
+      .lib-foot {
+        flex: 0 0 auto;
+        /* 🔴 水平内边距**必须有**：这个块有 border + background，是张"卡片"。
+           写成 0 时文字贴左边框、按钮贴右边框，看起来就是"溢出"（用户 2026-10-17 截图报障）。
+           外层 `.s-lib` 的 14px 是卡片**外面**的留白，管不到卡片内部。
+           ⚠️ 只加水平方向 —— 垂直方向一动，S71 的 40～56px 判据就要重新核。 */
+        padding: 8px 10px;
       }
 
       .lf-hint {
@@ -1565,62 +2195,61 @@
         color: var(--vt-tx4);
       }
 
-      .lf-t {
-        display: block;
-        margin-bottom: 3px;
-        font-size: 12px;
-        color: var(--vt-tx);
-        word-break: break-all;
-      }
-
-      .lf-s {
-        display: block;
-        margin-bottom: 2px;
-        font-size: 11px;
-        line-height: 1.6;
-        color: var(--vt-tx3);
-        word-break: break-all;
-      }
-
-      .lf-path {
-        font-size: 10px;
-        color: var(--vt-tx4);
-      }
-
-      /* 素材信息与动作区之间的分隔线：**细、不抢视线**（用户要求"不用太明显"） */
-      .lf-sep {
-        height: 1px;
-        margin: 9px 0;
-        background: var(--vt-line2);
-      }
-
-      /* 动作区（v0.3.1 按用户要求改排）：**左＝置入按钮（说明文字在它下方）、右＝落点九宫格** */
-      .lf-act {
+      .lf-main {
         display: flex;
-        flex-wrap: wrap;
-        align-items: flex-start;
-        justify-content: space-between;
+        align-items: center;
       }
 
-      .lf-act-l {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
+      /* 左块**必须** min-width:0 —— 否则长文件名会把右侧按钮挤出面板 */
+      .lf-l {
         flex: 1 1 auto;
         min-width: 0;
       }
 
-      .lf-note {
-        margin-top: 6px;
-        font-size: 11px;
-        line-height: 1.5;
-        color: var(--vt-tx4);
-        word-break: break-all;
+      .lf-n {
+        display: block;
+        font-size: 12px;
+        color: var(--vt-tx);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
-      /* 「不能置入」的提示（原文件丢失 / 类型不支持）—— 用主题里的警示色，两种主题都读得清 */
-      .lf-note.is-warn {
-        color: var(--vt-warn);
+      .lf-m {
+        display: block;
+        margin-top: 2px;
+        font-size: 10px;
+        color: var(--vt-tx4);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* 「置入」两字按钮：宽约 44px（2 字 × 12 + 左右各 10）。
+         为什么不用 icon：340 宽面板里名称区还剩 ~270px（够 22 个中文字），
+         而箭头图标需要用户去猜，置入又是高频操作。 */
+      .lf-btn {
+        flex: 0 0 auto;
+        height: 24px;
+        line-height: 22px;
+        padding: 0 10px;
+        margin-left: 8px;
+        border-radius: 3px;
+        background: var(--vt-ac);
+        color: #ffffff;
+        font-size: 12px;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      .lf-btn:hover {
+        background: var(--vt-ac-hi);
+      }
+
+      /* 不可置入（原文件丢失 / 类型不支持）：置灰但**不隐藏** —— 原因在 title 里 */
+      .lf-btn.is-off {
+        opacity: 0.45;
+        cursor: default;
       }
 
       /* 主按钮（复用 .mini 的形状）+ 不可用态 */

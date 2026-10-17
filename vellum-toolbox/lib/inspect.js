@@ -69,7 +69,7 @@ function safe(fn, dflt) {
  */
 const DEFAULT_SPEC = {
   specName: "Vellum 出图规范",
-  specVersion: 1,
+  specVersion: 3,
   effectiveFrom: "2026-10-12",
   usage: "print",              // print | screen | social
   printMode: "CMYKColorMode",
@@ -122,6 +122,35 @@ function r1(n) {
 
 /** severity 排序权（越大越"要紧"）。状态条取 worst 用。 */
 const SEV_RANK = { fatal: 4, warn: 3, unknown: 2, ok: 1, info: 0 };
+
+/**
+ * ★ 纯函数：**本稿用到、但本机没有的字体**。不碰 Photoshop。
+ *
+ * 为什么单独抽出来：`judge()`（体检页 / 状态条）与**导出参数条**都要说"缺字体几个"。
+ * 两处各写一遍迟早就走偏（docs/49 §3.0 举的例子正是"状态条说 3 个、参数条说 2 个"）。
+ * 所以这里只留**一份实现**，两边都调它。
+ *
+ * @returns {{known:boolean, used:number, missing:string[]}}
+ *   `known=false` ⇒ 读不到本机字体清单，此时**无法判断**（不是"没有缺失"，也不是"有缺失"）。
+ */
+function missingFonts(snap) {
+  const fn = (snap && snap.fontNames) || { ps: [], loose: [] };
+  const used = ((snap && snap.layers && snap.layers.fonts) || []);
+  if (!fn.count) return { known: false, used: used.length, missing: [] };
+
+  const hit = {};
+  for (const n of fn.ps || []) hit[n] = 1;
+  for (const n of fn.loose || []) hit[n] = 1;
+
+  const out = [];
+  for (const u of used) {
+    const k = normFont(u.font);
+    if (!k) continue;
+    if (hit[k]) continue;
+    if (out.indexOf(u.font) < 0) out.push(u.font);
+  }
+  return { known: true, used: used.length, missing: out };
+}
 
 function worstOf(findings) {
   let worst = "ok";
@@ -215,33 +244,19 @@ function judge(snap, spec) {
   }
 
   /* ⑨ 缺失字体 —— 唯一"不管什么用途都是问题"的一项，但 v1 只 warn（见文件头） */
-  const psSet = {};
-  const looseSet = {};
-  const fn = (snap && snap.fontNames) || { ps: [], loose: [] };
-  for (const n of fn.ps || []) psSet[n] = 1;
-  for (const n of fn.loose || []) looseSet[n] = 1;
-
-  const missing = [];
+  const mf = missingFonts(snap);
   const used = layers.fonts || [];
-  if (!fn.count) {
+  if (!mf.known) {
     F("font", "字体", "读不到本机字体清单", "unknown",
       "缺少本机字体清单，无法判断字体是否缺失");
   } else if (!used.length) {
     F("font", "字体", "本稿没有文字层", "info", "无字体可查");
+  } else if (mf.missing.length) {
+    F("font", "字体", mf.missing.length + " 个字体本机没有", "warn",
+      "缺失：" + mf.missing.join("、") +
+      "（按名字比对，可能有误报 —— 请人工确认一次）");
   } else {
-    for (const u of used) {
-      const k = normFont(u.font);
-      if (!k) continue;
-      if (psSet[k] || looseSet[k]) continue;
-      if (missing.indexOf(u.font) < 0) missing.push(u.font);
-    }
-    if (missing.length) {
-      F("font", "字体", missing.length + " 个字体本机没有", "warn",
-        "缺失：" + missing.join("、") +
-        "（按名字比对，可能有误报 —— 请人工确认一次）");
-    } else {
-      F("font", "字体", used.length + " 处文字层字体都在本机", "ok");
-    }
+    F("font", "字体", used.length + " 处文字层字体都在本机", "ok");
   }
 
   /* ⑩ 隐藏图层（纯事实；v1 不判对错，因为隐藏层常常是刻意的） */
@@ -547,6 +562,7 @@ module.exports = {
   summaryLine: summaryLine,
   chipText: chipText,
   judge: judge,
+  missingFonts: missingFonts,
   pxToMm: pxToMm,
   normFont: normFont,
   normBounds: normBounds,
